@@ -1,5 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
-from typing import Annotated
+from fastapi import FastAPI, UploadFile, File, APIRouter
 import pandas as pd
 import io
 
@@ -23,16 +22,31 @@ def health():
         "status": "healthy"
     }
 
-@app.post("/upload/accounts", tags=["Upload"])
-async def upload_accounts_excel(file: Annotated[UploadFile, File(description="Arquivo Excel com dados das contas")]):
-    if not file.filename.endswith((".xls", ".xlsx")):
-        return {"message": "Formato de arquivo inválido. Por favor, envie um arquivo Excel (.xls ou .xlsx)"}
+router = APIRouter(
+    prefix="/upload",
+    tags=["Upload"]
+)
 
-    try:
-        contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
-        # Aqui você pode processar o DataFrame (df) como desejar
-        # Por exemplo, salvar no banco de dados, validar dados, etc.
-        return {"message": f"Arquivo {file.filename} recebido e processado com sucesso!", "data_preview": df.head().to_dict()}
-    except Exception as e:
-        return {"message": f"Erro ao processar o arquivo: {e}"}
+@router.post("/accounts")
+async def upload_accounts(file: UploadFile = File(...)):
+
+    print(f"Arquivo recebido: {file.filename}")
+
+    if file.filename.endswith(".csv"):
+        return {
+            "versao": "CSV",
+            "arquivo": file.filename
+        }
+
+    if file.filename.endswith(".xlsx"):
+        return {
+            "versao": "XLSX",
+            "arquivo": file.filename
+        }
+
+    return {
+        "versao": "ERRO",
+        "arquivo": file.filename
+    }
+
+app.include_router(router)
