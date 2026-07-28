@@ -4,6 +4,7 @@ import pandas as pd
 import io
 from datetime import date
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from .database.database import engine, SessionLocal, Base
 from .database.models import Account
 
@@ -53,7 +54,14 @@ async def upload_accounts(file: Annotated[UploadFile, File(description="Arquivo 
     contents = await file.read()
     df = None
     if file.filename.endswith(".csv"):
-        df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+        # Tentar diferentes delimitadores e encodings para CSV
+        try:
+            df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+        except Exception:
+            try:
+                df = pd.read_csv(io.StringIO(contents.decode("latin-1")), sep=";")
+            except Exception:
+                raise HTTPException(status_code=400, detail="Não foi possível ler o arquivo CSV. Verifique o delimitador e a codificação.")
     elif file.filename.endswith(".xlsx"):
         df = pd.read_excel(io.BytesIO(contents))
 
@@ -63,7 +71,7 @@ async def upload_accounts(file: Annotated[UploadFile, File(description="Arquivo 
     required_columns = ["cliente", "email", "whatsapp", "valor", "vencimento", "status"]
     if not all(col in df.columns for col in required_columns):
         missing_cols = [col for col in required_columns if col not in df.columns]
-        raise HTTPException(status_code=400, detail=f"Colunas obrigatórias faltando: {', '.join(missing_cols)}")
+        raise HTTPException(status_code=400, detail=f"Colunas obrigatórias faltando: {", ".join(missing_cols)}")
 
     imported_count = 0
     error_count = 0
@@ -98,7 +106,10 @@ async def upload_accounts(file: Annotated[UploadFile, File(description="Arquivo 
     # Calcular indicadores iniciais
     total_imported = db.query(Account).count()
     overdue_accounts = db.query(Account).filter(Account.vencimento < date.today(), Account.status != "pago").count()
-    total_open_value = db.query(Account).filter(Account.status != "pago").sum(Account.valor)
+    
+    # Corrigindo o cálculo do total_open_value
+    total_open_value_result = db.query(func.sum(Account.valor)).filter(Account.status != "pago").scalar()
+    total_open_value = float(total_open_value_result) if total_open_value_result is not None else 0.0
 
     return {
         "message": "Importação concluída com sucesso!",
