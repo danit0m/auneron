@@ -63,7 +63,7 @@ async def upload_accounts(file: Annotated[UploadFile, File(description="Arquivo 
     required_columns = ["cliente", "email", "whatsapp", "valor", "vencimento", "status"]
     if not all(col in df.columns for col in required_columns):
         missing_cols = [col for col in required_columns if col not in df.columns]
-        raise HTTPException(status_code=400, detail=f"Colunas obrigatórias faltando: {", ".join(missing_cols)}")
+        raise HTTPException(status_code=400, detail=f"Colunas obrigatórias faltando: {', '.join(missing_cols)}")
 
     imported_count = 0
     error_count = 0
