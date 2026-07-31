@@ -1,0 +1,117 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy.orm import Session
+
+from app.database.database import get_db
+from app.models.account import Account
+from app.schemas.account import AccountCreate, AccountResponse, AccountUpdate
+
+router = APIRouter(
+    prefix="/accounts",
+    tags=["Accounts"],
+)
+
+
+@router.get("/", response_model=list[AccountResponse])
+def list_accounts(
+    status_filter: str | None = Query(default=None, alias="status"),
+    cliente: str | None = None,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Account)
+
+    if status_filter:
+        query = query.filter(Account.status.ilike(status_filter))
+
+    if cliente:
+        query = query.filter(Account.cliente.ilike(f"%{cliente}%"))
+
+    return (
+        query
+        .order_by(Account.vencimento.asc(), Account.id.asc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/{account_id}", response_model=AccountResponse)
+def get_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+):
+    account = db.get(Account, account_id)
+
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+
+    return account
+
+
+@router.post(
+    "/",
+    response_model=AccountResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_account(
+    payload: AccountCreate,
+    db: Session = Depends(get_db),
+):
+    account = Account(**payload.model_dump())
+
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+
+    return account
+
+
+@router.put("/{account_id}", response_model=AccountResponse)
+def update_account(
+    account_id: int,
+    payload: AccountUpdate,
+    db: Session = Depends(get_db),
+):
+    account = db.get(Account, account_id)
+
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(account, field, value)
+
+    db.commit()
+    db.refresh(account)
+
+    return account
+
+
+@router.delete(
+    "/{account_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+):
+    account = db.get(Account, account_id)
+
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+
+    db.delete(account)
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
