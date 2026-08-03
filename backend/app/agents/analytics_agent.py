@@ -1,14 +1,16 @@
 from typing import Any
 
-from app.agents.event_bus import event_bus
 from app.database.database import SessionLocal
-from app.services.knowledge_service import KnowledgeService
+from app.orchestrator import registry
+from app.services.knowledge_service import (
+    KnowledgeService,
+)
 
 
 class AnalyticsAgent:
     """
-    Agente responsável por analisar eventos do Auneron AI,
-    classificar clientes e registrar conhecimentos no Brain.
+    Analisa eventos, classifica clientes
+    e registra conhecimentos estratégicos no Brain.
     """
 
     @staticmethod
@@ -31,7 +33,7 @@ class AnalyticsAgent:
                 "status",
                 "não informado",
             )
-        ).lower()
+        ).strip().lower()
 
         vencimento = str(
             payload.get(
@@ -40,12 +42,10 @@ class AnalyticsAgent:
             )
         )
 
-        account_id_raw = payload.get("id")
-
         account_id = (
-            int(account_id_raw)
-            if account_id_raw is not None
-            else None
+            AnalyticsAgent.converter_account_id(
+                payload.get("id")
+            )
         )
 
         categoria = (
@@ -96,6 +96,7 @@ class AnalyticsAgent:
                 "Conhecimentos analíticos "
                 "registrados no Brain."
             )
+
         except Exception as error:
             db.rollback()
 
@@ -103,6 +104,7 @@ class AnalyticsAgent:
                 "Erro ao registrar conhecimentos "
                 f"do AnalyticsAgent: {error}"
             )
+
         finally:
             db.close()
 
@@ -126,11 +128,6 @@ class AnalyticsAgent:
         prioridade: str,
         account_id: int | None,
     ) -> None:
-        """
-        Registra no Brain apenas conhecimentos
-        relevantes produzidos pelo AnalyticsAgent.
-        """
-
         if categoria == "Estratégico":
             KnowledgeService.create(
                 db=db,
@@ -141,18 +138,17 @@ class AnalyticsAgent:
                 title="Cliente estratégico",
                 message=(
                     f"O cliente {cliente} foi "
-                    f"classificado como estratégico, "
+                    "classificado como estratégico, "
                     f"com valor de R$ {valor:,.2f}. "
                     "Recomenda-se acompanhamento "
-                    "prioritário e monitoramento "
-                    "da participação na carteira."
+                    "prioritário da participação "
+                    "na carteira."
                 ),
                 account_id=account_id,
             )
 
             print(
-                "✔ Insight estratégico salvo "
-                "no Brain."
+                "Insight estratégico salvo."
             )
 
         elif categoria == "Premium":
@@ -165,17 +161,14 @@ class AnalyticsAgent:
                 title="Cliente premium",
                 message=(
                     f"O cliente {cliente} foi "
-                    f"classificado como premium, "
-                    f"com valor de R$ {valor:,.2f}. "
-                    "O cliente está acima da faixa "
-                    "padrão da carteira."
+                    "classificado como premium, "
+                    f"com valor de R$ {valor:,.2f}."
                 ),
                 account_id=account_id,
             )
 
             print(
-                "✔ Insight premium salvo "
-                "no Brain."
+                "Insight premium salvo."
             )
 
         if status == "atrasado":
@@ -194,18 +187,15 @@ class AnalyticsAgent:
                 title="Risco analítico identificado",
                 message=(
                     f"O cliente {cliente} possui "
-                    f"status atrasado, vencimento em "
-                    f"{vencimento} e prioridade "
-                    f"{prioridade.lower()}. "
-                    "A situação aumenta o risco "
-                    "financeiro da carteira."
+                    f"status atrasado, vencimento "
+                    f"em {vencimento} e prioridade "
+                    f"{prioridade.lower()}."
                 ),
                 account_id=account_id,
             )
 
             print(
-                "✔ Risco analítico salvo "
-                "no Brain."
+                "Risco analítico salvo."
             )
 
         if (
@@ -227,15 +217,13 @@ class AnalyticsAgent:
                     f"alto valor financeiro "
                     f"(R$ {valor:,.2f}) com status "
                     "atrasado. Recomenda-se contato "
-                    "imediato, análise de risco e "
-                    "plano de cobrança prioritário."
+                    "imediato e plano de cobrança."
                 ),
                 account_id=account_id,
             )
 
             print(
-                "✔ Recomendação crítica salva "
-                "no Brain."
+                "Recomendação crítica salva."
             )
 
     @staticmethod
@@ -276,8 +264,21 @@ class AnalyticsAgent:
 
         return "Normal"
 
+    @staticmethod
+    def converter_account_id(
+        account_id: Any,
+    ) -> int | None:
+        if account_id is None:
+            return None
 
-event_bus.subscribe(
+        try:
+            return int(account_id)
+
+        except (TypeError, ValueError):
+            return None
+
+
+registry.register(
     "cliente_criado",
     AnalyticsAgent.on_cliente_criado,
 )

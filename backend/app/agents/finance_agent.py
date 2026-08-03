@@ -1,29 +1,60 @@
 from typing import Any
 
-from app.agents.event_bus import event_bus
 from app.database.database import SessionLocal
-from app.services.knowledge_service import KnowledgeService
+from app.orchestrator import registry
+from app.services.knowledge_service import (
+    KnowledgeService,
+)
 
 
 class FinanceAgent:
     """
-    Agente Financeiro do Auneron AI.
-
-    Responsável por analisar eventos financeiros
-    e registrar conhecimento no Brain.
+    Agente responsável por analisar informações
+    financeiras e registrar conhecimentos no Brain.
     """
 
     @staticmethod
-    def on_cliente_criado(payload: dict[str, Any]) -> None:
+    def on_cliente_criado(
+        payload: dict[str, Any],
+    ) -> None:
+        cliente = str(
+            payload.get(
+                "cliente",
+                "Cliente não informado",
+            )
+        )
 
-        cliente = payload.get("cliente", "Cliente não informado")
-        valor = float(payload.get("valor", 0) or 0)
-        status = str(payload.get("status", "não informado")).lower()
-        vencimento = payload.get("vencimento", "")
-        account_id = payload.get("id")
+        valor = float(
+            payload.get("valor", 0) or 0
+        )
+
+        status = str(
+            payload.get(
+                "status",
+                "não informado",
+            )
+        ).strip().lower()
+
+        vencimento = str(
+            payload.get(
+                "vencimento",
+                "não informado",
+            )
+        )
+
+        account_id = (
+            FinanceAgent.converter_account_id(
+                payload.get("id")
+            )
+        )
 
         print()
-        print("========== FINANCE AGENT ==========")
+        print(
+            "========== FINANCE AGENT =========="
+        )
+        print(
+            "Evento recebido: cliente_criado"
+        )
         print(f"Cliente: {cliente}")
         print(f"Valor: R$ {valor:,.2f}")
         print(f"Status: {status}")
@@ -32,9 +63,7 @@ class FinanceAgent:
         db = SessionLocal()
 
         try:
-
             if valor >= 10000:
-
                 KnowledgeService.create(
                     db=db,
                     agent_name="FinanceAgent",
@@ -43,17 +72,20 @@ class FinanceAgent:
                     severity="high",
                     title="Cliente de alto valor",
                     message=(
-                        f"O cliente {cliente} foi cadastrado "
-                        f"com contrato de R$ {valor:,.2f}. "
-                        "Recomenda-se acompanhamento prioritário."
+                        f"O cliente {cliente} foi "
+                        f"cadastrado com valor de "
+                        f"R$ {valor:,.2f}. "
+                        "Recomenda-se acompanhamento "
+                        "financeiro prioritário."
                     ),
                     account_id=account_id,
                 )
 
-                print("✔ Insight salvo no Brain.")
+                print(
+                    "Insight salvo no Brain."
+                )
 
             if status == "atrasado":
-
                 KnowledgeService.create(
                     db=db,
                     agent_name="FinanceAgent",
@@ -62,23 +94,50 @@ class FinanceAgent:
                     severity="critical",
                     title="Cliente em atraso",
                     message=(
-                        f"{cliente} foi cadastrado com "
-                        "status financeiro atrasado."
+                        f"O cliente {cliente} foi "
+                        "cadastrado com status "
+                        "financeiro atrasado. "
+                        "Recomenda-se iniciar uma "
+                        "ação de cobrança."
                     ),
                     account_id=account_id,
                 )
 
-                print("✔ Alerta salvo no Brain.")
+                print(
+                    "Alerta salvo no Brain."
+                )
+
+        except Exception as error:
+            db.rollback()
+
+            print(
+                "Erro ao registrar conhecimentos "
+                f"do FinanceAgent: {error}"
+            )
 
         finally:
-
             db.close()
 
-        print("===================================")
+        print(
+            "==================================="
+        )
         print()
 
+    @staticmethod
+    def converter_account_id(
+        account_id: Any,
+    ) -> int | None:
+        if account_id is None:
+            return None
 
-event_bus.subscribe(
+        try:
+            return int(account_id)
+
+        except (TypeError, ValueError):
+            return None
+
+
+registry.register(
     "cliente_criado",
     FinanceAgent.on_cliente_criado,
 )

@@ -2,15 +2,17 @@ from datetime import date
 from datetime import datetime
 from typing import Any
 
-from app.agents.event_bus import event_bus
 from app.database.database import SessionLocal
-from app.services.knowledge_service import KnowledgeService
+from app.orchestrator import registry
+from app.services.knowledge_service import (
+    KnowledgeService,
+)
 
 
 class RiskAgent:
     """
-    Agente responsável por calcular o risco financeiro
-    dos clientes e registrar o resultado no Brain.
+    Calcula o Risk Score dos clientes
+    e registra o resultado no Brain.
     """
 
     @staticmethod
@@ -42,13 +44,17 @@ class RiskAgent:
             )
         )
 
-        account_id = RiskAgent.converter_account_id(
-            payload.get("id")
+        account_id = (
+            RiskAgent.converter_account_id(
+                payload.get("id")
+            )
         )
 
-        dias_atraso = RiskAgent.calcular_dias_atraso(
-            vencimento=vencimento,
-            status=status,
+        dias_atraso = (
+            RiskAgent.calcular_dias_atraso(
+                vencimento=vencimento,
+                status=status,
+            )
         )
 
         score = RiskAgent.calcular_score(
@@ -58,23 +64,35 @@ class RiskAgent:
         )
 
         classificacao = (
-            RiskAgent.classificar_score(score)
+            RiskAgent.classificar_score(
+                score
+            )
         )
 
         severidade = (
-            RiskAgent.definir_severidade(score)
+            RiskAgent.definir_severidade(
+                score
+            )
         )
 
         print()
-        print("========== RISK AGENT ==========")
-        print("Evento recebido: cliente_criado")
+        print(
+            "========== RISK AGENT =========="
+        )
+        print(
+            "Evento recebido: cliente_criado"
+        )
         print(f"Cliente: {cliente}")
         print(f"Valor: R$ {valor:,.2f}")
         print(f"Status: {status}")
         print(f"Vencimento: {vencimento}")
-        print(f"Dias em atraso: {dias_atraso}")
+        print(
+            f"Dias em atraso: {dias_atraso}"
+        )
         print(f"Risk Score: {score}/100")
-        print(f"Classificação: {classificacao}")
+        print(
+            f"Classificação: {classificacao}"
+        )
 
         db = SessionLocal()
 
@@ -93,8 +111,7 @@ class RiskAgent:
                     f"O cliente {cliente} recebeu "
                     f"Risk Score {score}/100, com "
                     f"classificação {classificacao}. "
-                    f"Valor financeiro: "
-                    f"R$ {valor:,.2f}. "
+                    f"Valor: R$ {valor:,.2f}. "
                     f"Status: {status}. "
                     f"Dias em atraso: {dias_atraso}. "
                     f"{RiskAgent.gerar_recomendacao(score)}"
@@ -103,7 +120,7 @@ class RiskAgent:
             )
 
             print(
-                "✔ Risk Score salvo no Brain."
+                "Risk Score salvo no Brain."
             )
 
             if score >= 70:
@@ -126,8 +143,7 @@ class RiskAgent:
                 )
 
                 print(
-                    "✔ Recomendação de risco "
-                    "salva no Brain."
+                    "Recomendação de risco salva."
                 )
 
         except Exception as error:
@@ -142,7 +158,9 @@ class RiskAgent:
             db.close()
 
         print("RiskAgent finalizado.")
-        print("================================")
+        print(
+            "================================"
+        )
         print()
 
     @staticmethod
@@ -154,7 +172,6 @@ class RiskAgent:
     ) -> int:
         score = 0
 
-        # Valor financeiro: máximo 40 pontos
         if valor >= 50000:
             score += 40
         elif valor >= 30000:
@@ -164,13 +181,11 @@ class RiskAgent:
         elif valor > 0:
             score += 10
 
-        # Situação financeira: máximo 35 pontos
         if status == "atrasado":
             score += 35
         elif status == "aberto":
             score += 10
 
-        # Tempo em atraso: máximo 25 pontos
         if dias_atraso >= 30:
             score += 25
         elif dias_atraso >= 15:
@@ -218,27 +233,26 @@ class RiskAgent:
     ) -> str:
         if score >= 90:
             return (
-                "Recomenda-se ação imediata, contato "
-                "com o cliente e definição de um plano "
+                "Recomenda-se ação imediata, "
+                "contato com o cliente e plano "
                 "prioritário de cobrança."
             )
 
         if score >= 70:
             return (
-                "Recomenda-se acompanhamento prioritário "
-                "e contato com o cliente nas próximas "
-                "24 horas."
+                "Recomenda-se acompanhamento "
+                "prioritário e contato nas "
+                "próximas 24 horas."
             )
 
         if score >= 50:
             return (
-                "Recomenda-se monitoramento frequente "
-                "e revisão da situação financeira."
+                "Recomenda-se monitoramento "
+                "frequente da situação."
             )
 
         return (
-            "O risco atual é baixo. Manter o "
-            "acompanhamento padrão da carteira."
+            "Manter o acompanhamento padrão."
         )
 
     @staticmethod
@@ -270,8 +284,7 @@ class RiskAgent:
 
         except ValueError:
             print(
-                "Aviso: vencimento inválido "
-                f"recebido pelo RiskAgent: "
+                "Vencimento inválido recebido: "
                 f"{vencimento}"
             )
 
@@ -291,7 +304,7 @@ class RiskAgent:
             return None
 
 
-event_bus.subscribe(
+registry.register(
     "cliente_criado",
     RiskAgent.on_cliente_criado,
 )
