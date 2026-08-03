@@ -18,6 +18,7 @@ from app.agents.notification_agent import NotificationAgent
 import app.agents.finance_agent
 import app.agents.analytics_agent
 import app.models
+import app.agents.risk_agent
 
 # Futuramente:
 # import app.agents.analytics_agent
@@ -80,8 +81,11 @@ def health():
         "agents": [
             "FinanceAgent",
             "AnalyticsAgent",
+            "NotificationAgent",
+            "RiskAgent",
         ],
     }
+
 # ======================================================
 # ROTAS
 # ======================================================
