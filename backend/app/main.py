@@ -8,6 +8,7 @@ from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.accounts import router as accounts_router
 from app.api.routes.brain import router as brain_router
 from app.api.routes.executive import router as executive_router
+from app.agents.notification_agent import NotificationAgent
 
 # ======================================================
 # AGENT HUB
