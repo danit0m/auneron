@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database.database import get_db
 from app.models.account import Account
 from app.schemas.account import AccountCreate, AccountResponse, AccountUpdate
+from app.agents.event_bus import event_bus
 
 router = APIRouter(
     prefix="/accounts",
@@ -67,51 +68,17 @@ def create_account(
     db.commit()
     db.refresh(account)
 
-    return account
-
-
-@router.put("/{account_id}", response_model=AccountResponse)
-def update_account(
-    account_id: int,
-    payload: AccountUpdate,
-    db: Session = Depends(get_db),
-):
-    account = db.get(Account, account_id)
-
-    if account is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Conta não encontrada.",
-        )
-
-    update_data = payload.model_dump(exclude_unset=True)
-
-    for field, value in update_data.items():
-        setattr(account, field, value)
-
-    db.commit()
-    db.refresh(account)
+    event_bus.publish(
+        "cliente_criado",
+        {
+            "id": account.id,
+            "cliente": account.cliente,
+            "email": account.email,
+            "whatsapp": account.whatsapp,
+            "valor": account.valor,
+            "vencimento": str(account.vencimento),
+            "status": account.status,
+        },
+    )
 
     return account
-
-
-@router.delete(
-    "/{account_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-def delete_account(
-    account_id: int,
-    db: Session = Depends(get_db),
-):
-    account = db.get(Account, account_id)
-
-    if account is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Conta não encontrada.",
-        )
-
-    db.delete(account)
-    db.commit()
-
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -6,20 +6,43 @@ from app.database.database import Base, engine
 from app.api.routes.upload import router as upload_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.accounts import router as accounts_router
+from app.api.routes.brain import router as brain_router
+from app.api.routes.executive import router as executive_router
 
+# ======================================================
+# AGENT HUB
+# Apenas importar os agentes já registra os eventos
+# ======================================================
 
-# Cria as tabelas do banco
+import app.agents.finance_agent
+import app.agents.analytics_agent
+import app.models
+
+# Futuramente:
+# import app.agents.analytics_agent
+# import app.agents.crm_agent
+# import app.agents.notification_agent
+
+# ======================================================
+# BANCO DE DADOS
+# ======================================================
+
 Base.metadata.create_all(bind=engine)
 
+# ======================================================
+# FASTAPI
+# ======================================================
 
 app = FastAPI(
-    title="Auneron Finance",
-    version="2.0",
-    description="Sistema de gestão financeira do Auneron",
+    title="Auneron AI",
+    version="3.0 Alpha",
+    description="Intelligent Business Operating System",
 )
 
+# ======================================================
+# CORS
+# ======================================================
 
-# Permite que o frontend React acesse a API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -31,27 +54,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ======================================================
+# HOME
+# ======================================================
 
 @app.get("/", tags=["Home"])
 def home():
     return {
         "status": "online",
-        "produto": "Auneron Finance",
-        "versao": "2.0",
+        "produto": "Auneron AI",
+        "versao": "3.0 Alpha",
+        "agent_hub": "ativo",
     }
 
+# ======================================================
+# HEALTH
+# ======================================================
 
 @app.get("/health", tags=["Health"])
 def health():
     return {
         "status": "healthy",
+        "database": "online",
+        "agents": [
+            "FinanceAgent",
+            "AnalyticsAgent",
+        ],
     }
-
-
-# ===========================
-# REGISTRO DAS ROTAS
-# ===========================
+# ======================================================
+# ROTAS
+# ======================================================
 
 app.include_router(upload_router)
 app.include_router(dashboard_router)
 app.include_router(accounts_router)
+app.include_router(executive_router)
+app.include_router(brain_router)
