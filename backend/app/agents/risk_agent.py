@@ -4,9 +4,7 @@ from typing import Any
 
 from app.database.database import SessionLocal
 from app.orchestrator import registry
-from app.services.knowledge_service import (
-    KnowledgeService,
-)
+from app.services.knowledge_service import KnowledgeService
 
 
 class RiskAgent:
@@ -276,8 +274,8 @@ class RiskAgent:
             )
 
             diferenca = (
-                date.today() -
-                data_vencimento
+                date.today()
+                - data_vencimento
             ).days
 
             return max(diferenca, 0)
@@ -307,4 +305,6 @@ class RiskAgent:
 registry.register(
     "cliente_criado",
     RiskAgent.on_cliente_criado,
+    name="RiskAgent",
+    priority=20,
 )

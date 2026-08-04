@@ -2,9 +2,7 @@ from typing import Any
 
 from app.database.database import SessionLocal
 from app.orchestrator import registry
-from app.services.knowledge_service import (
-    KnowledgeService,
-)
+from app.services.knowledge_service import KnowledgeService
 
 
 class AnalyticsAgent:
@@ -281,4 +279,6 @@ class AnalyticsAgent:
 registry.register(
     "cliente_criado",
     AnalyticsAgent.on_cliente_criado,
+    name="AnalyticsAgent",
+    priority=30,
 )
