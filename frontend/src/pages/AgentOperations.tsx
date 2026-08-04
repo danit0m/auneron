@@ -25,6 +25,7 @@ import {
 import api from "../api/api";
 import ExecutiveDecisionCard from "../components/executive/ExecutiveDecisionCard";
 import { Header } from "../components/layout/Header";
+import ConfidenceMeter from "../components/executive/ConfidenceMeter";
 import type {
   AgentMetrics,
   DecisionHistoryResponse,
@@ -573,6 +574,10 @@ export default function AgentOperations() {
 
           <div className="decision-trust-content">
             <ExecutiveDecisionCard
+              data={latestDecision}
+            />
+
+            <ConfidenceMeter
               data={latestDecision}
             />
 
