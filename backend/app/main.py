@@ -9,6 +9,7 @@ from app.api.routes.accounts import router as accounts_router
 from app.api.routes.brain import router as brain_router
 from app.api.routes.executive import router as executive_router
 from app.agents.notification_agent import NotificationAgent
+from app.api.routes.orchestrator import router as orchestrator_router
 
 # ======================================================
 # AGENT HUB
@@ -94,4 +95,5 @@ app.include_router(upload_router)
 app.include_router(dashboard_router)
 app.include_router(accounts_router)
 app.include_router(executive_router)
+app.include_router(orchestrator_router)
 app.include_router(brain_router)
