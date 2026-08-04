@@ -1,0 +1,763 @@
+/* =========================================
+   AUNERON AI — BRAIN CENTER
+   Arquivo: frontend/src/styles/brain.css
+========================================= */
+
+.brain-page {
+  display: grid;
+  gap: 14px;
+}
+
+/* =========================================
+   HERO
+========================================= */
+
+.brain-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 22px;
+  border: 1px solid #d9e2f0;
+  border-radius: 17px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgb(79 70 229 / 12%),
+      transparent 40%
+    ),
+    linear-gradient(
+      135deg,
+      #ffffff,
+      #f7f9ff
+    );
+  box-shadow: 0 10px 28px rgb(15 23 42 / 5%);
+}
+
+.brain-eyebrow {
+  display: block;
+  margin-bottom: 5px;
+  color: #4f46e5;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.95px;
+  text-transform: uppercase;
+}
+
+.brain-hero h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 23px;
+  letter-spacing: -0.45px;
+  line-height: 1.2;
+}
+
+.brain-hero p {
+  max-width: 760px;
+  margin: 7px 0 0;
+  color: #718096;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.brain-hero-icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 54px;
+  place-items: center;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #ffffff;
+  box-shadow: 0 13px 28px rgb(79 70 229 / 24%);
+}
+
+/* =========================================
+   EXECUTIVE CARD
+   Compatibilidade com nomes prováveis do
+   componente ExecutiveCard e seletor estrutural
+========================================= */
+
+.brain-executive-card,
+.executive-brain-card,
+.brain-executive,
+.brain-hero + article,
+.brain-hero + section {
+  overflow: hidden;
+  padding: 17px 19px;
+  border: 1px solid #ddd6fe;
+  border-radius: 16px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgb(124 58 237 / 10%),
+      transparent 38%
+    ),
+    linear-gradient(135deg, #ffffff, #faf8ff);
+  box-shadow: 0 10px 28px rgb(76 29 149 / 6%);
+}
+
+.brain-executive-header,
+.executive-brain-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brain-executive-eyebrow,
+.executive-brain-eyebrow {
+  color: #7c3aed;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.85px;
+  text-transform: uppercase;
+}
+
+.brain-executive-card h2,
+.brain-executive-card h3,
+.executive-brain-card h2,
+.executive-brain-card h3,
+.brain-executive h2,
+.brain-executive h3 {
+  margin: 5px 0 0;
+  color: #172033;
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.brain-executive-card p,
+.executive-brain-card p,
+.brain-executive p {
+  margin: 8px 0 0;
+  color: #5f6c7f;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.brain-executive-grid,
+.executive-brain-grid,
+.brain-executive-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.brain-executive-grid > div,
+.executive-brain-grid > div,
+.brain-executive-metrics > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e6e8f0;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 84%);
+}
+
+.brain-executive-grid span,
+.brain-executive-grid strong,
+.executive-brain-grid span,
+.executive-brain-grid strong,
+.brain-executive-metrics span,
+.brain-executive-metrics strong {
+  display: block;
+}
+
+.brain-executive-grid span,
+.executive-brain-grid span,
+.brain-executive-metrics span {
+  color: #8a96a8;
+  font-size: 7px;
+}
+
+.brain-executive-grid strong,
+.executive-brain-grid strong,
+.brain-executive-metrics strong {
+  margin-top: 4px;
+  color: #253147;
+  font-size: 10px;
+}
+
+/* =========================================
+   SUMMARY CARDS
+========================================= */
+
+.brain-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.brain-summary-card {
+  display: flex;
+  min-width: 0;
+  min-height: 76px;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid #e5eaf1;
+  border-radius: 13px;
+  background: #ffffff;
+  box-shadow: 0 7px 20px rgb(15 23 42 / 4%);
+}
+
+.brain-summary-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border-radius: 10px;
+}
+
+.brain-blue {
+  background: #eaf1ff;
+  color: #2563eb;
+}
+
+.brain-orange {
+  background: #fff3dd;
+  color: #d97706;
+}
+
+.brain-red {
+  background: #fee8e8;
+  color: #dc2626;
+}
+
+.brain-green {
+  background: #e4f8f0;
+  color: #059669;
+}
+
+.brain-purple {
+  background: #f1eafe;
+  color: #7c3aed;
+}
+
+.brain-summary-card span,
+.brain-summary-card strong,
+.brain-summary-card small {
+  display: block;
+}
+
+.brain-summary-card span {
+  color: #718096;
+  font-size: 8px;
+}
+
+.brain-summary-card strong {
+  margin-top: 3px;
+  color: #172033;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.brain-summary-card small {
+  margin-top: 3px;
+  color: #9aa6b7;
+  font-size: 7px;
+}
+
+/* =========================================
+   MAIN PANEL
+========================================= */
+
+.brain-panel {
+  overflow: hidden;
+  border: 1px solid #e5eaf1;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 9px 24px rgb(15 23 42 / 4%);
+}
+
+.brain-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #edf1f5;
+  background: linear-gradient(135deg, #ffffff, #fafbfe);
+}
+
+.brain-search {
+  display: flex;
+  width: min(440px, 100%);
+  min-height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid #dce4ef;
+  border-radius: 11px;
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.brain-search:focus-within {
+  border-color: #818cf8;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgb(99 102 241 / 10%);
+}
+
+.brain-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #253147;
+  font: inherit;
+  font-size: 9px;
+}
+
+.brain-search input::placeholder {
+  color: #9aa6b7;
+}
+
+.brain-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.brain-filters select {
+  min-width: 145px;
+  min-height: 38px;
+  padding: 0 30px 0 11px;
+  border: 1px solid #dce4ef;
+  border-radius: 10px;
+  outline: 0;
+  background: #ffffff;
+  color: #526076;
+  font-size: 8px;
+}
+
+.brain-filters select:focus {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 3px rgb(99 102 241 / 9%);
+}
+
+.brain-filters .secondary-button {
+  min-height: 38px;
+  padding: 0 13px;
+}
+
+.brain-results-info {
+  padding: 9px 16px;
+  border-bottom: 1px solid #edf1f5;
+  color: #8a96a8;
+  font-size: 8px;
+}
+
+.brain-results-info strong {
+  color: #526076;
+}
+
+/* =========================================
+   TIMELINE
+========================================= */
+
+.brain-timeline {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.brain-timeline::before {
+  position: absolute;
+  top: 22px;
+  bottom: 22px;
+  left: 35px;
+  width: 2px;
+  border-radius: 999px;
+  background: #e4e8f0;
+  content: "";
+}
+
+.brain-knowledge-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid #e5eaf1;
+  border-radius: 13px;
+  background: #ffffff;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.brain-knowledge-card:hover {
+  transform: translateY(-1px);
+  border-color: #cfd8e7;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 6%);
+}
+
+.brain-knowledge-resolved {
+  opacity: 0.72;
+  background: #f8fafc;
+}
+
+.brain-timeline-marker {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 4px solid #ffffff;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #ffffff;
+  box-shadow: 0 6px 15px rgb(79 70 229 / 19%);
+}
+
+.brain-knowledge-content {
+  min-width: 0;
+}
+
+.brain-knowledge-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.brain-agent-name {
+  display: block;
+  color: #4f46e5;
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: 0.65px;
+  text-transform: uppercase;
+}
+
+.brain-knowledge-header h3 {
+  margin: 4px 0 0;
+  color: #253147;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.brain-knowledge-content > p {
+  margin: 8px 0 0;
+  color: #667386;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.brain-severity {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 7px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.brain-severity-critical {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.brain-severity-high {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.brain-severity-medium {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.brain-severity-info {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.brain-knowledge-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #edf1f5;
+  color: #8a96a8;
+  font-size: 7px;
+}
+
+.brain-knowledge-footer > span:nth-of-type(2) {
+  margin-right: auto;
+}
+
+.brain-knowledge-footer strong {
+  color: #526076;
+}
+
+.brain-resolve-button,
+.brain-reopen-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 9px;
+  font-size: 7px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.brain-resolve-button {
+  border: 1px solid #bbf7d0;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.brain-resolve-button:hover {
+  border-color: #86efac;
+  background: #dcfce7;
+}
+
+.brain-reopen-button {
+  border: 1px solid #dbe3ef;
+  background: #f8fafc;
+  color: #526076;
+}
+
+.brain-reopen-button:hover {
+  border-color: #c7d2e2;
+  background: #f1f5f9;
+}
+
+/* =========================================
+   STATES
+========================================= */
+
+.brain-loading {
+  min-height: 320px;
+}
+
+.brain-error-state {
+  display: flex;
+  min-height: 100px;
+  align-items: center;
+  gap: 10px;
+  margin: 16px;
+  padding: 14px 16px;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  background: #fff5f5;
+  color: #b91c1c;
+  font-size: 9px;
+}
+
+.brain-empty-state {
+  display: grid;
+  min-height: 280px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  padding: 28px;
+  color: #8a96a8;
+  text-align: center;
+}
+
+.brain-empty-state svg {
+  color: #4f46e5;
+}
+
+.brain-empty-state h3 {
+  margin: 0;
+  color: #344158;
+  font-size: 13px;
+}
+
+.brain-empty-state p {
+  max-width: 410px;
+  margin: 0;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+/* =========================================
+   EXECUTIVE CARD — FALLBACK ESTRUTURAL
+   Estiliza blocos internos mesmo quando o
+   componente usa classes diferentes.
+========================================= */
+
+.brain-hero + * {
+  min-width: 0;
+}
+
+.brain-hero + * > div {
+  min-width: 0;
+}
+
+.brain-hero + * ul {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.brain-hero + * li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #e6e8f0;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 78%);
+  color: #526076;
+  font-size: 8px;
+}
+
+.brain-hero + * strong {
+  color: #253147;
+}
+
+/* =========================================
+   RESPONSIVE
+========================================= */
+
+@media (max-width: 1300px) {
+  .brain-summary-grid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .brain-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .brain-search {
+    width: 100%;
+  }
+
+  .brain-filters {
+    justify-content: flex-start;
+  }
+
+  .brain-executive-grid,
+  .executive-brain-grid,
+  .brain-executive-metrics {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .brain-page {
+    gap: 12px;
+  }
+
+  .brain-hero {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .brain-hero h2 {
+    font-size: 20px;
+  }
+
+  .brain-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .brain-summary-card {
+    min-height: 68px;
+  }
+
+  .brain-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .brain-filters select,
+  .brain-filters .secondary-button {
+    width: 100%;
+  }
+
+  .brain-timeline {
+    padding: 12px;
+  }
+
+  .brain-timeline::before {
+    display: none;
+  }
+
+  .brain-knowledge-card {
+    grid-template-columns: 1fr;
+  }
+
+  .brain-timeline-marker {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brain-knowledge-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .brain-severity {
+    align-self: flex-start;
+  }
+
+  .brain-knowledge-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .brain-knowledge-footer > span:nth-of-type(2) {
+    margin-right: 0;
+  }
+
+  .brain-resolve-button,
+  .brain-reopen-button {
+    width: 100%;
+  }
+
+  .brain-executive-grid,
+  .executive-brain-grid,
+  .brain-executive-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .brain-hero-icon {
+    width: 48px;
+    height: 48px;
+    flex-basis: 48px;
+  }
+
+  .brain-summary-card {
+    padding: 12px;
+  }
+
+  .brain-panel {
+    border-radius: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brain-knowledge-card,
+  .brain-resolve-button,
+  .brain-reopen-button {
+    transition: none;
+  }
+}

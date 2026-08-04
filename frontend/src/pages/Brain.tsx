@@ -17,9 +17,11 @@ import {
 } from "react";
 
 import api from "../api/api";
-import ExecutiveCard from "../components/brain/ExecutiveCard";
+import BrainExecutiveSummary from "../components/brain/BrainExecutiveSummary";
 import { Header } from "../components/layout/Header";
 import type { Knowledge } from "../types/knowledge";
+
+import "../styles/brain.css";
 
 interface ExecutiveAgentSummary {
   agent: string;
@@ -403,7 +405,7 @@ export default function Brain() {
           </div>
         </div>
 
-        <ExecutiveCard
+        <BrainExecutiveSummary
           report={executiveReport}
         />
 
