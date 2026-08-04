@@ -1,96 +1,156 @@
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-AgentHandler = Callable[[dict[str, Any]], None]
+AgentHandler = Callable[
+    [dict[str, Any]],
+    None,
+]
+
+
+@dataclass(frozen=True)
+class RegisteredAgent:
+    name: str
+    handler: AgentHandler
+    priority: int
 
 
 class AgentRegistry:
     """
-    Registro central dos agentes do Auneron AI.
+    Registro central dos agentes.
 
-    Relaciona eventos aos agentes responsáveis
-    por processá-los.
+    Cada agente é associado a um evento e possui
+    uma prioridade de execução.
     """
 
     def __init__(self) -> None:
-        self._handlers: dict[
+        self._agents: dict[
             str,
-            list[AgentHandler],
+            list[RegisteredAgent],
         ] = defaultdict(list)
 
     def register(
         self,
         event_name: str,
         handler: AgentHandler,
+        *,
+        name: str | None = None,
+        priority: int = 100,
     ) -> None:
-        """
-        Registra um agente para determinado evento.
+        agent_name = (
+            name
+            or handler.__qualname__.split(".")[0]
+        )
 
-        Evita que o mesmo handler seja cadastrado
-        mais de uma vez durante o reload do Uvicorn.
-        """
+        agents = self._agents[event_name]
 
-        handlers = self._handlers[event_name]
+        duplicate = any(
+            agent.name == agent_name
+            and agent.handler == handler
+            for agent in agents
+        )
 
-        if handler not in handlers:
-            handlers.append(handler)
+        if duplicate:
+            return
+
+        agents.append(
+            RegisteredAgent(
+                name=agent_name,
+                handler=handler,
+                priority=priority,
+            )
+        )
+
+        agents.sort(
+            key=lambda agent: (
+                agent.priority,
+                agent.name,
+            )
+        )
 
     def unregister(
         self,
         event_name: str,
-        handler: AgentHandler,
-    ) -> None:
-        """
-        Remove um agente de determinado evento.
-        """
-
-        handlers = self._handlers.get(
+        agent_name: str,
+    ) -> bool:
+        agents = self._agents.get(
             event_name,
             [],
         )
 
-        if handler in handlers:
-            handlers.remove(handler)
+        initial_size = len(agents)
 
-    def get_handlers(
+        self._agents[event_name] = [
+            agent
+            for agent in agents
+            if agent.name != agent_name
+        ]
+
+        return (
+            len(self._agents[event_name])
+            < initial_size
+        )
+
+    def get_agents(
         self,
         event_name: str,
-    ) -> list[AgentHandler]:
-        """
-        Retorna uma cópia da lista de agentes
-        registrados para o evento.
-        """
-
+    ) -> list[RegisteredAgent]:
         return list(
-            self._handlers.get(
+            self._agents.get(
                 event_name,
                 [],
             )
         )
 
-    def count_handlers(
+    def get_selected_agents(
+        self,
+        event_name: str,
+        selected_names: tuple[str, ...],
+    ) -> list[RegisteredAgent]:
+        selected_set = set(
+            selected_names
+        )
+
+        return [
+            agent
+            for agent in self.get_agents(
+                event_name,
+            )
+            if agent.name in selected_set
+        ]
+
+    def count_agents(
         self,
         event_name: str,
     ) -> int:
         return len(
-            self._handlers.get(
+            self._agents.get(
                 event_name,
                 [],
             )
         )
 
     def list_events(self) -> list[str]:
-        return sorted(self._handlers.keys())
+        return sorted(
+            self._agents.keys()
+        )
+
+    def list_registry(self) -> dict:
+        return {
+            event_name: [
+                {
+                    "name": agent.name,
+                    "priority": agent.priority,
+                }
+                for agent in agents
+            ]
+            for event_name, agents
+            in self._agents.items()
+        }
 
     def clear(self) -> None:
-        """
-        Limpa todo o registro.
-
-        Útil futuramente para testes automatizados.
-        """
-
-        self._handlers.clear()
+        self._agents.clear()
 
 
 registry = AgentRegistry()

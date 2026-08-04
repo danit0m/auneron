@@ -2,28 +2,127 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any
 
-from app.orchestrator.registry import registry
+from app.orchestrator.pipeline import (
+    ExecutionPipeline,
+    PipelineResult,
+)
+from app.orchestrator.registry import (
+    registry,
+)
+from app.orchestrator.strategy import (
+    OrchestrationPlan,
+    OrchestrationStrategy,
+)
 
 
 class AIOrchestrator:
     """
-    Coordena a execução dos agentes do Auneron AI.
+    Coordena o ciclo completo de orquestração.
 
-    Recebe um evento, localiza os agentes registrados
-    e executa cada um de forma isolada.
+    Responsabilidades:
+    - receber o evento;
+    - solicitar o plano à Strategy Engine;
+    - selecionar os agentes;
+    - delegar a execução ao Pipeline;
+    - apresentar o resumo.
     """
 
     @staticmethod
     def execute(
         event_name: str,
         payload: dict[str, Any],
-    ) -> None:
-        handlers = registry.get_handlers(
-            event_name
+    ) -> PipelineResult | None:
+        orchestration_start = perf_counter()
+
+        plan = (
+            OrchestrationStrategy.build_plan(
+                event_name=event_name,
+                payload=payload,
+            )
         )
 
-        inicio_orquestracao = perf_counter()
+        available_agents = (
+            registry.get_agents(
+                event_name,
+            )
+        )
 
+        selected_agents = (
+            registry.get_selected_agents(
+                event_name,
+                plan.selected_agents,
+            )
+        )
+
+        AIOrchestrator._print_header(
+            event_name=event_name,
+            plan=plan,
+            available_count=len(
+                available_agents
+            ),
+            selected_count=len(
+                selected_agents
+            ),
+        )
+
+        if not selected_agents:
+            duration = (
+                perf_counter()
+                - orchestration_start
+            )
+
+            print(
+                "Nenhum agente foi selecionado."
+            )
+            print(
+                f"Tempo total: {duration:.4f}s"
+            )
+            print(
+                "=========================================="
+            )
+            print()
+
+            return None
+
+        pipeline_result = (
+            ExecutionPipeline.execute(
+                event_name=event_name,
+                strategy_name=(
+                    plan.strategy_name
+                ),
+                agents=selected_agents,
+                payload=payload,
+            )
+        )
+
+        orchestration_duration = (
+            perf_counter()
+            - orchestration_start
+        )
+
+        ignored = (
+            len(available_agents)
+            - len(selected_agents)
+        )
+
+        AIOrchestrator._print_summary(
+            result=pipeline_result,
+            ignored_agents=ignored,
+            orchestration_duration=(
+                orchestration_duration
+            ),
+        )
+
+        return pipeline_result
+
+    @staticmethod
+    def _print_header(
+        *,
+        event_name: str,
+        plan: OrchestrationPlan,
+        available_count: int,
+        selected_count: int,
+    ) -> None:
         print()
         print(
             "=========================================="
@@ -38,83 +137,56 @@ class AIOrchestrator:
             f"{datetime.now().isoformat(timespec='seconds')}"
         )
         print(
-            f"Agentes encontrados: {len(handlers)}"
+            f"Estratégia: {plan.strategy_name}"
+        )
+        print(f"Motivo: {plan.reason}")
+        print(
+            f"Agentes disponíveis: "
+            f"{available_count}"
+        )
+        print(
+            f"Agentes selecionados: "
+            f"{selected_count}"
         )
 
-        if not handlers:
+        if plan.selected_agents:
             print(
-                "Nenhum agente registrado "
-                "para este evento."
-            )
-            print(
-                "=========================================="
-            )
-            print()
-            return
-
-        executados = 0
-        erros = 0
-
-        for handler in handlers:
-            nome_agente = (
-                handler.__qualname__.split(".")[0]
+                "Plano solicitado: "
+                + " → ".join(
+                    plan.selected_agents
+                )
             )
 
-            inicio_agente = perf_counter()
-
-            print()
-            print(
-                f"Executando: {nome_agente}"
-            )
-
-            try:
-                handler(payload)
-
-                duracao_agente = (
-                    perf_counter() -
-                    inicio_agente
-                )
-
-                executados += 1
-
-                print(
-                    f"{nome_agente} concluído "
-                    f"em {duracao_agente:.4f}s."
-                )
-
-            except Exception as error:
-                duracao_agente = (
-                    perf_counter() -
-                    inicio_agente
-                )
-
-                erros += 1
-
-                print(
-                    f"Erro ao executar "
-                    f"{nome_agente} "
-                    f"após {duracao_agente:.4f}s:"
-                )
-                print(
-                    f"{type(error).__name__}: "
-                    f"{error}"
-                )
-
-        duracao_total = (
-            perf_counter() -
-            inicio_orquestracao
-        )
-
+    @staticmethod
+    def _print_summary(
+        *,
+        result: PipelineResult,
+        ignored_agents: int,
+        orchestration_duration: float,
+    ) -> None:
         print()
         print(
             "Resumo da orquestração:"
         )
         print(
-            f"Agentes concluídos: {executados}"
+            "Agentes concluídos: "
+            f"{result.completed_agents}"
         )
-        print(f"Erros: {erros}")
         print(
-            f"Tempo total: {duracao_total:.4f}s"
+            "Agentes ignorados: "
+            f"{ignored_agents}"
+        )
+        print(
+            "Falhas: "
+            f"{result.failed_agents}"
+        )
+        print(
+            "Tempo do pipeline: "
+            f"{result.duration_seconds:.4f}s"
+        )
+        print(
+            "Tempo total: "
+            f"{orchestration_duration:.4f}s"
         )
         print(
             "=========================================="
