@@ -4,16 +4,33 @@ import {
   FileUp,
   LayoutDashboard,
   ServerCog,
+  ShieldCheck,
   Users,
   WalletCards,
 } from "lucide-react";
+import {
+  type LucideIcon,
+} from "lucide-react";
 import { NavLink } from "react-router-dom";
 
-const menuItems = [
+interface MenuItem {
+  label: string;
+  path: string;
+  icon: LucideIcon;
+  end?: boolean;
+}
+
+interface MenuSectionProps {
+  title: string;
+  items: MenuItem[];
+}
+
+const principalItems: MenuItem[] = [
   {
     label: "Dashboard",
     path: "/",
     icon: LayoutDashboard,
+    end: true,
   },
   {
     label: "Clientes",
@@ -25,17 +42,62 @@ const menuItems = [
     path: "/upload",
     icon: FileUp,
   },
+];
+
+const intelligenceItems: MenuItem[] = [
+  {
+    label: "Executive Center",
+    path: "/executive-center",
+    icon: ShieldCheck,
+  },
   {
     label: "Brain",
     path: "/brain",
     icon: BrainCircuit,
   },
+];
+
+const administrationItems: MenuItem[] = [
   {
-    label: "Agent Operations",
+    label: "AI Operations",
     path: "/agent-operations",
     icon: ServerCog,
   },
 ];
+
+function MenuSection({
+  title,
+  items,
+}: MenuSectionProps) {
+  return (
+    <div className="sidebar-menu-section">
+      <p className="sidebar-section-title">
+        {title}
+      </p>
+
+      {items.map((item) => {
+        const Icon = item.icon;
+
+        return (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            end={item.end}
+            className={({ isActive }) =>
+              isActive
+                ? "sidebar-link sidebar-link-active"
+                : "sidebar-link"
+            }
+          >
+            <Icon size={20} />
+
+            <span>{item.label}</span>
+          </NavLink>
+        );
+      })}
+    </div>
+  );
+}
 
 export function Sidebar() {
   return (
@@ -47,6 +109,7 @@ export function Sidebar() {
 
         <div>
           <strong>Auneron AI</strong>
+
           <span>
             Business Intelligence
           </span>
@@ -54,31 +117,20 @@ export function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        <p className="sidebar-section-title">
-          MENU PRINCIPAL
-        </p>
+        <MenuSection
+          title="MENU PRINCIPAL"
+          items={principalItems}
+        />
 
-        {menuItems.map((item) => {
-          const Icon = item.icon;
+        <MenuSection
+          title="INTELIGÊNCIA"
+          items={intelligenceItems}
+        />
 
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === "/"}
-              className={({
-                isActive,
-              }) =>
-                isActive
-                  ? "sidebar-link sidebar-link-active"
-                  : "sidebar-link"
-              }
-            >
-              <Icon size={20} />
-              <span>{item.label}</span>
-            </NavLink>
-          );
-        })}
+        <MenuSection
+          title="ADMINISTRAÇÃO"
+          items={administrationItems}
+        />
       </nav>
 
       <div className="sidebar-footer">
@@ -86,7 +138,10 @@ export function Sidebar() {
 
         <div>
           <strong>Auneron AI</strong>
-          <span>Versão 3.0 Alpha</span>
+
+          <span>
+            Versão 3.0 Alpha
+          </span>
         </div>
       </div>
     </aside>

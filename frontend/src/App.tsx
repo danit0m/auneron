@@ -9,6 +9,7 @@ import AgentOperations from "./pages/AgentOperations";
 import Brain from "./pages/Brain";
 import Clientes from "./pages/Clientes";
 import { Dashboard } from "./pages/Dashboard";
+import ExecutiveCenter from "./pages/ExecutiveCenter";
 import { Upload } from "./pages/Upload";
 
 function App() {
@@ -29,6 +30,11 @@ function App() {
           <Route
             path="/upload"
             element={<Upload />}
+          />
+
+          <Route
+            path="/executive-center"
+            element={<ExecutiveCenter />}
           />
 
           <Route
