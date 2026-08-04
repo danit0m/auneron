@@ -4,14 +4,12 @@ import {
   Bot,
   BrainCircuit,
   CheckCircle2,
-  ChevronRight,
   Clock3,
   Cpu,
   RefreshCw,
   ServerCog,
   ShieldCheck,
   Sparkles,
-  Target,
   Workflow,
   XCircle,
 } from "lucide-react";
@@ -23,9 +21,12 @@ import {
 } from "react";
 
 import api from "../api/api";
-import ExecutiveDecisionCard from "../components/executive/ExecutiveDecisionCard";
-import { Header } from "../components/layout/Header";
+import AgentExecutionFlow from "../components/executive/AgentExecutionFlow";
 import ConfidenceMeter from "../components/executive/ConfidenceMeter";
+import DecisionContextCard from "../components/executive/DecisionContextCard";
+import ExecutiveDecisionCard from "../components/executive/ExecutiveDecisionCard";
+import ExplainabilityCard from "../components/executive/ExplainabilityCard";
+import { Header } from "../components/layout/Header";
 import type {
   AgentMetrics,
   DecisionHistoryResponse,
@@ -34,7 +35,6 @@ import type {
   OrchestratorMetrics,
   OrchestratorRegistry,
   OrchestratorTelemetry,
-  StoredDecision,
   TelemetryRecord,
 } from "../types/orchestrator";
 
@@ -331,11 +331,6 @@ export default function AgentOperations() {
       filtroStatus,
     ]);
 
-  const decisaoAtual: StoredDecision | null =
-    latestDecision?.available
-      ? latestDecision.decision
-      : null;
-
   if (carregando) {
     return (
       <div className="page">
@@ -581,114 +576,21 @@ export default function AgentOperations() {
               data={latestDecision}
             />
 
-            {decisaoAtual && (
-              <div className="decision-support-grid">
-                <article className="decision-signals-card">
-                  <div className="decision-card-title">
-                    <Target size={19} />
+            <div className="decision-support-grid">
+              <ExplainabilityCard
+                data={latestDecision}
+              />
 
-                    <div>
-                      <h3>
-                        Evidências utilizadas
-                      </h3>
+              <DecisionContextCard
+                data={latestDecision}
+              />
+            </div>
 
-                      <p>
-                        Sinais que sustentaram
-                        a decisão.
-                      </p>
-                    </div>
-                  </div>
+            <AgentExecutionFlow
+              decisionData={latestDecision}
+              telemetryData={telemetry}
+            />
 
-                  <div className="decision-signals-list">
-                    {decisaoAtual.signals.map(
-                      (signal) => (
-                        <div
-                          key={signal.name}
-                          className="decision-signal-item"
-                        >
-                          <CheckCircle2
-                            size={17}
-                          />
-
-                          <div>
-                            <strong>
-                              {formatarNome(
-                                signal.name,
-                              )}
-                            </strong>
-
-                            <span>
-                              {
-                                signal.description
-                              }
-                            </span>
-
-                            <small>
-                              Valor analisado:{" "}
-                              {String(
-                                signal.value,
-                              )}
-                            </small>
-                          </div>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </article>
-
-                <article className="decision-agents-card">
-                  <div className="decision-card-title">
-                    <Workflow size={19} />
-
-                    <div>
-                      <h3>
-                        Agentes acionados
-                      </h3>
-
-                      <p>
-                        Especialistas escolhidos
-                        pelo Decision Engine.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="decision-agent-flow">
-                    {decisaoAtual.selected_agents.map(
-                      (agent, index) => (
-                        <div
-                          key={agent}
-                          className="decision-agent-step"
-                        >
-                          <div className="decision-agent-number">
-                            {index + 1}
-                          </div>
-
-                          <div>
-                            <strong>
-                              {agent}
-                            </strong>
-
-                            <span>
-                              Ordem de execução
-                            </span>
-                          </div>
-
-                          {index <
-                            decisaoAtual
-                              .selected_agents
-                              .length -
-                              1 && (
-                            <ChevronRight
-                              size={17}
-                            />
-                          )}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </article>
-              </div>
-            )}
           </div>
         </section>
 
