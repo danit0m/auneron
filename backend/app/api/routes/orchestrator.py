@@ -1,7 +1,11 @@
+from typing import Any
+
 from fastapi import APIRouter
 from fastapi import Query
 
 from app.orchestrator import (
+    decision_engine,
+    decision_store,
     metrics_collector,
     registry,
     telemetry_service,
@@ -15,11 +19,7 @@ router = APIRouter(
 
 
 @router.get("/health")
-def orchestrator_health() -> dict:
-    """
-    Retorna o estado geral do AI Orchestrator.
-    """
-
+def orchestrator_health() -> dict[str, Any]:
     registry_data = registry.list_registry()
     metrics_summary = metrics_collector.get_summary()
 
@@ -37,16 +37,12 @@ def orchestrator_health() -> dict:
         "successes": metrics_summary["successes"],
         "failures": metrics_summary["failures"],
         "success_rate": metrics_summary["success_rate"],
+        "stored_decisions": decision_store.count(),
     }
 
 
 @router.get("/registry")
-def orchestrator_registry() -> dict:
-    """
-    Lista os eventos e agentes registrados,
-    incluindo suas prioridades.
-    """
-
+def orchestrator_registry() -> dict[str, Any]:
     registry_data = registry.list_registry()
 
     registered_agents = sum(
@@ -62,14 +58,7 @@ def orchestrator_registry() -> dict:
 
 
 @router.get("/metrics")
-def orchestrator_metrics() -> dict:
-    """
-    Retorna as métricas acumuladas dos agentes.
-
-    As métricas permanecem em memória e são
-    reiniciadas quando o backend é reiniciado.
-    """
-
+def orchestrator_metrics() -> dict[str, Any]:
     return {
         "summary": metrics_collector.get_summary(),
         "agents": metrics_collector.get_all_metrics(),
@@ -92,13 +81,7 @@ def orchestrator_telemetry(
         default=None,
         pattern="^(SUCCESS|ERROR|success|error)$",
     ),
-) -> dict:
-    """
-    Retorna os registros recentes de telemetria.
-
-    Permite filtrar por agente e status.
-    """
-
+) -> dict[str, Any]:
     normalized_status = (
         status.upper()
         if status is not None
@@ -119,4 +102,66 @@ def orchestrator_telemetry(
             "status": normalized_status,
         },
         "records": records,
+    }
+
+
+@router.get("/decision/latest")
+def latest_decision() -> dict[str, Any]:
+    latest = decision_store.get_latest()
+
+    if latest is None:
+        return {
+            "available": False,
+            "decision": None,
+        }
+
+    return {
+        "available": True,
+        "decision": latest.to_dict(),
+    }
+
+
+@router.get("/decisions")
+def list_decisions(
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=500,
+    ),
+    decision_name: str | None = Query(
+        default=None,
+        min_length=2,
+        max_length=100,
+    ),
+    event_name: str | None = Query(
+        default=None,
+        min_length=2,
+        max_length=100,
+    ),
+) -> dict[str, Any]:
+    records = decision_store.list_records(
+        limit=limit,
+        decision_name=decision_name,
+        event_name=event_name,
+    )
+
+    return {
+        "total_returned": len(records),
+        "stored_decisions": decision_store.count(),
+        "limit": limit,
+        "filters": {
+            "decision_name": decision_name,
+            "event_name": event_name,
+        },
+        "records": records,
+    }
+
+
+@router.get("/rules")
+def orchestrator_rules() -> dict[str, Any]:
+    rules = decision_engine.list_rules()
+
+    return {
+        "total": len(rules),
+        "rules": rules,
     }
