@@ -1,3 +1,11 @@
+from app.orchestrator.decision import (
+    DecisionSignal,
+    OrchestrationDecision,
+)
+from app.orchestrator.decision_engine import (
+    DecisionEngine,
+    decision_engine,
+)
 from app.orchestrator.metrics import (
     AgentMetrics,
     MetricsCollector,
@@ -17,9 +25,10 @@ from app.orchestrator.registry import (
     RegisteredAgent,
     registry,
 )
-from app.orchestrator.strategy import (
-    OrchestrationPlan,
-    OrchestrationStrategy,
+from app.orchestrator.rules import (
+    DEFAULT_RULES,
+    DecisionContext,
+    DecisionRule,
 )
 from app.orchestrator.telemetry import (
     TelemetryRecord,
@@ -29,18 +38,23 @@ from app.orchestrator.telemetry import (
 
 __all__ = [
     "AIOrchestrator",
+    "AgentExecutionResult",
     "AgentHandler",
     "AgentMetrics",
     "AgentRegistry",
-    "RegisteredAgent",
-    "AgentExecutionResult",
+    "DecisionContext",
+    "DecisionEngine",
+    "DecisionRule",
+    "DecisionSignal",
     "ExecutionPipeline",
-    "PipelineResult",
     "MetricsCollector",
-    "OrchestrationPlan",
-    "OrchestrationStrategy",
+    "OrchestrationDecision",
+    "PipelineResult",
+    "RegisteredAgent",
     "TelemetryRecord",
     "TelemetryService",
+    "DEFAULT_RULES",
+    "decision_engine",
     "metrics_collector",
     "registry",
     "telemetry_service",

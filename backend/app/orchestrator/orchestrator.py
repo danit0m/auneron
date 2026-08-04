@@ -1,7 +1,13 @@
-from datetime import datetime
+﻿from datetime import datetime
 from time import perf_counter
 from typing import Any
 
+from app.orchestrator.decision import (
+    OrchestrationDecision,
+)
+from app.orchestrator.decision_engine import (
+    decision_engine,
+)
 from app.orchestrator.pipeline import (
     ExecutionPipeline,
     PipelineResult,
@@ -9,22 +15,18 @@ from app.orchestrator.pipeline import (
 from app.orchestrator.registry import (
     registry,
 )
-from app.orchestrator.strategy import (
-    OrchestrationPlan,
-    OrchestrationStrategy,
-)
 
 
 class AIOrchestrator:
     """
-    Coordena o ciclo completo de orquestração.
+    Coordena o ciclo completo do Auneron AI.
 
-    Responsabilidades:
-    - receber o evento;
-    - solicitar o plano à Strategy Engine;
-    - selecionar os agentes;
-    - delegar a execução ao Pipeline;
-    - apresentar o resumo.
+    Fluxo:
+    - recebe um evento;
+    - solicita uma decisão ao Decision Engine;
+    - seleciona os agentes registrados;
+    - delega a execução ao Pipeline;
+    - apresenta o resumo da operação.
     """
 
     @staticmethod
@@ -34,34 +36,30 @@ class AIOrchestrator:
     ) -> PipelineResult | None:
         orchestration_start = perf_counter()
 
-        plan = (
-            OrchestrationStrategy.build_plan(
-                event_name=event_name,
-                payload=payload,
-            )
+        decision = decision_engine.decide(
+            event_name=event_name,
+            payload=payload,
         )
 
-        available_agents = (
-            registry.get_agents(
-                event_name,
-            )
+        available_agents = registry.get_agents(
+            event_name,
         )
 
         selected_agents = (
             registry.get_selected_agents(
                 event_name,
-                plan.selected_agents,
+                decision.selected_agents,
             )
         )
 
         AIOrchestrator._print_header(
             event_name=event_name,
-            plan=plan,
+            decision=decision,
             available_count=len(
-                available_agents
+                available_agents,
             ),
             selected_count=len(
-                selected_agents
+                selected_agents,
             ),
         )
 
@@ -88,29 +86,27 @@ class AIOrchestrator:
             ExecutionPipeline.execute(
                 event_name=event_name,
                 strategy_name=(
-                    plan.strategy_name
+                    decision.decision_name
                 ),
                 agents=selected_agents,
                 payload=payload,
             )
         )
 
-        orchestration_duration = (
+        total_duration = (
             perf_counter()
             - orchestration_start
         )
 
-        ignored = (
+        ignored_agents = (
             len(available_agents)
             - len(selected_agents)
         )
 
         AIOrchestrator._print_summary(
             result=pipeline_result,
-            ignored_agents=ignored,
-            orchestration_duration=(
-                orchestration_duration
-            ),
+            ignored_agents=ignored_agents,
+            total_duration=total_duration,
         )
 
         return pipeline_result
@@ -119,7 +115,7 @@ class AIOrchestrator:
     def _print_header(
         *,
         event_name: str,
-        plan: OrchestrationPlan,
+        decision: OrchestrationDecision,
         available_count: int,
         selected_count: int,
     ) -> None:
@@ -137,23 +133,29 @@ class AIOrchestrator:
             f"{datetime.now().isoformat(timespec='seconds')}"
         )
         print(
-            f"Estratégia: {plan.strategy_name}"
+            f"Decisão: {decision.decision_name}"
         )
-        print(f"Motivo: {plan.reason}")
         print(
-            f"Agentes disponíveis: "
+            "Confiança: "
+            f"{decision.confidence * 100:.1f}%"
+        )
+        print(
+            f"Motivo: {decision.reason}"
+        )
+        print(
+            "Agentes disponíveis: "
             f"{available_count}"
         )
         print(
-            f"Agentes selecionados: "
+            "Agentes selecionados: "
             f"{selected_count}"
         )
 
-        if plan.selected_agents:
+        if decision.selected_agents:
             print(
                 "Plano solicitado: "
                 + " → ".join(
-                    plan.selected_agents
+                    decision.selected_agents
                 )
             )
 
@@ -162,7 +164,7 @@ class AIOrchestrator:
         *,
         result: PipelineResult,
         ignored_agents: int,
-        orchestration_duration: float,
+        total_duration: float,
     ) -> None:
         print()
         print(
@@ -177,8 +179,7 @@ class AIOrchestrator:
             f"{ignored_agents}"
         )
         print(
-            "Falhas: "
-            f"{result.failed_agents}"
+            f"Falhas: {result.failed_agents}"
         )
         print(
             "Tempo do pipeline: "
@@ -186,7 +187,7 @@ class AIOrchestrator:
         )
         print(
             "Tempo total: "
-            f"{orchestration_duration:.4f}s"
+            f"{total_duration:.4f}s"
         )
         print(
             "=========================================="
