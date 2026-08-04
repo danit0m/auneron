@@ -3,6 +3,9 @@ from typing import Any
 from app.orchestrator.decision import (
     OrchestrationDecision,
 )
+from app.orchestrator.decision_store import (
+    decision_store,
+)
 from app.orchestrator.rules import (
     DEFAULT_RULES,
     DecisionContext,
@@ -15,12 +18,11 @@ class DecisionEngine:
     """
     Núcleo central de decisão do Auneron AI.
 
-    O Decision Engine:
-    - normaliza os dados recebidos;
-    - avalia as regras por prioridade;
-    - seleciona a primeira regra compatível;
-    - gera uma decisão explicável;
-    - informa agentes, confiança e sinais.
+    Responsabilidades:
+    - normalizar o evento e o payload;
+    - avaliar as regras por prioridade;
+    - produzir uma decisão explicável;
+    - armazenar a decisão no DecisionStore.
     """
 
     def __init__(
@@ -48,22 +50,37 @@ class DecisionEngine:
         )
 
         rule = self._find_matching_rule(
-            context
+            context,
         )
 
         decision = rule.build_decision(
-            context
+            context,
+        )
+
+        stored_decision = decision_store.save(
+            event_name=event_name,
+            decision=decision,
+            cliente=context.cliente,
+            valor=context.valor,
+            status=context.status,
+            vencimento=context.vencimento,
+            dias_atraso=context.dias_atraso,
         )
 
         self._print_decision(
             context=context,
             decision=decision,
             rule=rule,
+            decision_id=(
+                stored_decision.decision_id
+            ),
         )
 
         return decision
 
-    def list_rules(self) -> list[dict]:
+    def list_rules(
+        self,
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "name": rule.name,
@@ -94,6 +111,7 @@ class DecisionEngine:
         context: DecisionContext,
         decision: OrchestrationDecision,
         rule: DecisionRule,
+        decision_id: str,
     ) -> None:
         print()
         print(
@@ -107,11 +125,11 @@ class DecisionEngine:
             f"Regra aplicada: {rule.name}"
         )
         print(
-            f"Prioridade da regra: "
+            "Prioridade da regra: "
             f"{rule.priority}"
         )
         print(
-            f"Decisão: "
+            "Decisão: "
             f"{decision.decision_name}"
         )
         print(
@@ -128,15 +146,18 @@ class DecisionEngine:
             f"Status: {context.status}"
         )
         print(
-            f"Dias em atraso: "
+            "Dias em atraso: "
             f"{context.dias_atraso}"
+        )
+        print(
+            f"Decision ID: {decision_id}"
         )
 
         if decision.selected_agents:
             print(
                 "Agentes definidos: "
                 + " → ".join(
-                    decision.selected_agents
+                    decision.selected_agents,
                 )
             )
         else:
