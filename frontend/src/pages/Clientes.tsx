@@ -8,12 +8,22 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import api from "../api/api";
+import ClienteModal from "../components/clientes/ClienteModal";
 import ClienteTable from "../components/clientes/ClienteTable";
+import ConfirmDeleteModal from "../components/clientes/ConfirmDeleteModal";
 import { Header } from "../components/layout/Header";
-import type { Account } from "../types/account";
+import type {
+  Account,
+  AccountCreate,
+} from "../types/account";
 
 function formatarMoeda(valor: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -24,59 +34,92 @@ function formatarMoeda(valor: number): string {
 
 export default function Clientes() {
   const [clientes, setClientes] = useState<Account[]>([]);
+
   const [carregando, setCarregando] = useState(true);
   const [atualizando, setAtualizando] = useState(false);
   const [erro, setErro] = useState("");
+
   const [pesquisa, setPesquisa] = useState("");
   const [statusFiltro, setStatusFiltro] = useState("todos");
 
-  const carregarClientes = useCallback(async (mostrarCarregamento = true) => {
-    try {
-      if (mostrarCarregamento) {
-        setCarregando(true);
-      } else {
-        setAtualizando(true);
+  const [modalAberto, setModalAberto] = useState(false);
+  const [clienteSelecionado, setClienteSelecionado] =
+    useState<Account | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [erroModal, setErroModal] = useState("");
+
+  const [modalExclusaoAberto, setModalExclusaoAberto] =
+    useState(false);
+  const [clienteParaExcluir, setClienteParaExcluir] =
+    useState<Account | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
+  const [erroExclusao, setErroExclusao] = useState("");
+
+  const carregarClientes = useCallback(
+    async (mostrarCarregamento = true) => {
+      try {
+        if (mostrarCarregamento) {
+          setCarregando(true);
+        } else {
+          setAtualizando(true);
+        }
+
+        setErro("");
+
+        const response = await api.get<Account[]>(
+          "/accounts/",
+          {
+            params: {
+              skip: 0,
+              limit: 200,
+            },
+          },
+        );
+
+        setClientes(response.data);
+      } catch (error) {
+        console.error(
+          "Erro ao carregar clientes:",
+          error,
+        );
+
+        setErro(
+          "Não foi possível carregar os clientes. Verifique se o backend está em execução.",
+        );
+      } finally {
+        setCarregando(false);
+        setAtualizando(false);
       }
-
-      setErro("");
-
-      const response = await api.get<Account[]>("/accounts/", {
-        params: {
-          skip: 0,
-          limit: 200,
-        },
-      });
-
-      setClientes(response.data);
-    } catch (error) {
-      console.error("Erro ao carregar clientes:", error);
-
-      setErro(
-        "Não foi possível carregar os clientes. Verifique se o backend está em execução.",
-      );
-    } finally {
-      setCarregando(false);
-      setAtualizando(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     void carregarClientes();
   }, [carregarClientes]);
 
   const clientesFiltrados = useMemo(() => {
-    const pesquisaNormalizada = pesquisa.trim().toLowerCase();
+    const pesquisaNormalizada = pesquisa
+      .trim()
+      .toLowerCase();
 
     return clientes.filter((cliente) => {
+      const nome = cliente.cliente.toLowerCase();
+      const email = (cliente.email || "").toLowerCase();
+      const whatsapp = (
+        cliente.whatsapp || ""
+      ).toLowerCase();
+      const status = cliente.status.toLowerCase();
+
       const correspondePesquisa =
         !pesquisaNormalizada ||
-        cliente.cliente.toLowerCase().includes(pesquisaNormalizada) ||
-        cliente.email?.toLowerCase().includes(pesquisaNormalizada) ||
-        cliente.whatsapp?.toLowerCase().includes(pesquisaNormalizada);
+        nome.includes(pesquisaNormalizada) ||
+        email.includes(pesquisaNormalizada) ||
+        whatsapp.includes(pesquisaNormalizada);
 
       const correspondeStatus =
         statusFiltro === "todos" ||
-        cliente.status.toLowerCase() === statusFiltro;
+        status === statusFiltro;
 
       return correspondePesquisa && correspondeStatus;
     });
@@ -84,19 +127,23 @@ export default function Clientes() {
 
   const resumo = useMemo(() => {
     const pagos = clientes.filter(
-      (cliente) => cliente.status.toLowerCase() === "pago",
+      (cliente) =>
+        cliente.status.toLowerCase() === "pago",
     ).length;
 
     const abertos = clientes.filter(
-      (cliente) => cliente.status.toLowerCase() === "aberto",
+      (cliente) =>
+        cliente.status.toLowerCase() === "aberto",
     ).length;
 
     const atrasados = clientes.filter(
-      (cliente) => cliente.status.toLowerCase() === "atrasado",
+      (cliente) =>
+        cliente.status.toLowerCase() === "atrasado",
     ).length;
 
     const valorTotal = clientes.reduce(
-      (total, cliente) => total + cliente.valor,
+      (total, cliente) =>
+        total + cliente.valor,
       0,
     );
 
@@ -110,15 +157,134 @@ export default function Clientes() {
   }, [clientes]);
 
   function abrirNovoCliente() {
-    console.log("Abrir modal de novo cliente");
+    setClienteSelecionado(null);
+    setErroModal("");
+    setModalAberto(true);
+  }
+
+  function fecharModal() {
+    if (salvando) {
+      return;
+    }
+
+    setModalAberto(false);
+    setClienteSelecionado(null);
+    setErroModal("");
   }
 
   function editarCliente(cliente: Account) {
-    console.log("Editar cliente:", cliente);
+    setClienteSelecionado(cliente);
+    setErroModal("");
+    setModalAberto(true);
   }
 
-  function excluirCliente(cliente: Account) {
-    console.log("Excluir cliente:", cliente);
+  async function salvarCliente(
+    dados: AccountCreate,
+  ) {
+    try {
+      setSalvando(true);
+      setErroModal("");
+
+      if (clienteSelecionado) {
+        const response =
+          await api.put<Account>(
+            `/accounts/${clienteSelecionado.id}`,
+            dados,
+          );
+
+        setClientes((clientesAtuais) =>
+          clientesAtuais.map((cliente) =>
+            cliente.id === response.data.id
+              ? response.data
+              : cliente,
+          ),
+        );
+      } else {
+        const response =
+          await api.post<Account>(
+            "/accounts/",
+            dados,
+          );
+
+        setClientes((clientesAtuais) => [
+          ...clientesAtuais,
+          response.data,
+        ]);
+      }
+
+      fecharModal();
+
+      await carregarClientes(false);
+    } catch (error) {
+      console.error(
+        "Erro ao salvar cliente:",
+        error,
+      );
+
+      setErroModal(
+        clienteSelecionado
+          ? "Não foi possível atualizar o cliente. Verifique os dados informados."
+          : "Não foi possível cadastrar o cliente. Verifique os dados informados.",
+      );
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  function abrirConfirmacaoExclusao(
+    cliente: Account,
+  ) {
+    setClienteParaExcluir(cliente);
+    setErroExclusao("");
+    setModalExclusaoAberto(true);
+  }
+
+  function fecharConfirmacaoExclusao() {
+    if (excluindo) {
+      return;
+    }
+
+    setModalExclusaoAberto(false);
+    setClienteParaExcluir(null);
+    setErroExclusao("");
+  }
+
+  async function confirmarExclusao() {
+    if (!clienteParaExcluir) {
+      return;
+    }
+
+    try {
+      setExcluindo(true);
+      setErroExclusao("");
+
+      await api.delete(
+        `/accounts/${clienteParaExcluir.id}`,
+      );
+
+      setClientes((clientesAtuais) =>
+        clientesAtuais.filter(
+          (cliente) =>
+            cliente.id !== clienteParaExcluir.id,
+        ),
+      );
+
+      setModalExclusaoAberto(false);
+      setClienteParaExcluir(null);
+
+      await carregarClientes(false);
+    } catch (error) {
+      console.error(
+        "Erro ao excluir cliente:",
+        error,
+      );
+
+      setErroExclusao(
+        "Não foi possível excluir o cliente. Tente novamente.",
+      );
+    } finally {
+      setExcluindo(false);
+    }
   }
 
   return (
@@ -135,10 +301,13 @@ export default function Clientes() {
               Carteira de clientes
             </span>
 
-            <h2>Visão geral dos clientes</h2>
+            <h2>
+              Visão geral dos clientes
+            </h2>
 
             <p>
-              Consulte contatos, valores, vencimentos e situação financeira.
+              Consulte contatos, valores,
+              vencimentos e situação financeira.
             </p>
           </div>
 
@@ -208,7 +377,9 @@ export default function Clientes() {
 
             <div>
               <span>Valor total</span>
-              <strong>{formatarMoeda(resumo.valorTotal)}</strong>
+              <strong>
+                {formatarMoeda(resumo.valorTotal)}
+              </strong>
               <small>Carteira financeira</small>
             </div>
           </article>
@@ -224,7 +395,9 @@ export default function Clientes() {
                 value={pesquisa}
                 placeholder="Pesquisar por nome, e-mail ou WhatsApp..."
                 aria-label="Pesquisar clientes"
-                onChange={(event) => setPesquisa(event.target.value)}
+                onChange={(event) =>
+                  setPesquisa(event.target.value)
+                }
               />
             </div>
 
@@ -233,37 +406,65 @@ export default function Clientes() {
                 className="clientes-status-filter"
                 value={statusFiltro}
                 aria-label="Filtrar clientes por status"
-                onChange={(event) => setStatusFiltro(event.target.value)}
+                onChange={(event) =>
+                  setStatusFiltro(
+                    event.target.value,
+                  )
+                }
               >
-                <option value="todos">Todos os status</option>
-                <option value="pago">Pago</option>
-                <option value="aberto">Aberto</option>
-                <option value="atrasado">Atrasado</option>
+                <option value="todos">
+                  Todos os status
+                </option>
+                <option value="pago">
+                  Pago
+                </option>
+                <option value="aberto">
+                  Aberto
+                </option>
+                <option value="atrasado">
+                  Atrasado
+                </option>
               </select>
 
               <button
                 type="button"
                 className="secondary-button"
                 disabled={atualizando}
-                onClick={() => void carregarClientes(false)}
+                onClick={() =>
+                  void carregarClientes(false)
+                }
               >
                 <RefreshCw
                   size={17}
-                  className={atualizando ? "rotating-icon" : ""}
+                  className={
+                    atualizando
+                      ? "rotating-icon"
+                      : ""
+                  }
                 />
 
-                {atualizando ? "Atualizando..." : "Atualizar"}
+                {atualizando
+                  ? "Atualizando..."
+                  : "Atualizar"}
               </button>
             </div>
           </div>
 
           <div className="clientes-results-info">
             <span>
-              Exibindo <strong>{clientesFiltrados.length}</strong> de{" "}
-              <strong>{clientes.length}</strong> clientes
+              Exibindo{" "}
+              <strong>
+                {clientesFiltrados.length}
+              </strong>{" "}
+              de{" "}
+              <strong>
+                {clientes.length}
+              </strong>{" "}
+              clientes
             </span>
 
-            {(pesquisa || statusFiltro !== "todos") && (
+            {(pesquisa ||
+              statusFiltro !== "todos") && (
               <button
                 type="button"
                 className="clear-filter-button"
@@ -287,14 +488,18 @@ export default function Clientes() {
               <AlertTriangle size={23} />
 
               <div>
-                <strong>Não foi possível carregar os clientes</strong>
+                <strong>
+                  Não foi possível carregar os clientes
+                </strong>
                 <span>{erro}</span>
               </div>
 
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => void carregarClientes()}
+                onClick={() =>
+                  void carregarClientes()
+                }
               >
                 Tentar novamente
               </button>
@@ -303,11 +508,29 @@ export default function Clientes() {
             <ClienteTable
               clientes={clientesFiltrados}
               onEdit={editarCliente}
-              onDelete={excluirCliente}
+              onDelete={abrirConfirmacaoExclusao}
             />
           )}
         </section>
       </section>
+
+      <ClienteModal
+        aberto={modalAberto}
+        cliente={clienteSelecionado}
+        salvando={salvando}
+        erro={erroModal}
+        onClose={fecharModal}
+        onSubmit={salvarCliente}
+      />
+
+      <ConfirmDeleteModal
+        aberto={modalExclusaoAberto}
+        cliente={clienteParaExcluir}
+        excluindo={excluindo}
+        erro={erroExclusao}
+        onClose={fecharConfirmacaoExclusao}
+        onConfirm={confirmarExclusao}
+      />
     </div>
   );
 }

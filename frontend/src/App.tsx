@@ -1,6 +1,12 @@
-﻿import { BrowserRouter, Route, Routes } from "react-router-dom";
+﻿import {
+  BrowserRouter,
+  Route,
+  Routes,
+} from "react-router-dom";
 
 import { Layout } from "./components/layout/Layout";
+import AgentOperations from "./pages/AgentOperations";
+import Brain from "./pages/Brain";
 import Clientes from "./pages/Clientes";
 import { Dashboard } from "./pages/Dashboard";
 import { Upload } from "./pages/Upload";
@@ -10,9 +16,30 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/clientes" element={<Clientes />} />
-          <Route path="/upload" element={<Upload />} />
+          <Route
+            path="/"
+            element={<Dashboard />}
+          />
+
+          <Route
+            path="/clientes"
+            element={<Clientes />}
+          />
+
+          <Route
+            path="/upload"
+            element={<Upload />}
+          />
+
+          <Route
+            path="/brain"
+            element={<Brain />}
+          />
+
+          <Route
+            path="/agent-operations"
+            element={<AgentOperations />}
+          />
         </Route>
       </Routes>
     </BrowserRouter>

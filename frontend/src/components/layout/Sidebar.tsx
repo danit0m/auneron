@@ -1,7 +1,9 @@
 import {
   BarChart3,
+  BrainCircuit,
   FileUp,
   LayoutDashboard,
+  ServerCog,
   Users,
   WalletCards,
 } from "lucide-react";
@@ -23,6 +25,16 @@ const menuItems = [
     path: "/upload",
     icon: FileUp,
   },
+  {
+    label: "Brain",
+    path: "/brain",
+    icon: BrainCircuit,
+  },
+  {
+    label: "Agent Operations",
+    path: "/agent-operations",
+    icon: ServerCog,
+  },
 ];
 
 export function Sidebar() {
@@ -34,13 +46,17 @@ export function Sidebar() {
         </div>
 
         <div>
-          <strong>Auneron</strong>
-          <span>Finance</span>
+          <strong>Auneron AI</strong>
+          <span>
+            Business Intelligence
+          </span>
         </div>
       </div>
 
       <nav className="sidebar-nav">
-        <p className="sidebar-section-title">MENU PRINCIPAL</p>
+        <p className="sidebar-section-title">
+          MENU PRINCIPAL
+        </p>
 
         {menuItems.map((item) => {
           const Icon = item.icon;
@@ -50,7 +66,9 @@ export function Sidebar() {
               key={item.path}
               to={item.path}
               end={item.path === "/"}
-              className={({ isActive }) =>
+              className={({
+                isActive,
+              }) =>
                 isActive
                   ? "sidebar-link sidebar-link-active"
                   : "sidebar-link"
@@ -67,8 +85,8 @@ export function Sidebar() {
         <BarChart3 size={20} />
 
         <div>
-          <strong>Auneron Finance</strong>
-          <span>Versão 1.0</span>
+          <strong>Auneron AI</strong>
+          <span>Versão 3.0 Alpha</span>
         </div>
       </div>
     </aside>
