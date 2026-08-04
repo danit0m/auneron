@@ -1,0 +1,168 @@
+export const colors = {
+  brand: {
+    50: "#f5f3ff",
+    100: "#ede9fe",
+    200: "#ddd6fe",
+    300: "#c4b5fd",
+    400: "#a78bfa",
+    500: "#8b5cf6",
+    600: "#7c3aed",
+    700: "#6d28d9",
+    800: "#5b21b6",
+    900: "#4c1d95",
+    950: "#2e1065",
+  },
+
+  primary: {
+    50: "#eff6ff",
+    100: "#dbeafe",
+    200: "#bfdbfe",
+    300: "#93c5fd",
+    400: "#60a5fa",
+    500: "#3b82f6",
+    600: "#2563eb",
+    700: "#1d4ed8",
+    800: "#1e40af",
+    900: "#1e3a8a",
+    950: "#172554",
+  },
+
+  neutral: {
+    0: "#ffffff",
+    25: "#fcfcfd",
+    50: "#f8fafc",
+    100: "#f1f5f9",
+    200: "#e2e8f0",
+    300: "#cbd5e1",
+    400: "#94a3b8",
+    500: "#64748b",
+    600: "#475569",
+    700: "#334155",
+    800: "#1e293b",
+    900: "#0f172a",
+    950: "#020617",
+  },
+
+  success: {
+    50: "#ecfdf5",
+    100: "#d1fae5",
+    200: "#a7f3d0",
+    300: "#6ee7b7",
+    400: "#34d399",
+    500: "#10b981",
+    600: "#059669",
+    700: "#047857",
+    800: "#065f46",
+    900: "#064e3b",
+    950: "#022c22",
+  },
+
+  warning: {
+    50: "#fffbeb",
+    100: "#fef3c7",
+    200: "#fde68a",
+    300: "#fcd34d",
+    400: "#fbbf24",
+    500: "#f59e0b",
+    600: "#d97706",
+    700: "#b45309",
+    800: "#92400e",
+    900: "#78350f",
+    950: "#451a03",
+  },
+
+  danger: {
+    50: "#fef2f2",
+    100: "#fee2e2",
+    200: "#fecaca",
+    300: "#fca5a5",
+    400: "#f87171",
+    500: "#ef4444",
+    600: "#dc2626",
+    700: "#b91c1c",
+    800: "#991b1b",
+    900: "#7f1d1d",
+    950: "#450a0a",
+  },
+
+  info: {
+    50: "#f0f9ff",
+    100: "#e0f2fe",
+    200: "#bae6fd",
+    300: "#7dd3fc",
+    400: "#38bdf8",
+    500: "#0ea5e9",
+    600: "#0284c7",
+    700: "#0369a1",
+    800: "#075985",
+    900: "#0c4a6e",
+    950: "#082f49",
+  },
+
+  transparent: "transparent",
+  current: "currentColor",
+} as const;
+
+export const semanticColors = {
+  background: {
+    app: colors.neutral[50],
+    surface: colors.neutral[0],
+    subtle: colors.neutral[100],
+    elevated: colors.neutral[0],
+    inverse: colors.neutral[900],
+    brand: colors.brand[600],
+  },
+
+  text: {
+    primary: colors.neutral[900],
+    secondary: colors.neutral[600],
+    tertiary: colors.neutral[500],
+    muted: colors.neutral[400],
+    inverse: colors.neutral[0],
+    brand: colors.brand[700],
+    link: colors.primary[700],
+    success: colors.success[700],
+    warning: colors.warning[700],
+    danger: colors.danger[700],
+    info: colors.info[700],
+  },
+
+  border: {
+    subtle: colors.neutral[200],
+    default: colors.neutral[300],
+    strong: colors.neutral[400],
+    brand: colors.brand[300],
+    focus: colors.primary[500],
+    success: colors.success[300],
+    warning: colors.warning[300],
+    danger: colors.danger[300],
+  },
+
+  action: {
+    primary: colors.primary[600],
+    primaryHover: colors.primary[700],
+    primaryActive: colors.primary[800],
+    secondary: colors.neutral[0],
+    secondaryHover: colors.neutral[100],
+    danger: colors.danger[600],
+    dangerHover: colors.danger[700],
+    disabled: colors.neutral[300],
+  },
+
+  status: {
+    successBackground: colors.success[50],
+    successText: colors.success[700],
+    warningBackground: colors.warning[50],
+    warningText: colors.warning[700],
+    dangerBackground: colors.danger[50],
+    dangerText: colors.danger[700],
+    infoBackground: colors.info[50],
+    infoText: colors.info[700],
+  },
+
+  overlay: "rgb(15 23 42 / 62%)",
+  focusRing: "rgb(37 99 235 / 20%)",
+} as const;
+
+export type Colors = typeof colors;
+export type SemanticColors = typeof semanticColors;

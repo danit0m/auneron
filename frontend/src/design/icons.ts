@@ -1,0 +1,118 @@
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  Bell,
+  Bot,
+  BrainCircuit,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  CircleHelp,
+  Clock3,
+  Download,
+  Eye,
+  FileUp,
+  Filter,
+  Gauge,
+  KeyRound,
+  LayoutDashboard,
+  Lightbulb,
+  LockKeyhole,
+  LogOut,
+  Menu,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  ServerCog,
+  Settings,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  TrendingDown,
+  TrendingUp,
+  Upload,
+  User,
+  UserCog,
+  Users,
+  WalletCards,
+  X,
+} from "lucide-react";
+
+export const icons = {
+  navigation: {
+    dashboard: LayoutDashboard,
+    clients: Users,
+    upload: FileUp,
+    brain: BrainCircuit,
+    administration: ServerCog,
+    settings: Settings,
+  },
+
+  actions: {
+    add: Plus,
+    edit: Pencil,
+    delete: Trash2,
+    close: X,
+    search: Search,
+    filter: Filter,
+    refresh: RefreshCw,
+    upload: Upload,
+    download: Download,
+    more: MoreHorizontal,
+    view: Eye,
+  },
+
+  status: {
+    success: CheckCircle2,
+    warning: AlertTriangle,
+    danger: ShieldAlert,
+    secure: ShieldCheck,
+    pending: Clock3,
+    activity: Activity,
+  },
+
+  intelligence: {
+    brain: BrainCircuit,
+    insight: Lightbulb,
+    sparkles: Sparkles,
+    automation: Bot,
+    performance: Gauge,
+    trendUp: TrendingUp,
+    trendDown: TrendingDown,
+    analytics: BarChart3,
+  },
+
+  security: {
+    lock: LockKeyhole,
+    key: KeyRound,
+    administrator: UserCog,
+    shield: ShieldCheck,
+  },
+
+  user: {
+    profile: User,
+    logout: LogOut,
+    notifications: Bell,
+  },
+
+  layout: {
+    menu: Menu,
+    left: ChevronLeft,
+    right: ChevronRight,
+    up: ChevronUp,
+    down: ChevronDown,
+    help: CircleHelp,
+  },
+
+  brand: {
+    product: WalletCards,
+  },
+} as const;
+
+export type IconRegistry = typeof icons;
