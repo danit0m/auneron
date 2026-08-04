@@ -1658,3 +1658,206 @@
     transition: none;
   }
 }
+
+/* =====================================
+   EXECUTIVE COMPONENTS — COMPACT MODE
+===================================== */
+
+.explainability-card,
+.decision-context-card,
+.confidence-meter-card,
+.agent-execution-flow-card {
+  padding: 17px;
+  border-radius: 15px;
+}
+
+.section-title {
+  gap: 9px;
+}
+
+.section-title h3 {
+  font-size: 15px;
+}
+
+.section-title span {
+  margin-top: 2px;
+  font-size: 8px;
+}
+
+.explainability-list {
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.explainability-item {
+  padding: 11px 12px;
+  border-radius: 10px;
+}
+
+.explainability-header strong {
+  font-size: 9px;
+}
+
+.explainability-header div > span {
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.impact-badge {
+  padding: 4px 7px;
+  font-size: 7px;
+}
+
+.impact-bar {
+  height: 6px;
+  margin-top: 8px;
+}
+
+.explainability-item p {
+  margin-top: 7px;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.executive-summary {
+  gap: 8px;
+  margin-top: 11px;
+  padding: 10px 12px;
+}
+
+.executive-summary strong {
+  font-size: 9px;
+}
+
+.executive-summary span {
+  margin-top: 3px;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.decision-flags {
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.decision-flags > div {
+  padding: 6px 8px;
+  font-size: 7px;
+}
+
+/* Decision Context */
+
+.decision-context-header {
+  gap: 12px;
+}
+
+.decision-context-title {
+  gap: 9px;
+}
+
+.decision-context-title-icon {
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
+  border-radius: 11px;
+}
+
+.decision-context-title span {
+  font-size: 8px;
+}
+
+.decision-context-title h3 {
+  margin-top: 4px;
+  font-size: 15px;
+}
+
+.decision-context-status {
+  padding: 5px 8px;
+  font-size: 7px;
+}
+
+.decision-context-description {
+  margin-top: 10px;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.decision-context-grid-v2 {
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.decision-context-item-v2 {
+  gap: 8px;
+  min-height: 52px;
+  padding: 9px 10px;
+  border-radius: 10px;
+}
+
+.decision-context-item-icon {
+  width: 31px;
+  height: 31px;
+  flex-basis: 31px;
+}
+
+.decision-context-item-v2 span {
+  font-size: 7px;
+}
+
+.decision-context-item-v2 strong {
+  margin-top: 3px;
+  font-size: 9px;
+}
+
+.decision-context-audit {
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.decision-context-audit > div {
+  padding: 8px 9px;
+}
+
+.decision-context-id {
+  margin-top: 8px;
+  padding: 8px 10px;
+}
+
+/* Confidence Meter técnico, quando utilizado */
+
+.confidence-meter-main {
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.confidence-meter-score {
+  min-height: 125px;
+  padding: 14px;
+}
+
+.confidence-meter-number {
+  font-size: 42px;
+}
+
+.confidence-meter-assessment {
+  margin-top: 13px;
+  padding: 11px 12px;
+}
+
+.confidence-meter-evidence-grid {
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.confidence-meter-evidence-item {
+  padding: 9px;
+}
+
+@media (max-width: 760px) {
+  .explainability-card,
+  .decision-context-card,
+  .confidence-meter-card,
+  .agent-execution-flow-card {
+    padding: 14px;
+  }
+}

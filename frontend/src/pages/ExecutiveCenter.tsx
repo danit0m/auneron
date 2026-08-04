@@ -29,6 +29,7 @@ import type {
 } from "../types/orchestrator";
 
 import "./ExecutiveCenter.css";
+import "../components/executive/styles/ExecutiveDecisionCard.css";
 
 interface Recommendation {
   title: string;
