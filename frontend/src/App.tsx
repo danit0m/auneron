@@ -1,16 +1,20 @@
-﻿import {
+import {
   BrowserRouter,
   Route,
   Routes,
 } from "react-router-dom";
 
 import { Layout } from "./components/layout/Layout";
+import {
+  ProtectedRoute,
+} from "./routes/ProtectedRoute";
 import AgentOperations from "./pages/AgentOperations";
 import Brain from "./pages/Brain";
 import Clientes from "./pages/Clientes";
 import { Dashboard } from "./pages/Dashboard";
 import ExecutiveCenter from "./pages/ExecutiveCenter";
 import { Upload } from "./pages/Upload";
+import AccessDenied from "./pages/AccessDenied";
 import UIShowcase from "./pages/admin/UIShowcase";
 
 function App() {
@@ -20,42 +24,70 @@ function App() {
         <Route element={<Layout />}>
           <Route
             path="/"
-            element={<Dashboard />}
+            element={
+              <ProtectedRoute permission="dashboard.view">
+                <Dashboard />
+              </ProtectedRoute>
+            }
           />
 
           <Route
             path="/clientes"
-            element={<Clientes />}
+            element={
+              <ProtectedRoute permission="clients.view">
+                <Clientes />
+              </ProtectedRoute>
+            }
           />
 
           <Route
             path="/upload"
-            element={<Upload />}
+            element={
+              <ProtectedRoute permission="imports.execute">
+                <Upload />
+              </ProtectedRoute>
+            }
           />
 
           <Route
             path="/executive-center"
-            element={<ExecutiveCenter />}
+            element={
+              <ProtectedRoute permission="executive.view">
+                <ExecutiveCenter />
+              </ProtectedRoute>
+            }
           />
 
           <Route
             path="/brain"
-            element={<Brain />}
+            element={
+              <ProtectedRoute permission="brain.view">
+                <Brain />
+              </ProtectedRoute>
+            }
           />
 
           <Route
             path="/agent-operations"
-            element={<AgentOperations />}
+            element={
+              <ProtectedRoute permission="administration.ai-operations">
+                <AgentOperations />
+              </ProtectedRoute>
+            }
           />
 
-          {/*
-            Sprint 8.1:
-            rota administrativa preparada para receber
-            proteção por RBAC + Credencial Elevada.
-          */}
           <Route
             path="/admin/ui-showcase"
-            element={<UIShowcase />}
+            element={
+              <ProtectedRoute permission="developer.ui-showcase">
+                <UIShowcase />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/access-denied"
+            element={<AccessDenied />}
           />
         </Route>
       </Routes>

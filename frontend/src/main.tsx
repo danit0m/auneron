@@ -7,6 +7,9 @@ import {
 
 import App from "./App";
 import {
+  AuthProvider,
+} from "./providers/AuthProvider";
+import {
   ThemeProvider,
 } from "./providers/ThemeProvider";
 
@@ -25,7 +28,9 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <ThemeProvider>
-      <App />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     </ThemeProvider>
   </StrictMode>,
 );

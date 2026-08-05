@@ -17,12 +17,22 @@ import {
   NavLink,
 } from "react-router-dom";
 
+import {
+  privilegedPermissions,
+} from "../../auth";
+import {
+  useAuth,
+} from "../../hooks/useAuth";
+import type {
+  Permission,
+} from "../../types/auth";
+
 interface MenuItem {
   label: string;
   path: string;
   icon: LucideIcon;
+  permission: Permission;
   end?: boolean;
-  requiresElevated?: boolean;
 }
 
 interface MenuSectionProps {
@@ -35,17 +45,20 @@ const principalItems: MenuItem[] = [
     label: "Dashboard",
     path: "/",
     icon: LayoutDashboard,
+    permission: "dashboard.view",
     end: true,
   },
   {
     label: "Clientes",
     path: "/clientes",
     icon: Users,
+    permission: "clients.view",
   },
   {
     label: "Importar CSV",
     path: "/upload",
     icon: FileUp,
+    permission: "imports.execute",
   },
 ];
 
@@ -54,11 +67,13 @@ const intelligenceItems: MenuItem[] = [
     label: "Executive Center",
     path: "/executive-center",
     icon: ShieldCheck,
+    permission: "executive.view",
   },
   {
     label: "Brain",
     path: "/brain",
     icon: BrainCircuit,
+    permission: "brain.view",
   },
 ];
 
@@ -67,7 +82,8 @@ const administrationItems: MenuItem[] = [
     label: "AI Operations",
     path: "/agent-operations",
     icon: ServerCog,
-    requiresElevated: true,
+    permission:
+      "administration.ai-operations",
   },
 ];
 
@@ -76,22 +92,49 @@ const developerToolsItems: MenuItem[] = [
     label: "UI Showcase",
     path: "/admin/ui-showcase",
     icon: Palette,
-    requiresElevated: true,
+    permission:
+      "developer.ui-showcase",
   },
 ];
+
+function isPrivilegedPermission(
+  permission: Permission,
+): boolean {
+  return privilegedPermissions.includes(
+    permission as
+      (typeof privilegedPermissions)[number],
+  );
+}
 
 function MenuSection({
   title,
   items,
 }: MenuSectionProps) {
+  const {
+    hasPermission,
+  } = useAuth();
+
+  const visibleItems = items.filter(
+    (item) =>
+      hasPermission(item.permission),
+  );
+
+  if (visibleItems.length === 0) {
+    return null;
+  }
+
   return (
     <div className="sidebar-menu-section">
       <p className="sidebar-section-title">
         {title}
       </p>
 
-      {items.map((item) => {
+      {visibleItems.map((item) => {
         const Icon = item.icon;
+        const privileged =
+          isPrivilegedPermission(
+            item.permission,
+          );
 
         return (
           <NavLink
@@ -99,8 +142,8 @@ function MenuSection({
             to={item.path}
             end={item.end}
             title={
-              item.requiresElevated
-                ? `${item.label} — credencial elevada necessária`
+              privileged
+                ? `${item.label} — acesso privilegiado`
                 : item.label
             }
             className={({ isActive }) =>
@@ -113,11 +156,11 @@ function MenuSection({
 
             <span>{item.label}</span>
 
-            {item.requiresElevated && (
+            {privileged && (
               <LockKeyhole
                 size={14}
                 className="sidebar-link-security-icon"
-                aria-label="Credencial elevada necessária"
+                aria-label="Acesso privilegiado"
               />
             )}
           </NavLink>
@@ -128,6 +171,11 @@ function MenuSection({
 }
 
 export function Sidebar() {
+  const {
+    user,
+    isDevelopmentSession,
+  } = useAuth();
+
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -170,10 +218,14 @@ export function Sidebar() {
         <BarChart3 size={20} />
 
         <div>
-          <strong>Auneron AI</strong>
+          <strong>
+            {user?.name ?? "Auneron AI"}
+          </strong>
 
           <span>
-            Versão 3.0 Alpha
+            {isDevelopmentSession
+              ? `DEV · ${user?.role ?? "sem sessão"}`
+              : "Versão 3.0 Alpha"}
           </span>
         </div>
       </div>
