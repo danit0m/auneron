@@ -16,7 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
-  useMemo,
+  useEffect,
   useState,
 } from "react";
 
@@ -146,11 +146,34 @@ export default function UIShowcase() {
     setLoadingExample,
   ] = useState(false);
 
-  const tokenValues = useMemo(() => {
-    return colorTokens.map((token) => ({
+  const [
+    tokenValues,
+    setTokenValues,
+  ] = useState(() =>
+    colorTokens.map((token) => ({
       ...token,
-      value: getCssVariable(token.variable),
-    }));
+      value: "",
+    })),
+  );
+
+  useEffect(() => {
+    const frameId =
+      window.requestAnimationFrame(() => {
+        setTokenValues(
+          colorTokens.map((token) => ({
+            ...token,
+            value: getCssVariable(
+              token.variable,
+            ),
+          })),
+        );
+      });
+
+    return () => {
+      window.cancelAnimationFrame(
+        frameId,
+      );
+    };
   }, [resolvedTheme]);
 
   function testarLoading() {
