@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: auneron-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: auneron
+      POSTGRES_USER: auneron
+      POSTGRES_PASSWORD: auneron_dev_password
+      TZ: America/Sao_Paulo
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - auneron_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auneron -d auneron"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  auneron_postgres_data:
+    name: auneron_postgres_data

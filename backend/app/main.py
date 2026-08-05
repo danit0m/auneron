@@ -1,84 +1,74 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database.database import Base, engine
+from app.core.config import settings
+from app.database.database import (
+    Base,
+    check_database_connection,
+    engine,
+)
 
 from app.api.routes.upload import router as upload_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.accounts import router as accounts_router
 from app.api.routes.brain import router as brain_router
 from app.api.routes.executive import router as executive_router
-from app.agents.notification_agent import NotificationAgent
 from app.api.routes.orchestrator import router as orchestrator_router
-
-# ======================================================
-# AGENT HUB
-# Apenas importar os agentes já registra os eventos
-# ======================================================
+from app.agents.notification_agent import NotificationAgent
 
 import app.agents.finance_agent
 import app.agents.analytics_agent
 import app.models
 import app.agents.risk_agent
 
-# Futuramente:
-# import app.agents.analytics_agent
-# import app.agents.crm_agent
-# import app.agents.notification_agent
 
-# ======================================================
-# BANCO DE DADOS
-# ======================================================
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
 
-Base.metadata.create_all(bind=engine)
-
-# ======================================================
-# FASTAPI
-# ======================================================
 
 app = FastAPI(
-    title="Auneron AI",
-    version="3.0 Alpha",
+    title=settings.app_name,
+    version=settings.app_version,
     description="Intelligent Business Operating System",
+    lifespan=lifespan,
 )
-
-# ======================================================
-# CORS
-# ======================================================
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ======================================================
-# HOME
-# ======================================================
 
 @app.get("/", tags=["Home"])
 def home():
     return {
         "status": "online",
-        "produto": "Auneron AI",
-        "versao": "3.0 Alpha",
+        "produto": settings.app_name,
+        "versao": settings.app_version,
+        "ambiente": settings.environment,
         "agent_hub": "ativo",
     }
 
-# ======================================================
-# HEALTH
-# ======================================================
 
 @app.get("/health", tags=["Health"])
 def health():
+    database_online = check_database_connection()
+
     return {
-        "status": "healthy",
-        "database": "online",
+        "status": "healthy" if database_online else "degraded",
+        "database": "online" if database_online else "offline",
+        "database_engine": (
+            "postgresql"
+            if settings.is_postgresql
+            else "sqlite"
+        ),
         "agents": [
             "FinanceAgent",
             "AnalyticsAgent",
@@ -87,9 +77,6 @@ def health():
         ],
     }
 
-# ======================================================
-# ROTAS
-# ======================================================
 
 app.include_router(upload_router)
 app.include_router(dashboard_router)
