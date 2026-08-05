@@ -3,8 +3,11 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import date
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
+from app.core.money import money_or_zero
+from app.core.money import money_to_json_number
 from app.orchestrator.decision import (
     DecisionSignal,
     OrchestrationDecision,
@@ -20,7 +23,7 @@ class DecisionContext:
     event_name: str
     payload: dict[str, Any]
     cliente: str
-    valor: float
+    valor: Decimal
     status: str
     vencimento: str
     dias_atraso: int
@@ -127,7 +130,9 @@ class CriticalOverdueRule(DecisionRule):
             signals=(
                 DecisionSignal(
                     name="valor_alto",
-                    value=context.valor,
+                    value=money_to_json_number(
+                        context.valor
+                    ),
                     description=(
                         "Valor financeiro igual ou "
                         "superior a R$ 50.000."
@@ -187,7 +192,9 @@ class StrategicOverdueRule(DecisionRule):
             signals=(
                 DecisionSignal(
                     name="cliente_estrategico",
-                    value=context.valor,
+                    value=money_to_json_number(
+                        context.valor
+                    ),
                     description=(
                         "Valor financeiro igual ou "
                         "superior a R$ 30.000."
@@ -251,7 +258,9 @@ class OverdueClientRule(DecisionRule):
                 ),
                 DecisionSignal(
                     name="valor",
-                    value=context.valor,
+                    value=money_to_json_number(
+                        context.valor
+                    ),
                     description=(
                         "Valor financeiro analisado."
                     ),
@@ -299,7 +308,9 @@ class StrategicClientRule(DecisionRule):
             signals=(
                 DecisionSignal(
                     name="cliente_estrategico",
-                    value=context.valor,
+                    value=money_to_json_number(
+                        context.valor
+                    ),
                     description=(
                         "Valor igual ou superior "
                         "a R$ 30.000."
@@ -347,7 +358,9 @@ class PremiumClientRule(DecisionRule):
             signals=(
                 DecisionSignal(
                     name="cliente_premium",
-                    value=context.valor,
+                    value=money_to_json_number(
+                        context.valor
+                    ),
                     description=(
                         "Valor igual ou superior "
                         "a R$ 10.000."
@@ -391,7 +404,9 @@ class StandardPaidClientRule(DecisionRule):
                 ),
                 DecisionSignal(
                     name="valor",
-                    value=context.valor,
+                    value=money_to_json_number(
+                        context.valor
+                    ),
                     description=(
                         "Valor abaixo da faixa premium."
                     ),
@@ -429,7 +444,9 @@ class StandardClientRule(DecisionRule):
             signals=(
                 DecisionSignal(
                     name="valor",
-                    value=context.valor,
+                    value=money_to_json_number(
+                        context.valor
+                    ),
                     description=(
                         "Valor dentro da faixa padrão."
                     ),
@@ -457,7 +474,7 @@ def build_context(
         )
     )
 
-    valor = _to_float(
+    valor = _to_money(
         payload.get("valor")
     )
 
@@ -485,17 +502,10 @@ def build_context(
     )
 
 
-def _to_float(
+def _to_money(
     value: Any,
-) -> float:
-    try:
-        return float(value or 0)
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-        return 0.0
+) -> Decimal:
+    return money_or_zero(value)
 
 
 def _calculate_overdue_days(

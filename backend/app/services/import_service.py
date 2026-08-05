@@ -1,9 +1,13 @@
 import csv
 from datetime import datetime
+from decimal import Decimal
 from typing import TextIO
 
 from sqlalchemy.orm import Session
 
+from app.core.money import ZERO_MONEY
+from app.core.money import money_to_json_number
+from app.core.money import parse_localized_money
 from app.models.account import Account
 
 
@@ -51,43 +55,21 @@ def abrir_csv(filepath: str) -> TextIO:
     ) from ultimo_erro
 
 
-def converter_valor(valor_texto: str) -> float:
+def converter_valor(valor_texto: str) -> Decimal:
     """
     Converte valores como:
     12400
     12400.00
     12.400,00
+    12,400.00
     R$ 12.400,00
     """
 
-    valor_texto = str(valor_texto or "").strip()
-
-    valor_texto = (
+    valor = parse_localized_money(
         valor_texto
-        .replace("R$", "")
-        .replace(" ", "")
-        .strip()
     )
 
-    if not valor_texto:
-        raise ValueError("O campo valor está vazio.")
-
-    if "," in valor_texto:
-        valor_texto = (
-            valor_texto
-            .replace(".", "")
-            .replace(",", ".")
-        )
-
-    try:
-        valor = float(valor_texto)
-
-    except ValueError as erro:
-        raise ValueError(
-            f"Valor inválido: '{valor_texto}'."
-        ) from erro
-
-    if valor < 0:
+    if valor < ZERO_MONEY:
         raise ValueError(
             "O valor não pode ser negativo."
         )
@@ -186,7 +168,7 @@ def import_clients(filepath: str, db: Session):
     importados = 0
     duplicados = 0
     erros = 0
-    valor_total = 0.0
+    valor_total = ZERO_MONEY
     detalhes_erros = []
 
     arquivo = abrir_csv(filepath)
@@ -342,7 +324,9 @@ def import_clients(filepath: str, db: Session):
             "importados": importados,
             "duplicados": duplicados,
             "erros": erros,
-            "valor_total": round(valor_total, 2),
+            "valor_total": money_to_json_number(
+                valor_total
+            ),
         },
         "detalhes_erros": detalhes_erros,
     }

@@ -1,5 +1,7 @@
 from typing import Any
 
+from app.core.money import ZERO_MONEY
+from app.core.money import to_money
 from app.database.database import SessionLocal
 from app.orchestrator import registry
 from app.services.knowledge_service import KnowledgeService
@@ -22,8 +24,9 @@ class NotificationAgent:
             )
         )
 
-        valor = float(
-            payload.get("valor", 0) or 0
+        valor = to_money(
+            payload.get("valor"),
+            default=ZERO_MONEY,
         )
 
         status = str(

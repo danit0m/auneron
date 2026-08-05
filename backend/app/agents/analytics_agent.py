@@ -1,5 +1,8 @@
+from decimal import Decimal
 from typing import Any
 
+from app.core.money import ZERO_MONEY
+from app.core.money import to_money
 from app.database.database import SessionLocal
 from app.orchestrator import registry
 from app.services.knowledge_service import KnowledgeService
@@ -22,8 +25,9 @@ class AnalyticsAgent:
             )
         )
 
-        valor = float(
-            payload.get("valor", 0) or 0
+        valor = to_money(
+            payload.get("valor"),
+            default=ZERO_MONEY,
         )
 
         status = str(
@@ -119,7 +123,7 @@ class AnalyticsAgent:
         *,
         db: Any,
         cliente: str,
-        valor: float,
+        valor: Decimal,
         status: str,
         vencimento: str,
         categoria: str,
@@ -226,7 +230,7 @@ class AnalyticsAgent:
 
     @staticmethod
     def classificar_cliente(
-        valor: float,
+        valor: Decimal,
         status: str,
     ) -> str:
         if valor >= 30000:
@@ -242,7 +246,7 @@ class AnalyticsAgent:
 
     @staticmethod
     def definir_prioridade(
-        valor: float,
+        valor: Decimal,
         status: str,
     ) -> str:
         if (

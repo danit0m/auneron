@@ -1,7 +1,10 @@
 from datetime import date
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
+from app.core.money import ZERO_MONEY
+from app.core.money import to_money
 from app.database.database import SessionLocal
 from app.orchestrator import registry
 from app.services.knowledge_service import KnowledgeService
@@ -24,8 +27,9 @@ class RiskAgent:
             )
         )
 
-        valor = float(
-            payload.get("valor", 0) or 0
+        valor = to_money(
+            payload.get("valor"),
+            default=ZERO_MONEY,
         )
 
         status = str(
@@ -164,7 +168,7 @@ class RiskAgent:
     @staticmethod
     def calcular_score(
         *,
-        valor: float,
+        valor: Decimal,
         status: str,
         dias_atraso: int,
     ) -> int:

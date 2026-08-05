@@ -1,5 +1,8 @@
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
+
+from app.core.money import money_or_zero
 
 
 @dataclass(frozen=True)
@@ -15,8 +18,8 @@ class OrchestrationStrategy:
     no evento e nos dados recebidos.
     """
 
-    HIGH_VALUE_THRESHOLD = 10000
-    STRATEGIC_VALUE_THRESHOLD = 30000
+    HIGH_VALUE_THRESHOLD = Decimal("10000.00")
+    STRATEGIC_VALUE_THRESHOLD = Decimal("30000.00")
 
     @classmethod
     def build_plan(
@@ -34,7 +37,7 @@ class OrchestrationStrategy:
                 ),
             )
 
-        valor = cls._to_float(
+        valor = cls._to_money(
             payload.get("valor"),
         )
 
@@ -140,16 +143,7 @@ class OrchestrationStrategy:
         )
 
     @staticmethod
-    def _to_float(
+    def _to_money(
         value: Any,
-    ) -> float:
-        try:
-            return float(
-                value or 0
-            )
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-            return 0.0
+    ) -> Decimal:
+        return money_or_zero(value)

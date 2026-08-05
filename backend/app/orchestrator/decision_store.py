@@ -1,12 +1,35 @@
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import datetime
 from threading import Lock
 from typing import Any
 from uuid import uuid4
 
+from app.core.money import money_to_json_number
 from app.orchestrator.decision import (
     OrchestrationDecision,
 )
+
+
+def _serialize_decimals(value: Any) -> Any:
+    """Converte Decimal somente na fronteira de serialização JSON."""
+
+    if isinstance(value, Decimal):
+        return money_to_json_number(value)
+
+    if isinstance(value, dict):
+        return {
+            key: _serialize_decimals(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        return [
+            _serialize_decimals(item)
+            for item in value
+        ]
+
+    return value
 
 
 @dataclass(frozen=True)
@@ -24,7 +47,7 @@ class StoredDecision:
     selected_agents: tuple[str, ...]
     signals: tuple[dict[str, Any], ...]
     cliente: str
-    valor: float
+    valor: Decimal
     status: str
     vencimento: str
     dias_atraso: int
@@ -48,12 +71,16 @@ class StoredDecision:
                 self.selected_agents,
             ),
             "signals": [
-                dict(signal)
+                _serialize_decimals(
+                    dict(signal)
+                )
                 for signal in self.signals
             ],
             "context": {
                 "cliente": self.cliente,
-                "valor": self.valor,
+                "valor": money_to_json_number(
+                    self.valor
+                ),
                 "status": self.status,
                 "vencimento": self.vencimento,
                 "dias_atraso": self.dias_atraso,
@@ -95,7 +122,7 @@ class DecisionStore:
         event_name: str,
         decision: OrchestrationDecision,
         cliente: str,
-        valor: float,
+        valor: Decimal,
         status: str,
         vencimento: str,
         dias_atraso: int,

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import sqlite3
@@ -14,6 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from sqlalchemy import func, select, text
 
+from app.core.money import to_money
 from app.database.database import engine
 from app.models.account import Account
 from app.models.knowledge import Knowledge
@@ -144,7 +145,7 @@ def normalize_accounts(
                 "cliente": str(row["cliente"]),
                 "email": row["email"],
                 "whatsapp": row["whatsapp"],
-                "valor": float(row["valor"]),
+                "valor": to_money(row["valor"]),
                 "vencimento": parse_date(row["vencimento"]),
                 "status": row["status"],
                 "created_at": parse_datetime(row["created_at"]),
