@@ -6,6 +6,9 @@ import {
 
 import { Layout } from "./components/layout/Layout";
 import {
+  ElevatedRoute,
+} from "./routes/ElevatedRoute";
+import {
   ProtectedRoute,
 } from "./routes/ProtectedRoute";
 import AgentOperations from "./pages/AgentOperations";
@@ -70,18 +73,24 @@ function App() {
           <Route
             path="/agent-operations"
             element={
-              <ProtectedRoute permission="administration.ai-operations">
+              <ElevatedRoute
+                permission="administration.ai-operations"
+                resourceLabel="AI Operations"
+              >
                 <AgentOperations />
-              </ProtectedRoute>
+              </ElevatedRoute>
             }
           />
 
           <Route
             path="/admin/ui-showcase"
             element={
-              <ProtectedRoute permission="developer.ui-showcase">
+              <ElevatedRoute
+                permission="developer.ui-showcase"
+                resourceLabel="UI Showcase"
+              >
                 <UIShowcase />
-              </ProtectedRoute>
+              </ElevatedRoute>
             }
           />
 

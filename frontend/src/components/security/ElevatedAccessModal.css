@@ -1,0 +1,264 @@
+/* =========================================
+   AUNERON SECURITY — ELEVATED ACCESS
+========================================= */
+
+.elevated-access-overlay {
+  position: fixed;
+  z-index: var(--z-modal);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: var(--overlay-background);
+  backdrop-filter: blur(8px);
+  animation:
+    elevated-overlay-enter
+    var(--duration-normal)
+    var(--ease-entrance);
+}
+
+.elevated-access-modal {
+  width: min(100%, 31rem);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-modal);
+  background:
+    radial-gradient(
+      circle at top right,
+      rgb(245 158 11 / 12%),
+      transparent 34%
+    ),
+    var(--surface-elevated);
+  box-shadow: var(--shadow-modal);
+  animation:
+    elevated-modal-enter
+    var(--duration-normal)
+    var(--ease-entrance);
+}
+
+.elevated-access-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding:
+    var(--space-5)
+    var(--space-5)
+    0;
+}
+
+.elevated-access-icon {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: var(--radius-xl);
+  background: var(--color-warning-100);
+  color: var(--color-warning-700);
+  box-shadow: var(--shadow-sm);
+}
+
+[data-theme="dark"]
+  .elevated-access-icon {
+  background: rgb(245 158 11 / 14%);
+}
+
+.elevated-access-close {
+  display: grid;
+  width: 2.375rem;
+  height: 2.375rem;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    var(--transition-colors),
+    var(--transition-transform);
+}
+
+.elevated-access-close:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.elevated-access-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.elevated-access-form {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.elevated-access-title h1 {
+  margin: var(--space-3) 0 0;
+  color: var(--text-primary);
+  font-size: var(--font-2xl);
+  letter-spacing: -0.035em;
+  line-height: var(--line-tight);
+}
+
+.elevated-access-title p {
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  line-height: var(--line-relaxed);
+}
+
+.elevated-access-security-note,
+.elevated-access-development {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+}
+
+.elevated-access-security-note {
+  border: 1px solid var(--color-success-300);
+  background: var(--color-success-50);
+  color: var(--color-success-700);
+}
+
+[data-theme="dark"]
+  .elevated-access-security-note {
+  background: rgb(16 185 129 / 10%);
+}
+
+.elevated-access-development {
+  border: 1px solid var(--color-warning-300);
+  background: var(--color-warning-50);
+  color: var(--color-warning-700);
+}
+
+[data-theme="dark"]
+  .elevated-access-development {
+  background: rgb(245 158 11 / 10%);
+}
+
+.elevated-access-security-note > svg,
+.elevated-access-development > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.elevated-access-security-note strong,
+.elevated-access-security-note span {
+  display: block;
+}
+
+.elevated-access-security-note strong {
+  font-size: var(--font-sm);
+}
+
+.elevated-access-security-note span,
+.elevated-access-development span {
+  margin-top: var(--space-1);
+  font-size: var(--font-xs);
+  line-height: var(--line-normal);
+}
+
+.elevated-access-visibility {
+  display: inline-grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.elevated-access-visibility:hover:not(:disabled) {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}
+
+.elevated-access-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin:
+    var(--space-2)
+    calc(var(--space-5) * -1)
+    calc(var(--space-5) * -1);
+  padding:
+    var(--space-4)
+    var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+}
+
+.elevated-access-spinner {
+  animation:
+    elevated-spinner
+    700ms
+    linear
+    infinite;
+}
+
+@keyframes elevated-overlay-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes elevated-modal-enter {
+  from {
+    opacity: 0;
+    transform:
+      translateY(10px)
+      scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform:
+      translateY(0)
+      scale(1);
+  }
+}
+
+@keyframes elevated-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 560px) {
+  .elevated-access-overlay {
+    align-items: end;
+    padding: var(--space-3);
+  }
+
+  .elevated-access-modal {
+    width: 100%;
+  }
+
+  .elevated-access-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .elevated-access-footer > * {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elevated-access-overlay,
+  .elevated-access-modal,
+  .elevated-access-spinner {
+    animation: none;
+  }
+}

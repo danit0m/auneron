@@ -10,6 +10,9 @@ import {
   AuthProvider,
 } from "./providers/AuthProvider";
 import {
+  ElevationProvider,
+} from "./providers/ElevationProvider";
+import {
   ThemeProvider,
 } from "./providers/ThemeProvider";
 
@@ -29,7 +32,9 @@ createRoot(rootElement).render(
   <StrictMode>
     <ThemeProvider>
       <AuthProvider>
-        <App />
+        <ElevationProvider>
+          <App />
+        </ElevationProvider>
       </AuthProvider>
     </ThemeProvider>
   </StrictMode>,
