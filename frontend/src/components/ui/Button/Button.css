@@ -1,0 +1,24 @@
+.ui-button{display:inline-flex;min-width:0;align-items:center;justify-content:center;gap:var(--space-2);border:1px solid transparent;border-radius:var(--radius-button);font-family:var(--font-family-sans);font-weight:var(--font-semibold);line-height:1;white-space:nowrap;cursor:pointer;transition:var(--transition-colors),var(--transition-transform),var(--transition-shadow)}
+.ui-button:hover:not(:disabled){transform:translateY(-1px)}
+.ui-button:active:not(:disabled){transform:translateY(0)}
+.ui-button:focus-visible{outline:none;box-shadow:var(--shadow-focus)}
+.ui-button:disabled{cursor:not-allowed;opacity:.58}
+.ui-button-sm{min-height:2rem;padding:0 var(--space-3);font-size:var(--font-xs)}
+.ui-button-md{min-height:2.625rem;padding:0 var(--space-4);font-size:var(--font-sm)}
+.ui-button-lg{min-height:3rem;padding:0 var(--space-5);font-size:var(--font-md)}
+.ui-button-primary{border-color:var(--color-primary-600);background:var(--color-primary-600);color:var(--text-inverse);box-shadow:var(--shadow-primary)}
+.ui-button-primary:hover:not(:disabled){border-color:var(--color-primary-700);background:var(--color-primary-700)}
+.ui-button-secondary{border-color:var(--border-subtle);background:var(--surface);color:var(--text-primary);box-shadow:var(--shadow-xs)}
+.ui-button-secondary:hover:not(:disabled){border-color:var(--border-default);background:var(--surface-subtle)}
+.ui-button-outline{border-color:var(--color-primary-300);background:transparent;color:var(--color-primary-700)}
+.ui-button-outline:hover:not(:disabled){border-color:var(--color-primary-500);background:var(--color-primary-50)}
+.ui-button-ghost{background:transparent;color:var(--text-secondary)}
+.ui-button-ghost:hover:not(:disabled){background:var(--surface-subtle);color:var(--text-primary)}
+.ui-button-danger{border-color:var(--color-danger-600);background:var(--color-danger-600);color:#fff;box-shadow:var(--shadow-danger)}
+.ui-button-danger:hover:not(:disabled){border-color:var(--color-danger-700);background:var(--color-danger-700)}
+.ui-button-full-width{width:100%}
+.ui-button-icon{display:inline-flex;flex:0 0 auto}
+.ui-button-label{overflow:hidden;text-overflow:ellipsis}
+.ui-button-spinner{animation:ui-button-spin 700ms linear infinite}
+@keyframes ui-button-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.ui-button,.ui-button-spinner{transition:none;animation:none}}

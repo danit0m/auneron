@@ -1,0 +1,19 @@
+.ui-input-field{display:grid;gap:var(--space-2);min-width:0}
+.ui-input-field-full-width{width:100%}
+.ui-input-label{display:inline-flex;width:fit-content;align-items:center;gap:var(--space-1);color:var(--text-secondary);font-size:var(--font-xs);font-weight:var(--font-semibold)}
+.ui-input-required{color:var(--color-danger-600)}
+.ui-input-control{display:flex;min-width:0;align-items:center;gap:var(--space-2);border:1px solid var(--input-border);border-radius:var(--radius-input);background:var(--input-background);color:var(--text-muted);box-shadow:var(--shadow-xs);transition:var(--transition-colors),var(--transition-shadow)}
+.ui-input-control:focus-within{border-color:var(--border-focus);box-shadow:var(--shadow-focus)}
+.ui-input-control-sm{min-height:2rem;padding:0 var(--space-3)}
+.ui-input-control-md{min-height:2.625rem;padding:0 var(--space-3)}
+.ui-input-control-lg{min-height:3rem;padding:0 var(--space-4)}
+.ui-input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--text-primary);font-family:var(--font-family-sans);font-size:var(--font-sm)}
+.ui-input::placeholder{color:var(--text-subtle)}
+.ui-input-icon{display:inline-flex;flex:0 0 auto;color:var(--text-muted)}
+.ui-input-field-error .ui-input-control{border-color:var(--color-danger-500)}
+.ui-input-field-error .ui-input-control:focus-within{box-shadow:0 0 0 3px rgb(239 68 68 / 18%)}
+.ui-input-field-disabled{opacity:.62}
+.ui-input-field-disabled .ui-input-control{cursor:not-allowed;background:var(--background-subtle)}
+.ui-input-field-disabled .ui-input{cursor:not-allowed}
+.ui-input-message{color:var(--text-muted);font-size:var(--font-xs);line-height:var(--line-normal)}
+.ui-input-message-error{color:var(--color-danger-700)}
