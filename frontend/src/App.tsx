@@ -11,6 +11,7 @@ import Clientes from "./pages/Clientes";
 import { Dashboard } from "./pages/Dashboard";
 import ExecutiveCenter from "./pages/ExecutiveCenter";
 import { Upload } from "./pages/Upload";
+import UIShowcase from "./pages/admin/UIShowcase";
 
 function App() {
   return (
@@ -45,6 +46,16 @@ function App() {
           <Route
             path="/agent-operations"
             element={<AgentOperations />}
+          />
+
+          {/*
+            Sprint 8.1:
+            rota administrativa preparada para receber
+            proteção por RBAC + Credencial Elevada.
+          */}
+          <Route
+            path="/admin/ui-showcase"
+            element={<UIShowcase />}
           />
         </Route>
       </Routes>

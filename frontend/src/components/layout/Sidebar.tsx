@@ -3,21 +3,26 @@ import {
   BrainCircuit,
   FileUp,
   LayoutDashboard,
+  LockKeyhole,
+  Palette,
   ServerCog,
   ShieldCheck,
   Users,
   WalletCards,
 } from "lucide-react";
-import {
-  type LucideIcon,
+import type {
+  LucideIcon,
 } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import {
+  NavLink,
+} from "react-router-dom";
 
 interface MenuItem {
   label: string;
   path: string;
   icon: LucideIcon;
   end?: boolean;
+  requiresElevated?: boolean;
 }
 
 interface MenuSectionProps {
@@ -62,6 +67,16 @@ const administrationItems: MenuItem[] = [
     label: "AI Operations",
     path: "/agent-operations",
     icon: ServerCog,
+    requiresElevated: true,
+  },
+];
+
+const developerToolsItems: MenuItem[] = [
+  {
+    label: "UI Showcase",
+    path: "/admin/ui-showcase",
+    icon: Palette,
+    requiresElevated: true,
   },
 ];
 
@@ -83,6 +98,11 @@ function MenuSection({
             key={item.path}
             to={item.path}
             end={item.end}
+            title={
+              item.requiresElevated
+                ? `${item.label} — credencial elevada necessária`
+                : item.label
+            }
             className={({ isActive }) =>
               isActive
                 ? "sidebar-link sidebar-link-active"
@@ -92,6 +112,14 @@ function MenuSection({
             <Icon size={20} />
 
             <span>{item.label}</span>
+
+            {item.requiresElevated && (
+              <LockKeyhole
+                size={14}
+                className="sidebar-link-security-icon"
+                aria-label="Credencial elevada necessária"
+              />
+            )}
           </NavLink>
         );
       })}
@@ -130,6 +158,11 @@ export function Sidebar() {
         <MenuSection
           title="ADMINISTRAÇÃO"
           items={administrationItems}
+        />
+
+        <MenuSection
+          title="DEVELOPER TOOLS"
+          items={developerToolsItems}
         />
       </nav>
 
