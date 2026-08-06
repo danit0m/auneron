@@ -1,10 +1,12 @@
 from sqlalchemy import Boolean
+from sqlalchemy import CheckConstraint
 from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import Text
+from sqlalchemy.sql import false
 from sqlalchemy.sql import func
 
 from app.database.database import Base
@@ -13,10 +15,36 @@ from app.database.database import Base
 class Knowledge(Base):
     __tablename__ = "knowledge"
 
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(btrim(agent_name)) >= 2",
+            name="ck_knowledge_agent_name_min_length",
+        ),
+        CheckConstraint(
+            "char_length(btrim(event_name)) >= 2",
+            name="ck_knowledge_event_name_min_length",
+        ),
+        CheckConstraint(
+            "char_length(btrim(knowledge_type)) >= 2",
+            name="ck_knowledge_type_min_length",
+        ),
+        CheckConstraint(
+            "severity IN ('critical', 'high', 'medium', 'info')",
+            name="ck_knowledge_severity_valid",
+        ),
+        CheckConstraint(
+            "char_length(btrim(title)) >= 2",
+            name="ck_knowledge_title_min_length",
+        ),
+        CheckConstraint(
+            "char_length(btrim(message)) >= 2",
+            name="ck_knowledge_message_min_length",
+        ),
+    )
+
     id = Column(
         Integer,
         primary_key=True,
-        index=True,
     )
 
     agent_name = Column(
@@ -35,6 +63,7 @@ class Knowledge(Base):
         String(50),
         nullable=False,
         default="insight",
+        server_default="insight",
         index=True,
     )
 
@@ -42,6 +71,7 @@ class Knowledge(Base):
         String(30),
         nullable=False,
         default="info",
+        server_default="info",
         index=True,
     )
 
@@ -69,6 +99,7 @@ class Knowledge(Base):
         Boolean,
         nullable=False,
         default=False,
+        server_default=false(),
         index=True,
     )
 

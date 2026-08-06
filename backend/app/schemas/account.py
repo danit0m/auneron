@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -11,6 +11,13 @@ from pydantic import (
 )
 
 from app.core.money import money_to_json_number
+
+
+AccountStatus = Literal[
+    "aberto",
+    "atrasado",
+    "pago",
+]
 
 
 Money = Annotated[
@@ -29,20 +36,27 @@ Money = Annotated[
 
 
 class AccountBase(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
     cliente: str = Field(
         min_length=2,
         max_length=150,
     )
+
     email: EmailStr | None = None
+
     whatsapp: str | None = Field(
         default=None,
         max_length=30,
     )
+
     valor: Money
     vencimento: date
-    status: str = Field(
+
+    status: AccountStatus = Field(
         default="aberto",
-        max_length=30,
     )
 
 
@@ -51,28 +65,33 @@ class AccountCreate(AccountBase):
 
 
 class AccountUpdate(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
     cliente: str | None = Field(
         default=None,
         min_length=2,
         max_length=150,
     )
+
     email: EmailStr | None = None
+
     whatsapp: str | None = Field(
         default=None,
         max_length=30,
     )
+
     valor: Money | None = None
     vencimento: date | None = None
-    status: str | None = Field(
-        default=None,
-        max_length=30,
-    )
+    status: AccountStatus | None = None
 
 
 class AccountResponse(AccountBase):
     model_config = ConfigDict(
         from_attributes=True,
+        str_strip_whitespace=True,
     )
 
     id: int
-    created_at: datetime | None = None
+    created_at: datetime

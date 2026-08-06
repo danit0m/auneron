@@ -1,11 +1,24 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
 
+KnowledgeSeverity = Literal[
+    "critical",
+    "high",
+    "medium",
+    "info",
+]
+
+
 class KnowledgeBase(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
     agent_name: str = Field(
         ...,
         min_length=2,
@@ -24,10 +37,8 @@ class KnowledgeBase(BaseModel):
         max_length=50,
     )
 
-    severity: str = Field(
+    severity: KnowledgeSeverity = Field(
         default="info",
-        min_length=2,
-        max_length=30,
     )
 
     title: str = Field(
@@ -42,7 +53,6 @@ class KnowledgeBase(BaseModel):
     )
 
     account_id: int | None = None
-
     resolved: bool = False
 
 
@@ -51,12 +61,13 @@ class KnowledgeCreate(KnowledgeBase):
 
 
 class KnowledgeResponse(KnowledgeBase):
-    id: int
-    created_at: datetime
-
     model_config = ConfigDict(
         from_attributes=True,
+        str_strip_whitespace=True,
     )
+
+    id: int
+    created_at: datetime
 
 
 class KnowledgeResolveResponse(BaseModel):

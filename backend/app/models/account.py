@@ -1,3 +1,4 @@
+from sqlalchemy import CheckConstraint
 from sqlalchemy import Column
 from sqlalchemy import Date
 from sqlalchemy import DateTime
@@ -12,10 +13,24 @@ from app.database.database import Base
 class Account(Base):
     __tablename__ = "accounts"
 
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(btrim(cliente)) >= 2",
+            name="ck_accounts_cliente_min_length",
+        ),
+        CheckConstraint(
+            "valor > 0",
+            name="ck_accounts_valor_positive",
+        ),
+        CheckConstraint(
+            "status IN ('aberto', 'atrasado', 'pago')",
+            name="ck_accounts_status_valid",
+        ),
+    )
+
     id = Column(
         Integer,
         primary_key=True,
-        index=True,
     )
 
     cliente = Column(
@@ -49,10 +64,13 @@ class Account(Base):
 
     status = Column(
         String(30),
-        default="pendente",
+        nullable=False,
+        default="aberto",
+        server_default="aberto",
     )
 
     created_at = Column(
         DateTime(timezone=True),
+        nullable=False,
         server_default=func.now(),
     )
