@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends
@@ -5,6 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.observability import (
+    RequestObservabilityMiddleware,
+)
+from app.core.observability import (
+    configure_logging,
+)
 from app.core.security import require_api_key
 from app.database.database import (
     Base,
@@ -26,15 +33,45 @@ import app.models
 import app.agents.risk_agent
 
 
+configure_logging()
+
+application_logger = logging.getLogger(
+    "auneron.application"
+)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
+    application_logger.info(
+        "application_started",
+        extra={
+            "event": "application_lifecycle",
+            "state": "started",
+            "environment": settings.environment,
+            "version": settings.app_version,
+        },
+    )
+
+    try:
+        yield
+    finally:
+        application_logger.info(
+            "application_stopped",
+            extra={
+                "event": "application_lifecycle",
+                "state": "stopped",
+                "environment": settings.environment,
+                "version": settings.app_version,
+            },
+        )
 
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="Intelligent Business Operating System",
+    description=(
+        "Intelligent Business Operating System"
+    ),
     lifespan=lifespan,
 )
 
@@ -44,6 +81,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+app.add_middleware(
+    RequestObservabilityMiddleware
 )
 
 
@@ -60,7 +101,9 @@ def home():
 
 @app.get("/health", tags=["Health"])
 def health():
-    database_online = check_database_connection()
+    database_online = (
+        check_database_connection()
+    )
 
     return {
         "status": (

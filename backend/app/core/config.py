@@ -49,6 +49,17 @@ class Settings(BaseSettings):
         validation_alias="API_KEY",
     )
 
+    log_level: Literal[
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    ] = Field(
+        default="INFO",
+        validation_alias="LOG_LEVEL",
+    )
+
     cors_origins: str = (
         "http://localhost:5173,"
         "http://127.0.0.1:5173"
