@@ -1,0 +1,165 @@
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python 3.11 / PostgreSQL 17
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17
+
+        env:
+          POSTGRES_DB: auneron_test
+          POSTGRES_USER: auneron
+          POSTGRES_PASSWORD: auneron_ci_password
+
+        ports:
+          - 5432:5432
+
+        options: >-
+          --health-cmd "pg_isready -U auneron -d auneron_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://auneron:auneron_ci_password@localhost:5432/auneron_test
+      TEST_DATABASE_URL: postgresql+psycopg://auneron:auneron_ci_password@localhost:5432/auneron_test
+      PYTHONUNBUFFERED: "1"
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v6
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Atualizar pip
+        run: python -m pip install --upgrade pip
+
+      - name: Instalar dependências
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Validar dependências
+        run: python -m pip check
+
+      - name: Validar isolamento do banco
+        run: |
+          python - <<'PY'
+          import os
+
+          from sqlalchemy import text
+
+          from app.database.database import engine
+
+
+          app_environment = os.environ.get("APP_ENV")
+          configured_database = engine.url.database
+
+          assert app_environment == "test", (
+              "APP_ENV precisa ser test. "
+              f"Valor recebido: {app_environment!r}"
+          )
+
+          assert configured_database == "auneron_test", (
+              "Banco inseguro configurado para o CI: "
+              f"{configured_database!r}"
+          )
+
+          assert configured_database != "auneron"
+
+          with engine.connect() as connection:
+              connected_database = connection.execute(
+                  text("SELECT current_database()")
+              ).scalar_one()
+
+          assert connected_database == "auneron_test", (
+              "Conexão aberta no banco incorreto: "
+              f"{connected_database!r}"
+          )
+
+          print(
+              "Isolamento confirmado:",
+              connected_database,
+          )
+          PY
+
+      - name: Verificar compilação
+        run: python -m compileall -q app tests
+
+      - name: Aplicar migrações
+        run: python -m alembic upgrade head
+
+      - name: Verificar revisão Alembic
+        run: |
+          python -m alembic current
+          python -m alembic heads
+          python -m alembic check
+
+      - name: Executar testes
+        run: python -m pytest --maxfail=1
+
+      - name: Confirmar limpeza do banco
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+
+          from app.database.database import engine
+
+
+          with engine.connect() as connection:
+              result = connection.execute(
+                  text(
+                      """
+                      SELECT
+                          (SELECT COUNT(*) FROM accounts)
+                              AS accounts,
+                          (SELECT COUNT(*) FROM knowledge)
+                              AS knowledge
+                      """
+                  )
+              ).mappings().one()
+
+          assert result["accounts"] == 0, result
+          assert result["knowledge"] == 0, result
+
+          print(
+              "Banco de testes limpo:",
+              dict(result),
+          )
+          PY
