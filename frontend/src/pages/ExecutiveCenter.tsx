@@ -17,7 +17,9 @@ import {
   useState,
 } from "react";
 
-import api from "../api/api";
+import api, {
+  getApiErrorMessage,
+} from "../api/api";
 import DecisionContextCard from "../components/executive/DecisionContextCard";
 import ExplainabilityCard from "../components/executive/ExplainabilityCard";
 import { Header } from "../components/layout/Header";
@@ -365,7 +367,10 @@ export default function ExecutiveCenter() {
         );
 
         setErro(
-          "Não foi possível carregar as informações executivas.",
+          getApiErrorMessage(
+            error,
+            "Não foi possível carregar as informações executivas.",
+          ),
         );
       } finally {
         setCarregando(false);
@@ -376,7 +381,16 @@ export default function ExecutiveCenter() {
   );
 
   useEffect(() => {
-    void carregarDados();
+    const timeoutId = window.setTimeout(
+      () => {
+        void carregarDados();
+      },
+      0,
+    );
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [carregarDados]);
 
   const decisaoAtual =

@@ -9,7 +9,9 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import api from "../api/api";
+import api, {
+  getApiErrorMessage,
+} from "../api/api";
 import { Header } from "../components/layout/Header";
 import type { DashboardData } from "../types/dashboard";
 
@@ -62,7 +64,10 @@ export function Dashboard() {
         console.error("Erro ao carregar o dashboard:", error);
 
         setErro(
-          "Não foi possível conectar ao backend. Verifique se o FastAPI está em execução.",
+          getApiErrorMessage(
+            error,
+            "Não foi possível carregar o dashboard.",
+          ),
         );
       } finally {
         setCarregando(false);

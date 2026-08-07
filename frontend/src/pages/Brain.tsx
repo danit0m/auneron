@@ -16,7 +16,9 @@ import {
   useState,
 } from "react";
 
-import api from "../api/api";
+import api, {
+  getApiErrorMessage,
+} from "../api/api";
 import BrainExecutiveSummary from "../components/brain/BrainExecutiveSummary";
 import { Header } from "../components/layout/Header";
 import type { Knowledge } from "../types/knowledge";
@@ -163,8 +165,10 @@ export default function Brain() {
         );
 
         setErro(
-          "Não foi possível carregar o Brain. " +
-            "Verifique se o backend está em execução.",
+          getApiErrorMessage(
+            error,
+            "Não foi possível carregar o Brain.",
+          ),
         );
       } finally {
         setCarregando(false);
@@ -200,8 +204,17 @@ export default function Brain() {
   // =====================================
 
   useEffect(() => {
-    void carregarConhecimentos();
-    void carregarExecutive();
+    const timeoutId = window.setTimeout(
+      () => {
+        void carregarConhecimentos();
+        void carregarExecutive();
+      },
+      0,
+    );
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [
     carregarConhecimentos,
     carregarExecutive,
@@ -354,8 +367,10 @@ export default function Brain() {
       );
 
       setErro(
-        "Não foi possível atualizar " +
-          "o conhecimento.",
+        getApiErrorMessage(
+          error,
+          "Não foi possível atualizar o conhecimento.",
+        ),
       );
     }
   }

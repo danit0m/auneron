@@ -15,7 +15,9 @@ import {
   useState,
 } from "react";
 
-import api from "../api/api";
+import api, {
+  getApiErrorMessage,
+} from "../api/api";
 import ClienteModal from "../components/clientes/ClienteModal";
 import ClienteTable from "../components/clientes/ClienteTable";
 import ConfirmDeleteModal from "../components/clientes/ConfirmDeleteModal";
@@ -84,7 +86,10 @@ export default function Clientes() {
         );
 
         setErro(
-          "Não foi possível carregar os clientes. Verifique se o backend está em execução.",
+          getApiErrorMessage(
+            error,
+            "Não foi possível carregar os clientes.",
+          ),
         );
       } finally {
         setCarregando(false);
@@ -95,7 +100,16 @@ export default function Clientes() {
   );
 
   useEffect(() => {
-    void carregarClientes();
+    const timeoutId = window.setTimeout(
+      () => {
+        void carregarClientes();
+      },
+      0,
+    );
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [carregarClientes]);
 
   const clientesFiltrados = useMemo(() => {
@@ -222,9 +236,12 @@ export default function Clientes() {
       );
 
       setErroModal(
-        clienteSelecionado
-          ? "Não foi possível atualizar o cliente. Verifique os dados informados."
-          : "Não foi possível cadastrar o cliente. Verifique os dados informados.",
+        getApiErrorMessage(
+          error,
+          clienteSelecionado
+            ? "Não foi possível atualizar o cliente."
+            : "Não foi possível cadastrar o cliente.",
+        ),
       );
     } finally {
       setSalvando(false);
@@ -280,7 +297,10 @@ export default function Clientes() {
       );
 
       setErroExclusao(
-        "Não foi possível excluir o cliente. Tente novamente.",
+        getApiErrorMessage(
+          error,
+          "Não foi possível excluir o cliente.",
+        ),
       );
     } finally {
       setExcluindo(false);
@@ -514,14 +534,16 @@ export default function Clientes() {
         </section>
       </section>
 
-      <ClienteModal
-        aberto={modalAberto}
-        cliente={clienteSelecionado}
-        salvando={salvando}
-        erro={erroModal}
-        onClose={fecharModal}
-        onSubmit={salvarCliente}
-      />
+      {modalAberto && (
+        <ClienteModal
+          aberto
+          cliente={clienteSelecionado}
+          salvando={salvando}
+          erro={erroModal}
+          onClose={fecharModal}
+          onSubmit={salvarCliente}
+        />
+      )}
 
       <ConfirmDeleteModal
         aberto={modalExclusaoAberto}

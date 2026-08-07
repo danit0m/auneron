@@ -52,6 +52,27 @@ const FORMULARIO_INICIAL: ClienteFormulario = {
   status: "aberto",
 };
 
+function criarFormulario(
+  cliente: Account | null,
+): ClienteFormulario {
+  if (!cliente) {
+    return {
+      ...FORMULARIO_INICIAL,
+    };
+  }
+
+  return {
+    cliente: cliente.cliente,
+    email: cliente.email ?? "",
+    whatsapp: cliente.whatsapp ?? "",
+    valor: Number(cliente.valor),
+    vencimento: cliente.vencimento ?? "",
+    status: normalizarStatus(
+      cliente.status,
+    ),
+  };
+}
+
 export default function ClienteModal({
   aberto,
   cliente = null,
@@ -61,9 +82,9 @@ export default function ClienteModal({
   onSubmit,
 }: ClienteModalProps) {
   const [formulario, setFormulario] =
-    useState<ClienteFormulario>({
-      ...FORMULARIO_INICIAL,
-    });
+    useState<ClienteFormulario>(
+      () => criarFormulario(cliente),
+    );
 
   const [errosCampos, setErrosCampos] =
     useState<
@@ -73,33 +94,6 @@ export default function ClienteModal({
     >({});
 
   const modoEdicao = Boolean(cliente);
-
-  useEffect(() => {
-    if (!aberto) {
-      return;
-    }
-
-    if (cliente) {
-      setFormulario({
-        cliente: cliente.cliente,
-        email: cliente.email ?? "",
-        whatsapp:
-          cliente.whatsapp ?? "",
-        valor: Number(cliente.valor),
-        vencimento:
-          cliente.vencimento ?? "",
-        status: normalizarStatus(
-          cliente.status,
-        ),
-      });
-    } else {
-      setFormulario({
-        ...FORMULARIO_INICIAL,
-      });
-    }
-
-    setErrosCampos({});
-  }, [aberto, cliente]);
 
   useEffect(() => {
     if (!aberto) {

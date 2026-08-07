@@ -118,12 +118,6 @@ export function ThemeProvider({
       );
     }
 
-    setSystemTheme(
-      mediaQuery.matches
-        ? "dark"
-        : "light",
-    );
-
     mediaQuery.addEventListener(
       "change",
       atualizarTemaDoSistema,

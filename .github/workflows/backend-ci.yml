@@ -1,4 +1,4 @@
-name: Backend CI
+name: Backend + Frontend CI
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "backend/**"
+      - "frontend/**"
       - ".github/workflows/backend-ci.yml"
 
   pull_request:
@@ -13,6 +14,7 @@ on:
       - main
     paths:
       - "backend/**"
+      - "frontend/**"
       - ".github/workflows/backend-ci.yml"
 
   workflow_dispatch:
@@ -26,9 +28,9 @@ concurrency:
 
 jobs:
   test:
-    name: Python 3.11 / PostgreSQL 17
+    name: Python 3.11 / Node 22 / PostgreSQL 17
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -81,14 +83,33 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
+      - name: Configurar Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Atualizar pip
         run: python -m pip install --upgrade pip
 
-      - name: Instalar dependências
+      - name: Instalar dependências do backend
         run: python -m pip install -r requirements-dev.txt
 
-      - name: Validar dependências
+      - name: Validar dependências Python
         run: python -m pip check
+
+      - name: Instalar dependências do frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Validar lint do frontend
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Validar build do frontend
+        working-directory: frontend
+        run: npm run build
 
       - name: Validar isolamento do banco
         run: |
@@ -148,6 +169,12 @@ jobs:
 
       - name: Diagnóstico operacional do banco
         run: python scripts/db_diagnostics.py
+
+      - name: Instalar Chromium do Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Executar E2E frontend
+        run: python scripts/e2e_frontend.py
 
       - name: Confirmar limpeza do banco
         run: |

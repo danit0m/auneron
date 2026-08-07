@@ -20,7 +20,9 @@ import {
   useState,
 } from "react";
 
-import api from "../api/api";
+import api, {
+  getApiErrorMessage,
+} from "../api/api";
 import AgentExecutionFlow from "../components/executive/AgentExecutionFlow";
 import ConfidenceMeter from "../components/executive/ConfidenceMeter";
 import DecisionContextCard from "../components/executive/DecisionContextCard";
@@ -259,7 +261,10 @@ export default function AgentOperations() {
         );
 
         setErro(
-          "Não foi possível carregar as informações do AI Orchestrator.",
+          getApiErrorMessage(
+            error,
+            "Não foi possível carregar as informações do AI Orchestrator.",
+          ),
         );
       } finally {
         setCarregando(false);
@@ -270,7 +275,16 @@ export default function AgentOperations() {
   );
 
   useEffect(() => {
-    void carregarDados();
+    const timeoutId = window.setTimeout(
+      () => {
+        void carregarDados();
+      },
+      0,
+    );
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [carregarDados]);
 
   const agentesRegistrados =
