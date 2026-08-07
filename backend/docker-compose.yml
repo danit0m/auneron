@@ -7,22 +7,160 @@ services:
     environment:
       POSTGRES_DB: auneron
       POSTGRES_USER: auneron
-      POSTGRES_PASSWORD: auneron_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-auneron_dev_password}
       TZ: America/Sao_Paulo
 
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
 
     volumes:
       - auneron_postgres_data:/var/lib/postgresql/data
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auneron -d auneron"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U auneron -d auneron",
+        ]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 10s
 
+    networks:
+      - auneron_internal
+
+  migration:
+    image: auneron-backend:local
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+
+    environment:
+      APP_ENV: development
+      DATABASE_URL: >-
+        postgresql+psycopg://auneron:${POSTGRES_PASSWORD:-auneron_dev_password}@postgres:5432/auneron
+      API_KEY: ${API_KEY:?Defina API_KEY no backend/.env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-5}
+      DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-10}
+      DATABASE_POOL_RECYCLE: ${DATABASE_POOL_RECYCLE:-900}
+      DATABASE_CONNECT_TIMEOUT: ${DATABASE_CONNECT_TIMEOUT:-5}
+      DATABASE_STATEMENT_TIMEOUT_MS: ${DATABASE_STATEMENT_TIMEOUT_MS:-30000}
+      DATABASE_LOCK_TIMEOUT_MS: ${DATABASE_LOCK_TIMEOUT_MS:-5000}
+      DATABASE_IDLE_TRANSACTION_TIMEOUT_MS: ${DATABASE_IDLE_TRANSACTION_TIMEOUT_MS:-60000}
+      DATABASE_APPLICATION_NAME: auneron-migration
+      DATABASE_ECHO: ${DATABASE_ECHO:-false}
+
+    command:
+      [
+        "python",
+        "-m",
+        "alembic",
+        "upgrade",
+        "head",
+      ]
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: "no"
+
+    networks:
+      - auneron_internal
+
+  backend:
+    image: auneron-backend:local
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+
+    container_name: auneron-backend
+    restart: unless-stopped
+
+    environment:
+      APP_ENV: development
+      DATABASE_URL: >-
+        postgresql+psycopg://auneron:${POSTGRES_PASSWORD:-auneron_dev_password}@postgres:5432/auneron
+      API_KEY: ${API_KEY:?Defina API_KEY no backend/.env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-5}
+      DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-10}
+      DATABASE_POOL_RECYCLE: ${DATABASE_POOL_RECYCLE:-900}
+      DATABASE_CONNECT_TIMEOUT: ${DATABASE_CONNECT_TIMEOUT:-5}
+      DATABASE_STATEMENT_TIMEOUT_MS: ${DATABASE_STATEMENT_TIMEOUT_MS:-30000}
+      DATABASE_LOCK_TIMEOUT_MS: ${DATABASE_LOCK_TIMEOUT_MS:-5000}
+      DATABASE_IDLE_TRANSACTION_TIMEOUT_MS: ${DATABASE_IDLE_TRANSACTION_TIMEOUT_MS:-60000}
+      DATABASE_APPLICATION_NAME: ${DATABASE_APPLICATION_NAME:-auneron-api-compose}
+      DATABASE_ECHO: ${DATABASE_ECHO:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+    ports:
+      - "127.0.0.1:${BACKEND_HTTP_PORT:-8000}:8000"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - auneron_internal
+
+  frontend:
+    image: auneron-frontend:local
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+
+    container_name: auneron-frontend
+    restart: unless-stopped
+
+    environment:
+      AUNERON_API_KEY: ${API_KEY:?Defina API_KEY no backend/.env}
+
+    ports:
+      - "127.0.0.1:${AUNERON_HTTP_PORT:-8080}:80"
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1/ || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+    networks:
+      - auneron_internal
+
 volumes:
   auneron_postgres_data:
     name: auneron_postgres_data
+
+networks:
+  auneron_internal:
+    name: auneron_internal
+    driver: bridge
