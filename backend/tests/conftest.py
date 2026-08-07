@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL"
 )
+TEST_API_KEY = os.getenv(
+    "TEST_API_KEY"
+)
 
 if not TEST_DATABASE_URL:
     raise RuntimeError(
@@ -19,9 +22,19 @@ if not TEST_DATABASE_URL:
         "variável antes de executar os testes."
     )
 
+if not TEST_API_KEY:
+    raise RuntimeError(
+        "TEST_API_KEY não está definida. "
+        "Crie backend/.env.test a partir de "
+        "backend/.env.test.example ou defina a "
+        "variável antes de executar os testes."
+    )
+
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["API_KEY"] = TEST_API_KEY
 
+from app.core.security import API_KEY_HEADER_NAME
 from app.database.database import SessionLocal
 from app.database.database import engine
 from app.main import app
@@ -77,6 +90,19 @@ def clean_database() -> Generator[
 
 @pytest.fixture
 def client() -> Generator[
+    TestClient,
+    None,
+    None,
+]:
+    with TestClient(app) as test_client:
+        test_client.headers.update({
+            API_KEY_HEADER_NAME: TEST_API_KEY,
+        })
+        yield test_client
+
+
+@pytest.fixture
+def unauthenticated_client() -> Generator[
     TestClient,
     None,
     None,

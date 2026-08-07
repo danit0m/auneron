@@ -1,9 +1,11 @@
-﻿from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 
+from fastapi import Depends
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.security import require_api_key
 from app.database.database import (
     Base,
     check_database_connection,
@@ -61,8 +63,16 @@ def health():
     database_online = check_database_connection()
 
     return {
-        "status": "healthy" if database_online else "degraded",
-        "database": "online" if database_online else "offline",
+        "status": (
+            "healthy"
+            if database_online
+            else "degraded"
+        ),
+        "database": (
+            "online"
+            if database_online
+            else "offline"
+        ),
         "database_engine": (
             "postgresql"
             if settings.is_postgresql
@@ -77,9 +87,31 @@ def health():
     }
 
 
-app.include_router(upload_router)
-app.include_router(dashboard_router)
-app.include_router(accounts_router)
-app.include_router(executive_router)
-app.include_router(orchestrator_router)
-app.include_router(brain_router)
+protected_dependencies = [
+    Depends(require_api_key),
+]
+
+app.include_router(
+    upload_router,
+    dependencies=protected_dependencies,
+)
+app.include_router(
+    dashboard_router,
+    dependencies=protected_dependencies,
+)
+app.include_router(
+    accounts_router,
+    dependencies=protected_dependencies,
+)
+app.include_router(
+    executive_router,
+    dependencies=protected_dependencies,
+)
+app.include_router(
+    orchestrator_router,
+    dependencies=protected_dependencies,
+)
+app.include_router(
+    brain_router,
+    dependencies=protected_dependencies,
+)

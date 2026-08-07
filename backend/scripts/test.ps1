@@ -8,9 +8,11 @@ Set-Location $projectRoot
 
 $previousAppEnv = $env:APP_ENV
 $previousDatabaseUrl = $env:DATABASE_URL
+$previousApiKey = $env:API_KEY
 $previousTestDatabaseUrl = $env:TEST_DATABASE_URL
+$previousTestApiKey = $env:TEST_API_KEY
 
-function Import-TestDatabaseUrl {
+function Import-TestEnvironment {
     param(
         [Parameter(Mandatory)]
         [string]$Path
@@ -19,6 +21,11 @@ function Import-TestDatabaseUrl {
     if (-not (Test-Path $Path)) {
         return
     }
+
+    $allowedNames = @(
+        "TEST_DATABASE_URL",
+        "TEST_API_KEY"
+    )
 
     foreach ($rawLine in Get-Content $Path) {
         $line = $rawLine.Trim()
@@ -36,18 +43,22 @@ function Import-TestDatabaseUrl {
         $value = $parts[1].Trim().Trim('"').Trim("'")
 
         if (
-            $name -eq "TEST_DATABASE_URL" `
+            $name -in $allowedNames `
             -and $value
         ) {
-            $env:TEST_DATABASE_URL = $value
-            return
+            Set-Item `
+                -Path "Env:$name" `
+                -Value $value
         }
     }
 }
 
 try {
-    if (-not $env:TEST_DATABASE_URL) {
-        Import-TestDatabaseUrl `
+    if (
+        -not $env:TEST_DATABASE_URL `
+        -or -not $env:TEST_API_KEY
+    ) {
+        Import-TestEnvironment `
             -Path (
                 Join-Path `
                     $projectRoot `
@@ -63,10 +74,19 @@ try {
         )
     }
 
+    if (-not $env:TEST_API_KEY) {
+        throw (
+            "TEST_API_KEY não está definida. " +
+            "Adicione uma chave de teste com pelo " +
+            "menos 32 caracteres ao arquivo .env.test."
+        )
+    }
+
     $env:APP_ENV = "test"
     $env:DATABASE_URL = $env:TEST_DATABASE_URL
+    $env:API_KEY = $env:TEST_API_KEY
 
-    python -c "from app.core.config import settings; assert settings.environment == 'test'; assert settings.database_name == 'auneron_test', f'Banco inseguro: {settings.database_name}'; print('Banco de testes:', settings.database_name)"
+    python -c "from app.core.config import settings; assert settings.environment == 'test'; assert settings.database_name == 'auneron_test', f'Banco inseguro: {settings.database_name}'; assert settings.api_key is not None; print('Banco de testes:', settings.database_name); print('API de testes: protegida')"
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
@@ -99,6 +119,14 @@ finally {
         $env:DATABASE_URL = $previousDatabaseUrl
     }
 
+    if ($null -eq $previousApiKey) {
+        Remove-Item Env:API_KEY `
+            -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:API_KEY = $previousApiKey
+    }
+
     if ($null -eq $previousTestDatabaseUrl) {
         Remove-Item Env:TEST_DATABASE_URL `
             -ErrorAction SilentlyContinue
@@ -106,5 +134,14 @@ finally {
     else {
         $env:TEST_DATABASE_URL = `
             $previousTestDatabaseUrl
+    }
+
+    if ($null -eq $previousTestApiKey) {
+        Remove-Item Env:TEST_API_KEY `
+            -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TEST_API_KEY = `
+            $previousTestApiKey
     }
 }

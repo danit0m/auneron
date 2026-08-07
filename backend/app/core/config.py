@@ -4,6 +4,7 @@ from typing import Literal
 from typing import Self
 
 from pydantic import Field
+from pydantic import SecretStr
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -43,6 +44,11 @@ class Settings(BaseSettings):
     database_pool_timeout: int = 30
     database_pool_recycle: int = 1800
 
+    api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="API_KEY",
+    )
+
     cors_origins: str = (
         "http://localhost:5173,"
         "http://127.0.0.1:5173"
@@ -76,7 +82,7 @@ class Settings(BaseSettings):
         ).database or ""
 
     @model_validator(mode="after")
-    def validate_database_environment(self) -> Self:
+    def validate_environment(self) -> Self:
         try:
             database_name = self.database_name
         except Exception as error:
@@ -104,6 +110,23 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "O banco auneron_test exige APP_ENV=test."
+            )
+
+        if self.api_key is not None:
+            api_key_value = self.api_key.get_secret_value()
+
+            if len(api_key_value) < 32:
+                raise ValueError(
+                    "API_KEY precisa ter pelo menos "
+                    "32 caracteres."
+                )
+
+        if (
+            self.environment == "production"
+            and self.api_key is None
+        ):
+            raise ValueError(
+                "API_KEY é obrigatória em production."
             )
 
         return self
