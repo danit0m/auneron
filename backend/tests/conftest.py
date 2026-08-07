@@ -8,18 +8,22 @@ from sqlalchemy.orm import Session
 
 
 TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    (
-        "postgresql+psycopg://"
-        "auneron:auneron_dev_password"
-        "@localhost:5432/auneron_test"
-    ),
+    "TEST_DATABASE_URL"
 )
+
+if not TEST_DATABASE_URL:
+    raise RuntimeError(
+        "TEST_DATABASE_URL não está definida. "
+        "Crie backend/.env.test a partir de "
+        "backend/.env.test.example ou defina a "
+        "variável antes de executar os testes."
+    )
 
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
-from app.database.database import SessionLocal, engine
+from app.database.database import SessionLocal
+from app.database.database import engine
 from app.main import app
 
 
@@ -28,14 +32,15 @@ def _validate_test_database() -> None:
 
     if database_name != "auneron_test":
         raise RuntimeError(
-            "Proteção acionada: os testes somente podem usar "
-            "o banco auneron_test. "
+            "Proteção acionada: os testes somente "
+            "podem usar o banco auneron_test. "
             f"Banco recebido: {database_name!r}."
         )
 
     if os.environ.get("APP_ENV") != "test":
         raise RuntimeError(
-            "Proteção acionada: APP_ENV precisa ser test."
+            "Proteção acionada: APP_ENV precisa "
+            "ser test."
         )
 
 
@@ -58,7 +63,11 @@ def _clean_database() -> None:
 
 
 @pytest.fixture(autouse=True)
-def clean_database() -> Generator[None, None, None]:
+def clean_database() -> Generator[
+    None,
+    None,
+    None,
+]:
     _clean_database()
 
     yield
@@ -67,13 +76,21 @@ def clean_database() -> Generator[None, None, None]:
 
 
 @pytest.fixture
-def client() -> Generator[TestClient, None, None]:
+def client() -> Generator[
+    TestClient,
+    None,
+    None,
+]:
     with TestClient(app) as test_client:
         yield test_client
 
 
 @pytest.fixture
-def db_session() -> Generator[Session, None, None]:
+def db_session() -> Generator[
+    Session,
+    None,
+    None,
+]:
     session = SessionLocal()
 
     try:
