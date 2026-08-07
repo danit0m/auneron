@@ -14,7 +14,6 @@ from app.core.observability import (
 )
 from app.core.security import require_api_key
 from app.database.database import (
-    Base,
     check_database_connection,
     engine,
 )
@@ -42,6 +41,10 @@ application_logger = logging.getLogger(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    database_online = (
+        check_database_connection()
+    )
+
     application_logger.info(
         "application_started",
         extra={
@@ -49,12 +52,15 @@ async def lifespan(_: FastAPI):
             "state": "started",
             "environment": settings.environment,
             "version": settings.app_version,
+            "database_online": database_online,
         },
     )
 
     try:
         yield
     finally:
+        engine.dispose()
+
         application_logger.info(
             "application_stopped",
             extra={
@@ -62,6 +68,7 @@ async def lifespan(_: FastAPI):
                 "state": "stopped",
                 "environment": settings.environment,
                 "version": settings.app_version,
+                "database_pool_disposed": True,
             },
         )
 

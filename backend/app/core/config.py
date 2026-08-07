@@ -39,10 +39,51 @@ class Settings(BaseSettings):
         min_length=1,
     )
     database_echo: bool = False
-    database_pool_size: int = 10
-    database_max_overflow: int = 20
-    database_pool_timeout: int = 30
-    database_pool_recycle: int = 1800
+    database_pool_size: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+    )
+    database_max_overflow: int = Field(
+        default=5,
+        ge=0,
+        le=50,
+    )
+    database_pool_timeout: int = Field(
+        default=10,
+        ge=1,
+        le=120,
+    )
+    database_pool_recycle: int = Field(
+        default=900,
+        ge=60,
+        le=86400,
+    )
+    database_connect_timeout: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+    )
+    database_statement_timeout_ms: int = Field(
+        default=30000,
+        ge=1000,
+        le=300000,
+    )
+    database_lock_timeout_ms: int = Field(
+        default=5000,
+        ge=100,
+        le=60000,
+    )
+    database_idle_transaction_timeout_ms: int = Field(
+        default=60000,
+        ge=1000,
+        le=600000,
+    )
+    database_application_name: str = Field(
+        default="auneron-api",
+        min_length=1,
+        max_length=63,
+    )
 
     api_key: SecretStr | None = Field(
         default=None,
