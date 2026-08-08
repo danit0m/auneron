@@ -213,18 +213,33 @@ docs/DEPLOYMENT.md
 Produ√ß√£o deve utilizar segredos gerenciados, HTTPS, banco protegido e
 uma estrat√©gia de deploy adequada √† plataforma.
 
-## AutenticaÁ„o da interface
+## Autentica√ß√£o da interface
 
-A stack Docker valida a infraestrutura completa, incluindo o proxy
-seguro `/api`.
+O Compose utiliza a mesma autentica√ß√£o real do restante do Auneron.
 
-A aplicaÁ„o frontend mantÈm o controle de sess„o existente. Em um
-navegador sem sess„o v·lida, a interface pode redirecionar para
-`/access-denied`.
+O navegador realiza login por `/api/auth/login` e recebe um cookie de
+sess√£o `HttpOnly`. As sess√µes s√£o persistidas no PostgreSQL e continuam
+v√°lidas ap√≥s restart do processo backend enquanto n√£o expirarem ou forem
+revogadas.
 
-O Compose n„o injeta credenciais de usu·rio nem cÛdigos de elevaÁ„o no
-bundle React. A `API_KEY` È uma credencial entre Nginx e FastAPI e n„o
-substitui autenticaÁ„o de usu·rio.
+O Nginx do servi√ßo `frontend` injeta `X-API-Key` no lado servidor. Essa
+chave √© uma credencial entre servi√ßos e, sozinha, n√£o autoriza acesso aos
+dados de neg√≥cio.
 
-A autenticaÁ„o real de usu·rios deve ser tratada separadamente da
-infraestrutura Docker.
+O Compose n√£o injeta senha de usu√°rio, token de sess√£o nem credencial de
+eleva√ß√£o no bundle React. A eleva√ß√£o administrativa √© validada pelo
+backend e fica vinculada √† sess√£o atual.
+
+Depois da migration, o primeiro usu√°rio pode ser criado de forma
+interativa:
+
+```powershell
+docker compose exec backend `
+    python -m scripts.create_user `
+    --name "Administrador" `
+    --email "admin@example.com" `
+    --role administrator
+```
+
+A senha √© solicitada via `getpass`; n√£o a coloque em `.env`, Compose ou
+hist√≥rico de comandos.

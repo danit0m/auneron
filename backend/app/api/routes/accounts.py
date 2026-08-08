@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from app.agents.event_bus import event_bus
+from app.core.authentication import require_permission
 from app.database.database import get_db
 from app.models.account import Account
 from app.schemas.account import (
@@ -8,7 +10,7 @@ from app.schemas.account import (
     AccountResponse,
     AccountUpdate,
 )
-from app.agents.event_bus import event_bus
+
 
 router = APIRouter(
     prefix="/accounts",
@@ -16,24 +18,59 @@ router = APIRouter(
 )
 
 
-@router.get("/", response_model=list[AccountResponse])
+read_dependencies = [
+    Depends(
+        require_permission(
+            "clients.view"
+        )
+    ),
+]
+
+manage_dependencies = [
+    Depends(
+        require_permission(
+            "clients.manage"
+        )
+    ),
+]
+
+
+@router.get(
+    "/",
+    response_model=list[AccountResponse],
+    dependencies=read_dependencies,
+)
 def list_accounts(
-    status_filter: str | None = Query(default=None, alias="status"),
+    status_filter: str | None = Query(
+        default=None,
+        alias="status",
+    ),
     cliente: str | None = None,
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=50, ge=1, le=200),
+    skip: int = Query(
+        default=0,
+        ge=0,
+    ),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+    ),
     db: Session = Depends(get_db),
 ):
     query = db.query(Account)
 
     if status_filter:
         query = query.filter(
-            Account.status.ilike(status_filter)
+            Account.status.ilike(
+                status_filter
+            )
         )
 
     if cliente:
         query = query.filter(
-            Account.cliente.ilike(f"%{cliente}%")
+            Account.cliente.ilike(
+                f"%{cliente}%"
+            )
         )
 
     return (
@@ -51,6 +88,7 @@ def list_accounts(
 @router.get(
     "/{account_id}",
     response_model=AccountResponse,
+    dependencies=read_dependencies,
 )
 def get_account(
     account_id: int,
@@ -74,6 +112,7 @@ def get_account(
     "/",
     response_model=AccountResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=manage_dependencies,
 )
 def create_account(
     payload: AccountCreate,
@@ -95,7 +134,9 @@ def create_account(
             "email": account.email,
             "whatsapp": account.whatsapp,
             "valor": account.valor,
-            "vencimento": str(account.vencimento),
+            "vencimento": str(
+                account.vencimento
+            ),
             "status": account.status,
         },
     )
@@ -106,6 +147,7 @@ def create_account(
 @router.put(
     "/{account_id}",
     response_model=AccountResponse,
+    dependencies=manage_dependencies,
 )
 def update_account(
     account_id: int,
@@ -143,6 +185,7 @@ def update_account(
 @router.delete(
     "/{account_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=manage_dependencies,
 )
 def delete_account(
     account_id: int,

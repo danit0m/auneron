@@ -90,6 +90,26 @@ class Settings(BaseSettings):
         validation_alias="API_KEY",
     )
 
+    auth_cookie_name: str = Field(
+        default="auneron_session",
+        validation_alias="AUTH_COOKIE_NAME",
+        min_length=3,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    auth_session_ttl_minutes: int = Field(
+        default=480,
+        validation_alias="AUTH_SESSION_TTL_MINUTES",
+        ge=15,
+        le=10080,
+    )
+    auth_elevation_ttl_minutes: int = Field(
+        default=10,
+        validation_alias="AUTH_ELEVATION_TTL_MINUTES",
+        ge=1,
+        le=60,
+    )
+
     log_level: Literal[
         "DEBUG",
         "INFO",
@@ -132,6 +152,10 @@ class Settings(BaseSettings):
         return make_url(
             self.database_url
         ).database or ""
+
+    @property
+    def auth_cookie_secure(self) -> bool:
+        return self.environment == "production"
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
@@ -179,6 +203,15 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "API_KEY é obrigatória em production."
+            )
+
+        if (
+            self.auth_elevation_ttl_minutes
+            > self.auth_session_ttl_minutes
+        ):
+            raise ValueError(
+                "AUTH_ELEVATION_TTL_MINUTES não pode "
+                "ser maior que AUTH_SESSION_TTL_MINUTES."
             )
 
         return self

@@ -1,21 +1,3 @@
-export const ELEVATION_SESSION_KEY =
-  "auneron.security.elevated-until";
-
-export const ELEVATION_DURATION_MINUTES =
-  15;
-
-export const ELEVATION_DURATION_MS =
-  ELEVATION_DURATION_MINUTES *
-  60 *
-  1000;
-
-export function createElevationExpiration(): string {
-  return new Date(
-    Date.now() +
-      ELEVATION_DURATION_MS,
-  ).toISOString();
-}
-
 export function getRemainingSeconds(
   elevatedUntil: string | null,
 ): number {

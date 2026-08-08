@@ -153,7 +153,7 @@ jobs:
           PY
 
       - name: Verificar compilação
-        run: python -m compileall -q app tests scripts
+        run: python -m compileall -q app tests scripts migrations
 
       - name: Aplicar migrações
         run: python -m alembic upgrade head
@@ -173,7 +173,7 @@ jobs:
       - name: Instalar Chromium do Playwright
         run: python -m playwright install --with-deps chromium
 
-      - name: Executar E2E frontend
+      - name: Executar E2E frontend autenticado
         run: python scripts/e2e_frontend.py
 
       - name: Confirmar limpeza do banco
@@ -192,13 +192,19 @@ jobs:
                           (SELECT COUNT(*) FROM accounts)
                               AS accounts,
                           (SELECT COUNT(*) FROM knowledge)
-                              AS knowledge
+                              AS knowledge,
+                          (SELECT COUNT(*) FROM users)
+                              AS users,
+                          (SELECT COUNT(*) FROM auth_sessions)
+                              AS auth_sessions
                       """
                   )
               ).mappings().one()
 
           assert result["accounts"] == 0, result
           assert result["knowledge"] == 0, result
+          assert result["users"] == 0, result
+          assert result["auth_sessions"] == 0, result
 
           print(
               "Banco de testes limpo:",

@@ -10,34 +10,57 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Exemplo de configuração local:
+Exemplo:
 
 ```text
 AUNERON_BACKEND_URL=http://127.0.0.1:8000
 AUNERON_API_KEY=<mesma API_KEY configurada no backend>
-VITE_ELEVATED_DEV_CODE=<credencial exclusivamente local>
 ```
+
+Essas variáveis pertencem ao processo Node do Vite e não ao bundle React.
+
+## Autenticação
+
+O navegador usa `/api` e mantém a sessão individual por cookie
+`HttpOnly`.
+
+Fluxo:
+
+```text
+/login
+  -> POST /api/auth/login
+  -> cookie HttpOnly
+  -> GET /api/auth/me
+  -> rotas protegidas
+```
+
+Ao recarregar a aplicação, `AuthProvider` restaura a sessão com
+`/auth/me`.
+
+O logout chama `/auth/logout`.
 
 ## Segurança da integração
 
-O navegador utiliza URLs relativas `/api`.
+Em desenvolvimento, Vite encaminha `/api` ao FastAPI e injeta
+`X-API-Key` no processo Node.
 
-Em desenvolvimento, o Vite encaminha essas chamadas ao FastAPI e
-adiciona `X-API-Key` no processo Node. A chave não deve ser publicada
-como variável `VITE_*`, pois variáveis desse tipo podem ser incorporadas
-ao JavaScript entregue ao navegador.
+Em produção, Nginx/reverse proxy exerce a mesma função.
 
-Em produção, o build também continua usando `/api`. Um reverse proxy
-ou BFF deve encaminhar essas chamadas para o FastAPI e adicionar a
-credencial no lado servidor.
+A API key nunca deve ser publicada como `VITE_*`, JavaScript,
+`localStorage` ou `sessionStorage`.
 
-Consulte:
+O frontend aplica RBAC para navegação, enquanto o FastAPI aplica a
+autorização efetiva nas rotas de negócio.
 
-```text
-../backend/docs/FRONTEND_INTEGRATION.md
-../backend/docs/API_SECURITY.md
-../backend/docs/DEPLOYMENT.md
-```
+## Elevação
+
+AI Operations e outros recursos administrativos sensíveis podem exigir
+revalidação da senha.
+
+O frontend usa `/auth/elevate` e `/auth/elevation/revoke`. A elevação é
+mantida no servidor e restaurada por `/auth/me`.
+
+Não existe `VITE_ELEVATED_DEV_CODE`.
 
 ## Scripts
 
@@ -48,8 +71,6 @@ npm run build
 npm run preview
 ```
 
-`npm run build` executa TypeScript antes da geração do bundle.
-
 ## E2E
 
 O E2E é coordenado pelo backend:
@@ -59,26 +80,37 @@ cd ..\backend
 python .\scripts\e2e_frontend.py
 ```
 
-Na primeira execução local:
+Na primeira execução:
 
 ```powershell
 python -m playwright install chromium
 ```
 
-## Produção
+O E2E cria um usuário descartável, realiza login real, valida Dashboard,
+reload de sessão e Clientes, e remove o usuário ao final.
 
-A imagem de produção é multi-stage:
+## Produção
 
 ```powershell
 docker build -f frontend/Dockerfile -t auneron-frontend:local .
 ```
 
-A etapa Node gera os arquivos estáticos. A etapa final usa Nginx para:
+A imagem final usa Nginx para:
 
 - servir o SPA;
 - encaminhar `/api` ao backend;
-- adicionar `X-API-Key` no lado servidor;
-- preservar o fluxo de `X-Request-ID`.
+- adicionar `X-API-Key` no servidor;
+- preservar `X-Request-ID`;
+- encaminhar o cookie de sessão.
 
-A variável `AUNERON_API_KEY` é necessária no container Nginx em runtime,
-não durante o build do React.
+`AUNERON_API_KEY` é necessária no container Nginx em runtime, não durante
+o build React.
+
+Consulte:
+
+```text
+../backend/docs/FRONTEND_INTEGRATION.md
+../backend/docs/API_SECURITY.md
+../backend/docs/AUTHENTICATION.md
+../backend/docs/DEPLOYMENT.md
+```

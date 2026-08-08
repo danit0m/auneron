@@ -9,17 +9,16 @@ git status
 git log -5 --oneline
 ```
 
-O código destinado ao release deve estar revisado e o working tree deve
-estar limpo no momento da publicação.
+O working tree deve estar limpo no momento da publicação.
 
 ## 2. Segredos
 
 Confirme:
 
-- nenhum `.env` está versionado;
-- nenhum `.env.local` está versionado;
-- `API_KEY` real não aparece no diff;
-- `DATABASE_URL` real não aparece no diff;
+- nenhum `.env` ou `.env.local` está versionado;
+- nenhuma `API_KEY` real aparece no diff;
+- nenhuma `DATABASE_URL` real aparece no diff;
+- nenhuma senha de usuário aparece no diff;
 - segredos de produção estão no gerenciador da plataforma.
 
 ## 3. Dependências
@@ -47,14 +46,22 @@ npm run build
 Pop-Location
 ```
 
+Confirme que não existem referências a:
+
+```text
+VITE_ELEVATED_DEV_CODE
+ELEVATION_SESSION_KEY
+```
+
 ## 5. Backend
 
-Na pasta `backend`:
-
 ```powershell
-python -m compileall -q app tests scripts
+python -m compileall -q app tests scripts migrations
 powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
 ```
+
+A suíte deve validar autenticação e RBAC, incluindo API key sem sessão,
+permissão insuficiente e elevação.
 
 ## 6. E2E
 
@@ -66,8 +73,10 @@ Valide:
 
 ```text
 E2E frontend: OK
-Dashboard via /api: HTTP 200
-Clientes via /api: HTTP 200
+Login real via /api/auth/login: HTTP 200
+Dashboard autenticado via /api: HTTP 200
+Sessão restaurada após reload: OK
+Clientes autenticado via /api: HTTP 200
 ```
 
 ## 7. PostgreSQL
@@ -80,50 +89,60 @@ Confirme banco, application name, timeouts e pool.
 
 ## 8. Alembic
 
-Antes do deploy:
-
 ```powershell
 python -m alembic heads
 python -m alembic check
 ```
 
-No ambiente de destino, faça backup antes de qualquer migração que altere
-dados ou schema.
-
-Depois:
+No destino:
 
 ```text
 python -m alembic upgrade head
 python -m alembic current
 ```
 
-## 9. Containers
+Faça backup antes de migrações em banco real.
 
-Na raiz do repositório:
+## 9. Containers
 
 ```powershell
 docker build -f backend/Dockerfile -t auneron-backend:release .
 docker build -f frontend/Dockerfile -t auneron-frontend:release .
 ```
 
-Nenhuma API key real deve ser usada como `--build-arg` no frontend.
+Nenhuma API key real deve ser `--build-arg` do frontend.
+
+Valide também:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\compose_smoke.ps1
+```
+
+O smoke deve confirmar:
+
+```text
+Backend sem API key: HTTP 401
+Frontend /api/health: HTTP 200
+Frontend /api/dashboard/ sem sessao: HTTP 401
+Frontend /api/auth/me sem sessao: HTTP 401
+COMPOSE SMOKE TEST: OK
+```
 
 ## 10. CI
 
 O GitHub Actions do commit de release deve estar verde.
 
-O workflow atual valida:
+O workflow valida:
 
 - PostgreSQL 17;
 - Python 3.11;
 - Node 22;
-- lint;
-- build;
+- lint e build;
 - Alembic;
-- pytest;
+- pytest/RBAC;
 - diagnóstico do banco;
-- Playwright E2E;
-- limpeza do banco de testes.
+- Playwright E2E com login real;
+- limpeza de `accounts`, `knowledge`, `users` e `auth_sessions`.
 
 ## 11. Produção
 
@@ -133,37 +152,35 @@ Confirme:
 - PostgreSQL não está exposto publicamente;
 - HTTPS está ativo;
 - `API_KEY` possui pelo menos 32 caracteres;
+- reverse proxy injeta `X-API-Key`;
+- cookie de sessão é `HttpOnly`, `SameSite=Strict` e `Secure`;
+- existe pelo menos um operador válido;
+- TTL de sessão e elevação estão definidos;
 - `DATABASE_APPLICATION_NAME` identifica o ambiente;
-- health check aponta para `/health`;
-- frontend encaminha `/api` ao backend;
-- reverse proxy injeta `X-API-Key` no lado servidor.
+- health check aponta para `/health`.
 
 ## 12. Pós-deploy
 
 Valide:
 
-```text
-GET /health
-```
-
-Depois:
-
-- carregue Dashboard;
-- carregue Clientes;
-- confirme que as chamadas `/api` retornam sucesso;
-- confirme HTTP 401 para acesso direto protegido sem credencial;
-- confirme request IDs nos logs;
-- confirme que a API key não existe nos assets JavaScript;
-- acompanhe erros e latência após a publicação.
+- `/login` abre sem sessão;
+- login válido abre o Dashboard;
+- `F5` restaura a sessão;
+- Clientes carrega;
+- logout invalida a sessão;
+- `/api/dashboard/` sem cookie retorna 401;
+- usuário sem permissão recebe 403;
+- recurso administrativo exige elevação;
+- `X-Request-ID` aparece nos logs;
+- API key não existe nos assets JavaScript.
 
 ## 13. Rollback
 
 Antes do release, defina:
 
-- versão anterior da imagem backend;
-- versão anterior da imagem frontend;
+- imagem backend anterior;
+- imagem frontend anterior;
 - backup do banco compatível;
 - procedimento de rollback de schema quando aplicável.
 
-Evite downgrade destrutivo automático de banco. Mudanças irreversíveis
-devem possuir plano explícito de recuperação.
+Evite downgrade destrutivo automático de banco.

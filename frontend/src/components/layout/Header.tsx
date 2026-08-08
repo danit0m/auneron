@@ -1,11 +1,60 @@
 import { Bell, Menu, Search } from "lucide-react";
 
+import {
+  roleLabels,
+} from "../../auth";
+import {
+  useAuth,
+} from "../../hooks/useAuth";
+
 interface HeaderProps {
   title: string;
   subtitle?: string;
 }
 
-export function Header({ title, subtitle }: HeaderProps) {
+function getUserInitials(
+  name: string,
+): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "AU";
+  }
+
+  if (parts.length === 1) {
+    return parts[0]
+      .slice(0, 2)
+      .toUpperCase();
+  }
+
+  return (
+    parts[0][0] +
+    parts[parts.length - 1][0]
+  ).toUpperCase();
+}
+
+export function Header({
+  title,
+  subtitle,
+}: HeaderProps) {
+  const {
+    user,
+  } = useAuth();
+
+  const userName =
+    user?.name ?? "Auneron AI";
+
+  const userRole =
+    user
+      ? roleLabels[user.role]
+      : "Sem sessão";
+
+  const initials =
+    getUserInitials(userName);
+
   return (
     <header className="header">
       <div className="header-title-area">
@@ -20,7 +69,9 @@ export function Header({ title, subtitle }: HeaderProps) {
         <div>
           <h1>{title}</h1>
 
-          {subtitle && <p>{subtitle}</p>}
+          {subtitle && (
+            <p>{subtitle}</p>
+          )}
         </div>
       </div>
 
@@ -45,11 +96,18 @@ export function Header({ title, subtitle }: HeaderProps) {
         </button>
 
         <div className="user-profile">
-          <div className="user-avatar">DT</div>
+          <div className="user-avatar">
+            {initials}
+          </div>
 
           <div className="user-profile-text">
-            <strong>Daniel Tomaz</strong>
-            <span>Administrador</span>
+            <strong>
+              {userName}
+            </strong>
+
+            <span>
+              {userRole}
+            </span>
           </div>
         </div>
       </div>

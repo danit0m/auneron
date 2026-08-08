@@ -4,6 +4,7 @@ import {
   FileUp,
   LayoutDashboard,
   LockKeyhole,
+  LogOut,
   Palette,
   ServerCog,
   ShieldCheck,
@@ -16,9 +17,13 @@ import type {
 import {
   NavLink,
 } from "react-router-dom";
+import {
+  useState,
+} from "react";
 
 import {
   privilegedPermissions,
+  roleLabels,
 } from "../../auth";
 import {
   useAuth,
@@ -173,8 +178,27 @@ function MenuSection({
 export function Sidebar() {
   const {
     user,
-    isDevelopmentSession,
+    signOut,
   } = useAuth();
+
+  const [
+    signingOut,
+    setSigningOut,
+  ] = useState(false);
+
+  async function handleSignOut() {
+    if (signingOut) {
+      return;
+    }
+
+    setSigningOut(true);
+
+    try {
+      await signOut();
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <aside className="sidebar">
@@ -217,17 +241,50 @@ export function Sidebar() {
       <div className="sidebar-footer">
         <BarChart3 size={20} />
 
-        <div>
+        <div
+          style={{
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
           <strong>
             {user?.name ?? "Auneron AI"}
           </strong>
 
           <span>
-            {isDevelopmentSession
-              ? `DEV · ${user?.role ?? "sem sessão"}`
-              : "Versão 3.0 Alpha"}
+            {user
+              ? roleLabels[user.role]
+              : "Sem sessão"}
           </span>
         </div>
+
+        <button
+          type="button"
+          title="Sair"
+          aria-label="Sair"
+          disabled={signingOut}
+          onClick={() =>
+            void handleSignOut()
+          }
+          style={{
+            width: 34,
+            height: 34,
+            display: "grid",
+            placeItems: "center",
+            flex: "0 0 auto",
+            border: "1px solid var(--border-subtle, #dbe2ea)",
+            borderRadius: 9,
+            cursor: signingOut
+              ? "wait"
+              : "pointer",
+            color: "var(--text-secondary, #475569)",
+            background:
+              "var(--surface-primary, #ffffff)",
+            opacity: signingOut ? 0.6 : 1,
+          }}
+        >
+          <LogOut size={17} />
+        </button>
       </div>
     </aside>
   );

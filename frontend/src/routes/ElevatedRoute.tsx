@@ -39,6 +39,7 @@ export function ElevatedRoute({
 
   const {
     isAuthenticated,
+    isLoading,
     hasPermission,
   } = useAuth();
 
@@ -46,15 +47,27 @@ export function ElevatedRoute({
     isElevated,
   } = useElevation();
 
+  if (isLoading) {
+    return (
+      <div className="state-container">
+        <div className="loading-spinner" />
+
+        <p>
+          Validando sessão...
+        </p>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <Navigate
-        to="/access-denied"
+        to="/login"
         replace
         state={{
-          from: location.pathname,
-          reason:
-            "not-authenticated",
+          from:
+            location.pathname +
+            location.search,
         }}
       />
     );

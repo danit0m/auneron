@@ -42,7 +42,7 @@ export function ProtectedRoute({
         <div className="loading-spinner" />
 
         <p>
-          Validando acesso...
+          Validando sessão...
         </p>
       </div>
     );
@@ -51,11 +51,12 @@ export function ProtectedRoute({
   if (!isAuthenticated) {
     return (
       <Navigate
-        to="/access-denied"
+        to="/login"
         replace
         state={{
-          from: location.pathname,
-          reason: "not-authenticated",
+          from:
+            location.pathname +
+            location.search,
         }}
       />
     );
@@ -90,7 +91,8 @@ export function ProtectedRoute({
         replace
         state={{
           from: location.pathname,
-          reason: "insufficient-permission",
+          reason:
+            "insufficient-permission",
         }}
       />
     );

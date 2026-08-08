@@ -39,6 +39,32 @@ function Wait-Http200 {
     throw "Servico nao ficou pronto: $Uri"
 }
 
+function Get-HttpStatus {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Uri
+    )
+
+    try {
+        $response = Invoke-WebRequest `
+            -Uri $Uri `
+            -UseBasicParsing `
+            -TimeoutSec 5 `
+            -ErrorAction Stop
+
+        return [int]$response.StatusCode
+    }
+    catch {
+        if ($_.Exception.Response) {
+            return [int](
+                $_.Exception.Response.StatusCode
+            )
+        }
+
+        throw
+    }
+}
+
 try {
     Write-Host "== Validando Docker Compose =="
     docker compose `
@@ -61,26 +87,9 @@ try {
     Wait-Http200 `
         "http://127.0.0.1:$frontendPort/"
 
-    Write-Host "== Validando rota protegida direta =="
-    $directStatus = 0
-
-    try {
-        Invoke-WebRequest `
-            -Uri "http://127.0.0.1:$backendPort/dashboard/" `
-            -UseBasicParsing `
-            -ErrorAction Stop |
-            Out-Null
-
-        $directStatus = 200
-    } catch {
-        if ($_.Exception.Response) {
-            $directStatus = [int](
-                $_.Exception.Response.StatusCode
-            )
-        } else {
-            throw
-        }
-    }
+    Write-Host "== Validando rota direta sem API key =="
+    $directStatus = Get-HttpStatus `
+        "http://127.0.0.1:$backendPort/dashboard/"
 
     if ($directStatus -ne 401) {
         throw (
@@ -89,26 +98,47 @@ try {
         )
     }
 
-    Write-Host "Backend protegido sem chave: HTTP 401"
+    Write-Host "Backend sem API key: HTTP 401"
 
-    Write-Host "== Validando /api pelo frontend =="
-    $dashboard = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:$frontendPort/api/dashboard/" `
-        -ErrorAction Stop
+    Write-Host "== Validando proxy /api =="
+    $proxyHealth = Get-HttpStatus `
+        "http://127.0.0.1:$frontendPort/api/health"
 
-    if ($null -eq $dashboard.resumo) {
+    if ($proxyHealth -ne 200) {
         throw (
-            "Dashboard via /api nao retornou " +
-            "o payload esperado."
+            "Esperado HTTP 200 em /api/health; " +
+            "recebido $proxyHealth."
         )
     }
 
-    Write-Host "Frontend: HTTP 200"
-    Write-Host "Frontend /api/dashboard/: HTTP 200"
+    Write-Host "Frontend /api/health: HTTP 200"
+
+    Write-Host "== Validando API key sem sessao =="
+    $dashboardStatus = Get-HttpStatus `
+        "http://127.0.0.1:$frontendPort/api/dashboard/"
+
+    if ($dashboardStatus -ne 401) {
+        throw (
+            "Esperado HTTP 401 com API key e sem sessao; " +
+            "recebido $dashboardStatus."
+        )
+    }
+
     Write-Host (
-        "Clientes: {0}" -f
-        $dashboard.resumo.clientes_total
+        "Frontend /api/dashboard/ sem sessao: HTTP 401"
     )
+
+    $meStatus = Get-HttpStatus `
+        "http://127.0.0.1:$frontendPort/api/auth/me"
+
+    if ($meStatus -ne 401) {
+        throw (
+            "Esperado HTTP 401 em /api/auth/me " +
+            "sem cookie; recebido $meStatus."
+        )
+    }
+
+    Write-Host "Frontend /api/auth/me sem sessao: HTTP 401"
 
     Write-Host ""
     Write-Host "COMPOSE SMOKE TEST: OK"

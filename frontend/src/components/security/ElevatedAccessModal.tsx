@@ -1,5 +1,4 @@
 import {
-  AlertTriangle,
   Eye,
   EyeOff,
   KeyRound,
@@ -10,6 +9,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -20,9 +20,6 @@ import {
   Button,
   Input,
 } from "../ui";
-import {
-  ELEVATION_DURATION_MINUTES,
-} from "../../security/elevation";
 import {
   useElevation,
 } from "../../hooks/useElevation";
@@ -42,7 +39,6 @@ export function ElevatedAccessModal({
 }: ElevatedAccessModalProps) {
   const {
     status,
-    isDevelopmentElevation,
     requestElevation,
   } = useElevation();
 
@@ -69,6 +65,22 @@ export function ElevatedAccessModal({
   const validating =
     status === "validating";
 
+  const resetForm =
+    useCallback(() => {
+      setCredential("");
+      setError("");
+      setShowCredential(false);
+    }, []);
+
+  const handleCancel =
+    useCallback(() => {
+      resetForm();
+      onCancel();
+    }, [
+      onCancel,
+      resetForm,
+    ]);
+
   useEffect(() => {
     if (!open) {
       return;
@@ -92,7 +104,7 @@ export function ElevatedAccessModal({
         event.key === "Escape" &&
         !validating
       ) {
-        onCancel();
+        handleCancel();
       }
     }
 
@@ -117,7 +129,7 @@ export function ElevatedAccessModal({
   }, [
     open,
     validating,
-    onCancel,
+    handleCancel,
   ]);
 
   if (!open) {
@@ -140,7 +152,7 @@ export function ElevatedAccessModal({
       return;
     }
 
-    setCredential("");
+    resetForm();
   }
 
   return (
@@ -165,7 +177,7 @@ export function ElevatedAccessModal({
             className="elevated-access-close"
             aria-label="Cancelar validação elevada"
             disabled={validating}
-            onClick={onCancel}
+            onClick={handleCancel}
           >
             <X size={20} />
           </button>
@@ -182,11 +194,11 @@ export function ElevatedAccessModal({
                 <KeyRound size={14} />
               }
             >
-              Elevated Credentials
+              Acesso elevado
             </Badge>
 
             <h1 id="elevated-access-title">
-              Credencial elevada necessária
+              Confirme sua senha
             </h1>
 
             <p id="elevated-access-description">
@@ -194,7 +206,8 @@ export function ElevatedAccessModal({
               <strong>
                 {resourceLabel}
               </strong>{" "}
-              contém funções administrativas sensíveis.
+              contém funções administrativas
+              sensíveis.
             </p>
           </div>
 
@@ -203,40 +216,27 @@ export function ElevatedAccessModal({
 
             <div>
               <strong>
-                Elevação temporária
+                Validação no servidor
               </strong>
 
               <span>
-                Após a validação, o acesso permanecerá
-                elevado por{" "}
-                {ELEVATION_DURATION_MINUTES} minutos
-                nesta aba.
+                Sua senha será validada pelo
+                backend. A elevação é temporária
+                e vinculada à sua sessão atual.
               </span>
             </div>
           </div>
 
-          {isDevelopmentElevation && (
-            <div className="elevated-access-development">
-              <AlertTriangle size={18} />
-
-              <span>
-                Ambiente de desenvolvimento. A validação
-                utiliza VITE_ELEVATED_DEV_CODE e não
-                substitui segurança no backend.
-              </span>
-            </div>
-          )}
-
           <Input
             ref={inputRef}
-            label="Credencial elevada"
+            label="Senha da conta"
             type={
               showCredential
                 ? "text"
                 : "password"
             }
             autoComplete="current-password"
-            placeholder="Informe a credencial"
+            placeholder="Digite sua senha"
             value={credential}
             error={error}
             disabled={validating}
@@ -249,8 +249,8 @@ export function ElevatedAccessModal({
                 className="elevated-access-visibility"
                 aria-label={
                   showCredential
-                    ? "Ocultar credencial"
-                    : "Mostrar credencial"
+                    ? "Ocultar senha"
+                    : "Mostrar senha"
                 }
                 disabled={validating}
                 onClick={() =>
@@ -282,7 +282,7 @@ export function ElevatedAccessModal({
             <Button
               variant="secondary"
               disabled={validating}
-              onClick={onCancel}
+              onClick={handleCancel}
             >
               Cancelar
             </Button>
@@ -290,8 +290,7 @@ export function ElevatedAccessModal({
             <Button
               type="submit"
               disabled={
-                credential.trim().length ===
-                  0 ||
+                credential.length === 0 ||
                 validating
               }
               startIcon={
@@ -307,7 +306,7 @@ export function ElevatedAccessModal({
             >
               {validating
                 ? "Validando..."
-                : "Validar credencial"}
+                : "Confirmar acesso"}
             </Button>
           </footer>
         </form>

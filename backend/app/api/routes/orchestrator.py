@@ -1,8 +1,13 @@
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import Query
 
+from app.core.authentication import (
+    require_elevated_permission,
+    require_permission,
+)
 from app.orchestrator import (
     decision_engine,
     decision_store,
@@ -18,7 +23,27 @@ router = APIRouter(
 )
 
 
-@router.get("/health")
+executive_dependencies = [
+    Depends(
+        require_permission(
+            "executive.view"
+        )
+    ),
+]
+
+administration_dependencies = [
+    Depends(
+        require_elevated_permission(
+            "administration.ai-operations"
+        )
+    ),
+]
+
+
+@router.get(
+    "/health",
+    dependencies=executive_dependencies,
+)
 def orchestrator_health() -> dict[str, Any]:
     registry_data = registry.list_registry()
     metrics_summary = metrics_collector.get_summary()
@@ -31,17 +56,34 @@ def orchestrator_health() -> dict[str, Any]:
     return {
         "status": "healthy",
         "orchestrator": "online",
-        "registered_events": len(registry_data),
-        "registered_agents": registered_agents,
-        "executions": metrics_summary["executions"],
-        "successes": metrics_summary["successes"],
-        "failures": metrics_summary["failures"],
-        "success_rate": metrics_summary["success_rate"],
-        "stored_decisions": decision_store.count(),
+        "registered_events": len(
+            registry_data
+        ),
+        "registered_agents": (
+            registered_agents
+        ),
+        "executions": (
+            metrics_summary["executions"]
+        ),
+        "successes": (
+            metrics_summary["successes"]
+        ),
+        "failures": (
+            metrics_summary["failures"]
+        ),
+        "success_rate": (
+            metrics_summary["success_rate"]
+        ),
+        "stored_decisions": (
+            decision_store.count()
+        ),
     }
 
 
-@router.get("/registry")
+@router.get(
+    "/registry",
+    dependencies=administration_dependencies,
+)
 def orchestrator_registry() -> dict[str, Any]:
     registry_data = registry.list_registry()
 
@@ -52,20 +94,34 @@ def orchestrator_registry() -> dict[str, Any]:
 
     return {
         "events": registry_data,
-        "registered_events": len(registry_data),
-        "registered_agents": registered_agents,
+        "registered_events": len(
+            registry_data
+        ),
+        "registered_agents": (
+            registered_agents
+        ),
     }
 
 
-@router.get("/metrics")
+@router.get(
+    "/metrics",
+    dependencies=administration_dependencies,
+)
 def orchestrator_metrics() -> dict[str, Any]:
     return {
-        "summary": metrics_collector.get_summary(),
-        "agents": metrics_collector.get_all_metrics(),
+        "summary": (
+            metrics_collector.get_summary()
+        ),
+        "agents": (
+            metrics_collector.get_all_metrics()
+        ),
     }
 
 
-@router.get("/telemetry")
+@router.get(
+    "/telemetry",
+    dependencies=administration_dependencies,
+)
 def orchestrator_telemetry(
     limit: int = Query(
         default=100,
@@ -79,7 +135,9 @@ def orchestrator_telemetry(
     ),
     status: str | None = Query(
         default=None,
-        pattern="^(SUCCESS|ERROR|success|error)$",
+        pattern=(
+            "^(SUCCESS|ERROR|success|error)$"
+        ),
     ),
 ) -> dict[str, Any]:
     normalized_status = (
@@ -105,7 +163,10 @@ def orchestrator_telemetry(
     }
 
 
-@router.get("/decision/latest")
+@router.get(
+    "/decision/latest",
+    dependencies=executive_dependencies,
+)
 def latest_decision() -> dict[str, Any]:
     latest = decision_store.get_latest()
 
@@ -121,7 +182,10 @@ def latest_decision() -> dict[str, Any]:
     }
 
 
-@router.get("/decisions")
+@router.get(
+    "/decisions",
+    dependencies=executive_dependencies,
+)
 def list_decisions(
     limit: int = Query(
         default=100,
@@ -147,7 +211,9 @@ def list_decisions(
 
     return {
         "total_returned": len(records),
-        "stored_decisions": decision_store.count(),
+        "stored_decisions": (
+            decision_store.count()
+        ),
         "limit": limit,
         "filters": {
             "decision_name": decision_name,
@@ -157,7 +223,10 @@ def list_decisions(
     }
 
 
-@router.get("/rules")
+@router.get(
+    "/rules",
+    dependencies=administration_dependencies,
+)
 def orchestrator_rules() -> dict[str, Any]:
     rules = decision_engine.list_rules()
 

@@ -15,9 +15,8 @@ export interface ElevationContextValue {
   isElevated: boolean;
   elevatedUntil: string | null;
   remainingSeconds: number;
-  isDevelopmentElevation: boolean;
   requestElevation: (
-    credential: string,
+    password: string,
   ) => Promise<ElevationAttemptResult>;
-  revokeElevation: () => void;
+  revokeElevation: () => Promise<void>;
 }

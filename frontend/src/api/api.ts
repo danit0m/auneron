@@ -64,21 +64,6 @@ export function getApiErrorMessage(
     );
   }
 
-  if (error.response.status === 401) {
-    return withRequestReference(
-      "A API recusou a credencial de acesso. " +
-        "Verifique a configuração segura do proxy.",
-      error,
-    );
-  }
-
-  if (error.response.status === 503) {
-    return withRequestReference(
-      "A autenticação da API está indisponível no backend.",
-      error,
-    );
-  }
-
   const detail =
     error.response.data &&
     typeof error.response.data === "object" &&
@@ -93,6 +78,20 @@ export function getApiErrorMessage(
     );
   }
 
+  if (error.response.status === 401) {
+    return withRequestReference(
+      "Sua sessão expirou ou a credencial de acesso foi recusada.",
+      error,
+    );
+  }
+
+  if (error.response.status === 503) {
+    return withRequestReference(
+      "A autenticação da API está indisponível no backend.",
+      error,
+    );
+  }
+
   return withRequestReference(
     fallbackMessage,
     error,
@@ -102,6 +101,7 @@ export function getApiErrorMessage(
 const api = axios.create({
   baseURL: "/api",
   timeout: 15000,
+  withCredentials: true,
   headers: {
     Accept: "application/json",
   },

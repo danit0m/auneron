@@ -16,6 +16,7 @@ import Brain from "./pages/Brain";
 import Clientes from "./pages/Clientes";
 import { Dashboard } from "./pages/Dashboard";
 import ExecutiveCenter from "./pages/ExecutiveCenter";
+import Login from "./pages/Login";
 import { Upload } from "./pages/Upload";
 import AccessDenied from "./pages/AccessDenied";
 import UIShowcase from "./pages/admin/UIShowcase";
@@ -24,6 +25,11 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route
+          path="/login"
+          element={<Login />}
+        />
+
         <Route element={<Layout />}>
           <Route
             path="/"

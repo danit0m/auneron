@@ -13,10 +13,6 @@ frontend/nginx/default.conf.template
 .dockerignore
 ```
 
-Esses arquivos permitem construir imagens sem colocar os arquivos locais
-`.env`, bancos SQLite históricos, CSVs ou `node_modules` no contexto útil
-das imagens.
-
 ## Arquitetura recomendada
 
 ```text
@@ -25,21 +21,22 @@ Internet
  HTTPS
    v
 Frontend / reverse proxy
+   | \
+   |  \ cookie HttpOnly do usuário
    |
-   | /api
-   | + X-API-Key
+   | /api + X-API-Key
    v
 FastAPI
    |
    v
-PostgreSQL gerenciado ou dedicado
+PostgreSQL
 ```
 
 O PostgreSQL não deve ser publicado diretamente na Internet.
 
 ## Segredos necessários
 
-A plataforma de deploy deve fornecer segredos em runtime.
+A plataforma de deploy fornece segredos em runtime.
 
 Backend:
 
@@ -48,6 +45,9 @@ APP_ENV=production
 DATABASE_URL=<URL PostgreSQL de produção>
 API_KEY=<chave aleatória com pelo menos 32 caracteres>
 LOG_LEVEL=INFO
+AUTH_COOKIE_NAME=auneron_session
+AUTH_SESSION_TTL_MINUTES=480
+AUTH_ELEVATION_TTL_MINUTES=10
 ```
 
 Frontend/reverse proxy:
@@ -56,8 +56,7 @@ Frontend/reverse proxy:
 AUNERON_API_KEY=<mesma chave de serviço do backend>
 ```
 
-A chave do backend não deve ser enviada ao processo de build React como
-`VITE_API_KEY`.
+A API key não deve ser enviada ao build React como variável `VITE_*`.
 
 ## Configuração operacional do banco
 
@@ -75,7 +74,7 @@ DATABASE_IDLE_TRANSACTION_TIMEOUT_MS=60000
 DATABASE_APPLICATION_NAME=auneron-api-production
 ```
 
-Consulte `POSTGRESQL_OPERATIONS.md` antes de aumentar o número de workers.
+Consulte `POSTGRESQL_OPERATIONS.md` antes de aumentar workers.
 
 ## Build do backend
 
@@ -90,12 +89,9 @@ docker build `
 
 A imagem executa o FastAPI como usuário não-root.
 
-O container necessita da `DATABASE_URL` e da `API_KEY` em runtime.
-
 ## Migrações
 
-Migrações devem ser executadas como etapa única antes da nova versão da
-API receber tráfego:
+Execute migrações como etapa única antes da nova versão receber tráfego:
 
 ```text
 python -m alembic upgrade head
@@ -103,9 +99,9 @@ python -m alembic upgrade head
 
 Não execute a mesma migração simultaneamente em vários workers.
 
-Antes de aplicar uma migração em banco com dados reais:
+Antes de uma migração em banco real:
 
-1. valide um backup recente;
+1. valide backup recente;
 2. valide a revisão Alembic esperada;
 3. aplique a migração;
 4. execute `alembic current`;
@@ -113,23 +109,33 @@ Antes de aplicar uma migração em banco com dados reais:
 
 ## Execução do backend
 
-Com variáveis fornecidas pela plataforma:
-
 ```text
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
 ```
 
-O endpoint público de saúde é:
+Health check público:
 
 ```text
 GET /health
 ```
 
-Use esse endpoint no health check da plataforma.
+## Primeiro usuário
+
+Depois da migration de autenticação e com o backend disponível, crie o
+primeiro operador de forma interativa:
+
+```powershell
+docker compose exec backend `
+    python -m scripts.create_user `
+    --name "Administrador" `
+    --email "SEU_EMAIL" `
+    --role administrator
+```
+
+A senha é solicitada por `getpass` e não deve ser enviada por variável de
+ambiente.
 
 ## Build do frontend
-
-Na raiz do repositório:
 
 ```powershell
 docker build `
@@ -138,57 +144,60 @@ docker build `
     .
 ```
 
-O build React utiliza somente `/api`.
+O build React usa somente URLs relativas `/api`.
 
-A imagem final é Nginx. Durante o startup, o template de configuração
-substitui somente `AUNERON_API_KEY`. A chave fica na configuração interna
-do reverse proxy e não nos arquivos JavaScript do SPA.
+A imagem final é Nginx. Durante o startup, o template substitui
+`AUNERON_API_KEY`. A chave fica na configuração interna do reverse proxy,
+não nos assets JavaScript.
 
-## Rede entre frontend e backend
+## Rede
 
-O template Nginx assume que o backend pode ser resolvido por:
+O Nginx assume:
 
 ```text
 backend:8000
 ```
 
-Em Docker Compose/Kubernetes, utilize `backend` como nome do serviço ou
-adapte `frontend/nginx/default.conf.template` para o DNS interno da
-plataforma.
-
-O navegador acessa somente:
+O navegador acessa:
 
 ```text
 /api/...
 ```
 
-e o Nginx converte para as rotas reais do FastAPI.
+e o proxy converte para as rotas FastAPI, injeta `X-API-Key` e preserva o
+cookie de sessão.
 
-## TLS
+## TLS e cookie
 
-Em produção, HTTPS é obrigatório.
+HTTPS é obrigatório em produção.
 
-TLS pode terminar:
+Com `APP_ENV=production`, o cookie de sessão é marcado `Secure`; portanto,
+o fluxo real de login deve ser validado através de HTTPS.
 
-- no load balancer da plataforma;
-- no ingress;
-- em um proxy externo ao container.
-
-Não exponha uma implantação pública apenas por HTTP.
+TLS pode terminar no load balancer, ingress ou proxy externo.
 
 ## CORS
 
-Quando frontend e API são publicados pelo mesmo host e `/api` é
-encaminhado internamente, o navegador trabalha em mesma origem e CORS
-deixa de ser o mecanismo principal de integração.
+Quando frontend e API usam o mesmo host e `/api`, o navegador trabalha em
+mesma origem.
 
-Caso frontend e API sejam publicados em origens diferentes, configure
-`CORS_ORIGINS` explicitamente no backend. Não use `*` com credenciais ou
-em um ambiente sensível.
+Se forem origens diferentes, configure `CORS_ORIGINS` explicitamente.
+Não use `*` com credenciais.
+
+## Autenticação e autorização
+
+A API key é apenas a credencial entre serviços.
+
+Os usuários autenticam por sessão `HttpOnly`. O backend aplica RBAC às
+rotas de negócio e exige elevação temporária para operações
+administrativas sensíveis.
+
+A sessão padrão expira em 8 horas e a elevação padrão em 10 minutos,
+salvo configuração diferente.
 
 ## Logs
 
-O processo deve enviar stdout/stderr para o coletor de logs da plataforma.
+Envie stdout/stderr ao coletor da plataforma.
 
 Procure por:
 
@@ -199,12 +208,11 @@ duration_ms
 environment
 ```
 
-Nunca configure o serviço para imprimir `DATABASE_URL`, `API_KEY` ou
-headers completos.
+Nunca imprima `DATABASE_URL`, `API_KEY`, cookies, senhas ou tokens.
 
 ## Banco
 
-Recomendação para produção:
+Recomendação:
 
 - PostgreSQL 17;
 - backups automáticos;
@@ -213,8 +221,7 @@ Recomendação para produção:
 - acesso de rede restrito;
 - usuário de aplicação sem privilégios administrativos.
 
-O `backend/docker-compose.yml` contém PostgreSQL para desenvolvimento
-local. Ele não é um manifesto de produção.
+O `backend/docker-compose.yml` é destinado ao desenvolvimento local.
 
 ## Escalabilidade
 
@@ -230,33 +237,20 @@ Logo:
 (pool_size + max_overflow) * workers + reserva < max_connections
 ```
 
-Dimensione os workers junto com a capacidade do PostgreSQL.
-
-## Autenticação
-
-A API key atual é uma credencial entre serviços. Ela não identifica o
-usuário final.
-
-Antes de exposição pública multiusuário, implemente:
-
-- autenticação individual;
-- autorização no backend;
-- sessão segura ou token de curta duração;
-- expiração e revogação;
-- proteção contra abuso;
-- HTTPS obrigatório.
-
 ## Validação pós-deploy
 
 Após cada publicação:
 
 1. confirme a revisão Alembic;
 2. consulte `/health`;
-3. carregue o frontend;
-4. valide Dashboard e Clientes;
-5. provoque uma chamada protegida sem chave e confirme HTTP 401;
-6. confirme que `/api` funciona pelo reverse proxy;
-7. valide logs com `X-Request-ID`;
-8. confirme que nenhum segredo aparece no HTML/JS entregue ao navegador.
+3. carregue `/login`;
+4. faça login com usuário real de validação;
+5. valide Dashboard e Clientes;
+6. recarregue a página e confirme restauração da sessão;
+7. confirme HTTP 401 quando houver API key mas não houver sessão;
+8. valide um acesso com permissão insuficiente retornando HTTP 403;
+9. valide elevação em recurso administrativo;
+10. confirme `X-Request-ID` nos logs;
+11. confirme que a API key não aparece em HTML/JS.
 
 Use também `RELEASE_CHECKLIST.md`.

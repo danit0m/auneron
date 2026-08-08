@@ -138,10 +138,20 @@ devem permanecer mascarados.
 
 ## Limites atuais
 
-A arquitetura atual ainda não implementa autenticação individual real de
-usuário no backend. A sessão e a elevação existentes no frontend possuem
-escopo de desenvolvimento/interface.
+A arquitetura atual implementa autenticação individual real de
+usuário no backend.
 
-Antes de disponibilizar o Auneron publicamente para múltiplos usuários,
-é necessário implementar autenticação e autorização no backend, além de
-HTTPS obrigatório.
+O navegador autentica por `POST /auth/login` e recebe um cookie de sessão
+`HttpOnly`. O token bruto não é exposto ao JavaScript; o PostgreSQL armazena
+somente o hash do token.
+
+A `X-API-Key` permanece como credencial de serviço entre Vite/Nginx e
+FastAPI. Ela não identifica o usuário e, sozinha, não concede acesso às
+rotas de negócio.
+
+O FastAPI aplica RBAC server-side às rotas protegidas. Operações
+administrativas sensíveis exigem também uma elevação temporária vinculada
+à sessão atual.
+
+O frontend replica a matriz de permissões para navegação e experiência de
+uso, mas a fronteira efetiva de segurança permanece no backend.

@@ -1,4 +1,4 @@
-﻿from logging.config import fileConfig
+from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config
@@ -7,9 +7,8 @@ from sqlalchemy import pool
 from app.core.config import settings
 from app.database.database import Base
 
-# Importações necessárias para registrar as tabelas no Base.metadata.
-from app.models.account import Account  # noqa: F401
-from app.models.knowledge import Knowledge  # noqa: F401
+# Importa todos os modelos para registrá-los em Base.metadata.
+import app.models  # noqa: F401
 
 
 config = context.config
@@ -48,7 +47,10 @@ def run_migrations_online() -> None:
     """Executa migrações conectando diretamente ao banco."""
 
     configuration = (
-        config.get_section(config.config_ini_section) or {}
+        config.get_section(
+            config.config_ini_section
+        )
+        or {}
     )
 
     connectable = engine_from_config(

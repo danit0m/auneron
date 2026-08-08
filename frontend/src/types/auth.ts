@@ -17,7 +17,7 @@ export type Permission =
   | "developer.ui-showcase";
 
 export interface AuthUser {
-  id: string;
+  id: number;
   name: string;
   email: string;
   role: UserRole;
@@ -27,7 +27,13 @@ export interface AuthUser {
 export interface AuthSession {
   user: AuthUser;
   authenticatedAt: string;
-  expiresAt: string | null;
+  expiresAt: string;
+  elevatedUntil: string | null;
+}
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
 }
 
 export interface AuthContextValue {
@@ -35,7 +41,6 @@ export interface AuthContextValue {
   session: AuthSession | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  isDevelopmentSession: boolean;
   permissions: readonly Permission[];
   hasPermission: (
     permission: Permission,
@@ -46,8 +51,9 @@ export interface AuthContextValue {
   hasAllPermissions: (
     permissions: readonly Permission[],
   ) => boolean;
-  signOut: () => void;
-  setDevelopmentRole: (
-    role: UserRole,
-  ) => void;
+  signIn: (
+    credentials: LoginCredentials,
+  ) => Promise<AuthSession>;
+  signOut: () => Promise<void>;
+  refreshSession: () => Promise<AuthSession | null>;
 }

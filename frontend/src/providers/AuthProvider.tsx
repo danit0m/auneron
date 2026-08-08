@@ -1,95 +1,65 @@
+import axios from "axios";
 import {
   type ReactNode,
   useCallback,
+  useEffect,
   useMemo,
   useState,
 } from "react";
 
+import api from "../api/api";
 import {
   canAccess,
   canAccessAll,
   canAccessAny,
   getPermissionsForRole,
-  isUserRole,
 } from "../auth";
 import {
   AuthContext,
 } from "../contexts/AuthContext";
 import type {
   AuthSession,
-  AuthUser,
-  UserRole,
+  LoginCredentials,
 } from "../types/auth";
 
 interface AuthProviderProps {
   children: ReactNode;
 }
 
-const DEVELOPMENT_ROLE_KEY =
-  "auneron.auth.development-role";
-
-function createDevelopmentUser(
-  role: UserRole,
-): AuthUser {
-  return {
-    id: "development-user",
-    name: "Daniel Tomaz",
-    email: "daniel@auneron.local",
-    role,
-    active: true,
-  };
+interface AuthSessionApiResponse {
+  user: AuthSession["user"];
+  authenticated_at: string;
+  expires_at: string;
+  elevated_until: string | null;
 }
 
-function createDevelopmentSession(
-  role: UserRole,
+function mapSession(
+  payload: AuthSessionApiResponse,
 ): AuthSession {
   return {
-    user: createDevelopmentUser(role),
+    user: payload.user,
     authenticatedAt:
-      new Date().toISOString(),
-    expiresAt: null,
+      payload.authenticated_at,
+    expiresAt: payload.expires_at,
+    elevatedUntil:
+      payload.elevated_until,
   };
-}
-
-function getInitialDevelopmentRole(): UserRole {
-  if (!import.meta.env.DEV) {
-    return "viewer";
-  }
-
-  try {
-    const storedRole =
-      window.localStorage.getItem(
-        DEVELOPMENT_ROLE_KEY,
-      );
-
-    if (isUserRole(storedRole)) {
-      return storedRole;
-    }
-  } catch {
-    // Mantém o papel padrão em memória.
-  }
-
-  return "developer";
 }
 
 export function AuthProvider({
   children,
 }: AuthProviderProps) {
-  const isDevelopmentSession =
-    import.meta.env.DEV;
-
   const [
     session,
     setSession,
-  ] = useState<AuthSession | null>(() => {
-    if (!isDevelopmentSession) {
-      return null;
-    }
+  ] = useState<AuthSession | null>(
+    null,
+  );
 
-    return createDevelopmentSession(
-      getInitialDevelopmentRole(),
-    );
-  });
+  const [
+    isLoading,
+    setIsLoading,
+  ] = useState(true);
 
   const user =
     session?.user ?? null;
@@ -149,33 +119,128 @@ export function AuthProvider({
       [user],
     );
 
-  const signOut = useCallback(() => {
-    setSession(null);
-  }, []);
-
-  const setDevelopmentRole =
+  const refreshSession =
     useCallback(
-      (role: UserRole) => {
-        if (!isDevelopmentSession) {
+      async (): Promise<AuthSession | null> => {
+        try {
+          const response =
+            await api.get<AuthSessionApiResponse>(
+              "/auth/me",
+            );
+
+          const nextSession =
+            mapSession(response.data);
+
+          setSession(nextSession);
+
+          return nextSession;
+        } catch (error) {
+          if (
+            axios.isAxiosError(error) &&
+            error.response?.status === 401
+          ) {
+            setSession(null);
+
+            return null;
+          }
+
+          throw error;
+        }
+      },
+      [],
+    );
+
+  useEffect(() => {
+    let active = true;
+
+    async function restoreSession() {
+      try {
+        const response =
+          await api.get<AuthSessionApiResponse>(
+            "/auth/me",
+          );
+
+        if (!active) {
           return;
         }
 
-        try {
-          window.localStorage.setItem(
-            DEVELOPMENT_ROLE_KEY,
-            role,
-          );
-        } catch {
-          // A sessão continua válida
-          // durante a execução atual.
+        setSession(
+          mapSession(response.data),
+        );
+      } catch (error) {
+        if (!active) {
+          return;
         }
 
-        setSession(
-          createDevelopmentSession(role),
+        if (
+          axios.isAxiosError(error) &&
+          error.response?.status === 401
+        ) {
+          setSession(null);
+        } else {
+          console.error(
+            "Não foi possível restaurar a sessão do usuário:",
+            error,
+          );
+
+          setSession(null);
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void restoreSession();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const signIn = useCallback(
+    async (
+      credentials: LoginCredentials,
+    ): Promise<AuthSession> => {
+      const response =
+        await api.post<AuthSessionApiResponse>(
+          "/auth/login",
+          credentials,
         );
-      },
-      [isDevelopmentSession],
-    );
+
+      const nextSession =
+        mapSession(response.data);
+
+      setSession(nextSession);
+
+      return nextSession;
+    },
+    [],
+  );
+
+  const signOut = useCallback(
+    async () => {
+      try {
+        await api.post(
+          "/auth/logout",
+        );
+      } catch (error) {
+        if (
+          !axios.isAxiosError(error) ||
+          error.response?.status !== 401
+        ) {
+          console.error(
+            "Não foi possível concluir o logout no backend:",
+            error,
+          );
+        }
+      } finally {
+        setSession(null);
+      }
+    },
+    [],
+  );
 
   const value = useMemo(
     () => ({
@@ -183,25 +248,26 @@ export function AuthProvider({
       session,
       isAuthenticated:
         Boolean(user),
-      isLoading: false,
-      isDevelopmentSession,
+      isLoading,
       permissions,
       hasPermission,
       hasAnyPermission,
       hasAllPermissions,
+      signIn,
       signOut,
-      setDevelopmentRole,
+      refreshSession,
     }),
     [
       user,
       session,
-      isDevelopmentSession,
+      isLoading,
       permissions,
       hasPermission,
       hasAnyPermission,
       hasAllPermissions,
+      signIn,
       signOut,
-      setDevelopmentRole,
+      refreshSession,
     ],
   );
 

@@ -5,6 +5,7 @@ from fastapi import Depends
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.authentication import require_permission
 from app.core.config import settings
 from app.core.observability import (
     RequestObservabilityMiddleware,
@@ -21,6 +22,7 @@ from app.database.database import (
 from app.api.routes.upload import router as upload_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.accounts import router as accounts_router
+from app.api.routes.auth import router as auth_router
 from app.api.routes.brain import router as brain_router
 from app.api.routes.executive import router as executive_router
 from app.api.routes.orchestrator import router as orchestrator_router
@@ -137,31 +139,68 @@ def health():
     }
 
 
-protected_dependencies = [
+service_dependencies = [
     Depends(require_api_key),
 ]
 
+
+def business_dependencies(
+    permission,
+):
+    return [
+        *service_dependencies,
+        Depends(
+            require_permission(
+                permission
+            )
+        ),
+    ]
+
+
+app.include_router(
+    auth_router,
+    dependencies=service_dependencies,
+)
+
 app.include_router(
     upload_router,
-    dependencies=protected_dependencies,
+    dependencies=business_dependencies(
+        "imports.execute"
+    ),
 )
 app.include_router(
     dashboard_router,
-    dependencies=protected_dependencies,
+    dependencies=business_dependencies(
+        "dashboard.view"
+    ),
 )
+
+# Accounts têm permissões diferentes para leitura e escrita.
+# O X-API-Key permanece no nível do router; clients.view/manage
+# são aplicados diretamente em cada endpoint.
 app.include_router(
     accounts_router,
-    dependencies=protected_dependencies,
+    dependencies=service_dependencies,
 )
+
 app.include_router(
     executive_router,
-    dependencies=protected_dependencies,
+    dependencies=business_dependencies(
+        "executive.view"
+    ),
 )
+
+# O router do Orchestrator possui endpoints executivos e
+# administrativos. A autorização de usuário é aplicada
+# diretamente em cada endpoint.
 app.include_router(
     orchestrator_router,
-    dependencies=protected_dependencies,
+    dependencies=service_dependencies,
 )
+
 app.include_router(
     brain_router,
-    dependencies=protected_dependencies,
+    dependencies=business_dependencies(
+        "brain.view"
+    ),
 )

@@ -1,66 +1,103 @@
 # Segurança da API
 
-## Escopo
+## Camadas
 
-Os endpoints públicos são:
+O Auneron usa duas camadas independentes:
+
+1. `X-API-Key`: credencial de serviço entre Vite/Nginx e FastAPI.
+2. Sessão de usuário: identidade individual e autorização.
+
+A API key sozinha não concede acesso aos dados de negócio.
+
+## Endpoints públicos
+
+Permanecem públicos:
 
 - `GET /`
 - `GET /health`
-- documentação OpenAPI em ambientes onde ela estiver habilitada.
+- documentação OpenAPI em ambientes onde estiver habilitada.
 
-Os endpoints dos routers de negócio exigem a chave da API:
+## Credencial de serviço
 
-- `/accounts`
-- `/brain`
-- `/brain/executive`
-- `/dashboard`
-- `/orchestrator`
-- `/upload`
+O proxy envia:
 
-## Cabeçalho
+```text
+X-API-Key
+```
 
-A credencial é enviada em:
+A chave nunca deve ser versionada ou incorporada ao JavaScript.
 
-`X-API-Key`
+Configuração local no `backend/.env`:
 
-O valor nunca deve ser versionado no Git.
+```text
+API_KEY=<chave aleatória com pelo menos 32 caracteres>
+```
 
-## Configuração local
+Para testes:
 
-Adicione ao arquivo `backend/.env`:
+```text
+TEST_API_KEY=<chave aleatória de teste com pelo menos 32 caracteres>
+```
 
-`API_KEY=<chave aleatória com pelo menos 32 caracteres>`
+O script `scripts/test.ps1` converte temporariamente `TEST_API_KEY` em
+`API_KEY` durante a suíte e restaura o ambiente ao terminar.
 
-Para testes, adicione ao arquivo `backend/.env.test`:
+Comportamento da camada de serviço:
 
-`TEST_API_KEY=<chave aleatória de teste com pelo menos 32 caracteres>`
-
-O script `scripts/test.ps1` converte temporariamente
-`TEST_API_KEY` em `API_KEY` durante a suíte e restaura o ambiente
-ao terminar.
-
-## Comportamento
-
-- chave correta: acesso permitido;
+- chave correta: a requisição pode avançar para a autenticação do usuário;
 - chave ausente ou incorreta: HTTP 401;
-- autenticação não configurada: HTTP 503;
-- em `production`, `API_KEY` é obrigatória;
-- qualquer chave configurada precisa ter ao menos 32 caracteres.
+- chave não configurada: HTTP 503;
+- em `production`, `API_KEY` é obrigatória.
 
-A comparação da credencial usa `secrets.compare_digest`.
+A comparação usa `secrets.compare_digest`.
+
+## Sessão e autorização
+
+Os routers de negócio exigem uma sessão válida além da API key.
+
+A matriz principal é:
+
+```text
+dashboard                  -> dashboard.view
+accounts GET               -> clients.view
+accounts POST/PUT/DELETE   -> clients.manage
+upload                     -> imports.execute
+executive                  -> executive.view
+brain                      -> brain.view
+orchestrator decisions     -> executive.view
+orchestrator operations    -> administration.ai-operations + elevação
+```
+
+Ausência ou expiração de sessão retorna HTTP 401.
+
+Usuário autenticado sem a permissão necessária retorna HTTP 403.
+
+Endpoints administrativos elevados também retornam HTTP 403 quando a
+sessão não está temporariamente elevada.
+
+## Browser
+
+A SPA nunca recebe a API key.
+
+```text
+Browser -> /api -> Vite/Nginx -> FastAPI
+                    + X-API-Key
+```
+
+O navegador envia somente o cookie `HttpOnly` de sessão.
 
 ## CI
 
-A chave presente no GitHub Actions é exclusivamente uma
-credencial fictícia do ambiente descartável de testes. Ela não
-deve ser reutilizada em desenvolvimento, homologação ou produção.
+A chave presente no GitHub Actions é uma credencial fictícia do ambiente
+descartável de testes. Ela não deve ser reutilizada em desenvolvimento,
+homologação ou produção.
 
-## Limite deste mecanismo
+O CI também valida que `users` e `auth_sessions` ficam vazios após os
+testes e o E2E.
 
-A API key protege o acesso ao backend, mas não representa
-autenticação individual de usuários. Uma SPA entregue ao navegador
-não consegue manter uma API key como segredo.
+## Produção
 
-Antes de uma exposição pública multiusuário, o Auneron deve adotar
-autenticação de usuários com sessões seguras ou tokens de curta
-duração, autorização por perfil e HTTPS obrigatório.
+Exija HTTPS. O cookie de sessão usa `Secure` em `APP_ENV=production`.
+
+Não exponha PostgreSQL diretamente à Internet e não publique a API key em
+variáveis `VITE_*`, HTML, JavaScript, `localStorage` ou `sessionStorage`.
