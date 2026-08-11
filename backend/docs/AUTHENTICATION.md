@@ -33,6 +33,20 @@ AUTH_ELEVATION_TTL_MINUTES=10
 Em `production`, o cookie é `Secure`. Em todos os ambientes ele usa
 `HttpOnly`, `SameSite=Strict` e `Path=/`.
 
+Sessões expiradas são removidas automaticamente. Sessões revogadas ainda
+válidas podem ser mantidas por uma janela curta para diagnóstico e depois
+também são removidas.
+
+Configuração padrão da manutenção:
+
+```text
+AUTH_SESSION_CLEANUP_INTERVAL_SECONDS=3600
+AUTH_REVOKED_SESSION_RETENTION_HOURS=24
+```
+
+A limpeza é executada na inicialização quando o PostgreSQL está disponível e
+depois periodicamente durante o processo da API.
+
 ## Endpoints
 
 ```text
@@ -44,6 +58,32 @@ POST /auth/elevation/revoke
 ```
 
 Todos passam primeiro pela credencial de serviço `X-API-Key`.
+
+## Proteção contra tentativas repetidas
+
+Login e elevação possuem rate limiting para reduzir brute force e password
+spraying.
+
+Configuração padrão:
+
+```text
+AUTH_LOGIN_ACCOUNT_MAX_FAILURES=5
+AUTH_LOGIN_IP_MAX_FAILURES=25
+AUTH_LOGIN_WINDOW_SECONDS=900
+AUTH_ELEVATION_USER_MAX_FAILURES=5
+AUTH_ELEVATION_IP_MAX_FAILURES=15
+AUTH_ELEVATION_WINDOW_SECONDS=600
+```
+
+Quando o limite é atingido, a API responde `HTTP 429 Too Many Requests` e
+inclui `Retry-After`.
+
+Identificadores de conta e IP usados pelo limiter são mantidos somente como
+SHA-256 em memória. Senhas, API keys e tokens de sessão não são armazenados
+pelo limiter nem incluídos nos eventos de segurança.
+
+O limiter atual é por processo. Antes de executar várias instâncias FastAPI
+em paralelo, substitua-o por um armazenamento compartilhado apropriado.
 
 ## Papéis
 

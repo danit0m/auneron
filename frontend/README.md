@@ -4,63 +4,81 @@ Frontend do Auneron construído com React, TypeScript e Vite.
 
 ## Desenvolvimento
 
+Na pasta `frontend`:
+
 ```powershell
 npm ci
 Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Exemplo:
+Exemplo de configuração local:
 
 ```text
 AUNERON_BACKEND_URL=http://127.0.0.1:8000
 AUNERON_API_KEY=<mesma API_KEY configurada no backend>
 ```
 
-Essas variáveis pertencem ao processo Node do Vite e não ao bundle React.
+As duas variáveis são consumidas pelo processo Node/Vite. Elas não usam o
+prefixo `VITE_`, portanto não devem ser incorporadas ao bundle entregue ao
+navegador.
 
 ## Autenticação
 
-O navegador usa `/api` e mantém a sessão individual por cookie
-`HttpOnly`.
+O frontend usa autenticação real do backend.
 
-Fluxo:
+Fluxo principal:
 
 ```text
-/login
-  -> POST /api/auth/login
+Navegador
+  -> /api/auth/login
+  -> sessão opaca no backend
   -> cookie HttpOnly
-  -> GET /api/auth/me
-  -> rotas protegidas
+  -> /api/auth/me restaura a sessão após reload
 ```
 
-Ao recarregar a aplicação, `AuthProvider` restaura a sessão com
-`/auth/me`.
+A senha não é armazenada pelo frontend. O token bruto da sessão permanece
+somente no cookie HttpOnly e o backend mantém apenas o hash correspondente no
+PostgreSQL.
 
-O logout chama `/auth/logout`.
+O logout chama `/api/auth/logout` e revoga a sessão no servidor.
+
+## Elevação de acesso
+
+Operações administrativas usam elevação server-side.
+
+A interface solicita novamente a senha da conta e chama `/api/auth/elevate`.
+O backend valida a credencial, registra a elevação temporária na sessão e
+aplica RBAC e permissões no servidor. O frontend não possui código secreto de
+desenvolvimento para liberar áreas administrativas.
 
 ## Segurança da integração
 
-Em desenvolvimento, Vite encaminha `/api` ao FastAPI e injeta
-`X-API-Key` no processo Node.
+O navegador utiliza URLs relativas `/api`.
 
-Em produção, Nginx/reverse proxy exerce a mesma função.
+Em desenvolvimento, o Vite encaminha essas chamadas ao FastAPI e adiciona
+`X-API-Key` no processo Node. A API key não deve ser publicada em uma variável
+com prefixo `VITE_`, porque esse tipo de variável pode ser incorporado ao
+JavaScript entregue ao navegador.
 
-A API key nunca deve ser publicada como `VITE_*`, JavaScript,
-`localStorage` ou `sessionStorage`.
+Em produção, o build continua usando `/api`. O Nginx/reverse proxy encaminha
+as chamadas para o FastAPI e injeta `X-API-Key` no lado servidor.
 
-O frontend aplica RBAC para navegação, enquanto o FastAPI aplica a
-autorização efetiva nas rotas de negócio.
+A autenticação do usuário e a API key cumprem papéis diferentes:
 
-## Elevação
+- `X-API-Key`: credencial de serviço entre proxy e backend;
+- cookie de sessão: identidade do usuário;
+- RBAC: autorização de negócio;
+- elevação temporária: autorização adicional para operações sensíveis.
 
-AI Operations e outros recursos administrativos sensíveis podem exigir
-revalidação da senha.
+Consulte:
 
-O frontend usa `/auth/elevate` e `/auth/elevation/revoke`. A elevação é
-mantida no servidor e restaurada por `/auth/me`.
-
-Não existe `VITE_ELEVATED_DEV_CODE`.
+```text
+../backend/docs/FRONTEND_INTEGRATION.md
+../backend/docs/API_SECURITY.md
+../backend/docs/AUTHENTICATION.md
+../backend/docs/DEPLOYMENT.md
+```
 
 ## Scripts
 
@@ -71,6 +89,8 @@ npm run build
 npm run preview
 ```
 
+`npm run build` executa TypeScript antes da geração do bundle.
+
 ## E2E
 
 O E2E é coordenado pelo backend:
@@ -80,37 +100,31 @@ cd ..\backend
 python .\scripts\e2e_frontend.py
 ```
 
-Na primeira execução:
+Na primeira execução local:
 
 ```powershell
 python -m playwright install chromium
 ```
 
-O E2E cria um usuário descartável, realiza login real, valida Dashboard,
-reload de sessão e Clientes, e remove o usuário ao final.
+O teste E2E cobre login real, restauração da sessão após reload, acesso ao
+Dashboard e Clientes e uso do proxy `/api` sem publicar a API key no bundle.
 
 ## Produção
+
+A imagem de produção é multi-stage:
 
 ```powershell
 docker build -f frontend/Dockerfile -t auneron-frontend:local .
 ```
 
-A imagem final usa Nginx para:
+A etapa Node gera os arquivos estáticos. A etapa final usa Nginx para:
 
 - servir o SPA;
 - encaminhar `/api` ao backend;
-- adicionar `X-API-Key` no servidor;
+- adicionar `X-API-Key` no lado servidor;
 - preservar `X-Request-ID`;
-- encaminhar o cookie de sessão.
+- aplicar headers de segurança;
+- manter a API key fora do bundle React.
 
-`AUNERON_API_KEY` é necessária no container Nginx em runtime, não durante
-o build React.
-
-Consulte:
-
-```text
-../backend/docs/FRONTEND_INTEGRATION.md
-../backend/docs/API_SECURITY.md
-../backend/docs/AUTHENTICATION.md
-../backend/docs/DEPLOYMENT.md
-```
+A variável `AUNERON_API_KEY` é necessária no container Nginx em runtime, não
+durante o build do React.

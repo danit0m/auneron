@@ -48,6 +48,14 @@ LOG_LEVEL=INFO
 AUTH_COOKIE_NAME=auneron_session
 AUTH_SESSION_TTL_MINUTES=480
 AUTH_ELEVATION_TTL_MINUTES=10
+AUTH_LOGIN_ACCOUNT_MAX_FAILURES=5
+AUTH_LOGIN_IP_MAX_FAILURES=25
+AUTH_LOGIN_WINDOW_SECONDS=900
+AUTH_ELEVATION_USER_MAX_FAILURES=5
+AUTH_ELEVATION_IP_MAX_FAILURES=15
+AUTH_ELEVATION_WINDOW_SECONDS=600
+AUTH_SESSION_CLEANUP_INTERVAL_SECONDS=3600
+AUTH_REVOKED_SESSION_RETENTION_HOURS=24
 ```
 
 Frontend/reverse proxy:
@@ -113,11 +121,18 @@ Antes de uma migração em banco real:
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
 ```
 
-Health check público:
+Probes públicos:
 
 ```text
 GET /health
+GET /ready
 ```
+
+Use `/health` como liveness do processo. Ele não depende do PostgreSQL.
+
+Use `/ready` para readiness. Ele retorna `HTTP 503` quando o PostgreSQL não
+está disponível e `HTTP 200` quando a API está pronta para atender operações
+que dependem do banco.
 
 ## Primeiro usuário
 
@@ -176,13 +191,16 @@ o fluxo real de login deve ser validado através de HTTPS.
 
 TLS pode terminar no load balancer, ingress ou proxy externo.
 
-## CORS
+## CORS e configuração de produção
 
 Quando frontend e API usam o mesmo host e `/api`, o navegador trabalha em
-mesma origem.
+mesma origem. Nesse caso, prefira `CORS_ORIGINS` vazio.
 
 Se forem origens diferentes, configure `CORS_ORIGINS` explicitamente.
-Não use `*` com credenciais.
+Em `production`, somente origens HTTPS são aceitas e wildcard `*` é rejeitado.
+
+O backend também recusa startup de produção com PostgreSQL ausente, API key
+fraca/placeholder, `DEBUG=true` ou `DATABASE_ECHO=true`.
 
 ## Autenticação e autorização
 
@@ -194,6 +212,25 @@ administrativas sensíveis.
 
 A sessão padrão expira em 8 horas e a elevação padrão em 10 minutos,
 salvo configuração diferente.
+
+## Rate limiting e sessões
+
+Login e elevação possuem rate limiting. Respostas bloqueadas usam `HTTP 429`
+e `Retry-After`.
+
+A implementação atual do limiter é por processo. Não aumente o número de
+instâncias FastAPI sem migrar essa proteção para um armazenamento
+compartilhado.
+
+Sessões expiradas são removidas periodicamente. Sessões revogadas ainda
+válidas são retidas pelo período configurado e depois removidas.
+
+## Headers de segurança
+
+O backend e o Nginx aplicam headers de segurança. Em produção/HTTPS, valide
+também HSTS no caminho público. O template Nginx da SPA aplica CSP,
+`Permissions-Policy`, `X-Frame-Options`, `Referrer-Policy` e
+`X-Content-Type-Options`.
 
 ## Logs
 
@@ -242,7 +279,7 @@ Logo:
 Após cada publicação:
 
 1. confirme a revisão Alembic;
-2. consulte `/health`;
+2. consulte `/health` e `/ready`;
 3. carregue `/login`;
 4. faça login com usuário real de validação;
 5. valide Dashboard e Clientes;
@@ -251,6 +288,8 @@ Após cada publicação:
 8. valide um acesso com permissão insuficiente retornando HTTP 403;
 9. valide elevação em recurso administrativo;
 10. confirme `X-Request-ID` nos logs;
-11. confirme que a API key não aparece em HTML/JS.
+11. confirme que a API key não aparece em HTML/JS;
+12. confirme headers de segurança no endpoint público;
+13. valide `HTTP 429`/`Retry-After` em ambiente de teste controlado.
 
 Use também `RELEASE_CHECKLIST.md`.

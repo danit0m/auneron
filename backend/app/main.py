@@ -1,5 +1,7 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 from fastapi import Depends
 from fastapi import FastAPI
@@ -7,6 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.authentication import require_permission
 from app.core.config import settings
+from app.core.http_security import (
+    SecurityHeadersMiddleware,
+)
 from app.core.observability import (
     RequestObservabilityMiddleware,
 )
@@ -14,6 +19,12 @@ from app.core.observability import (
     configure_logging,
 )
 from app.core.security import require_api_key
+from app.core.session_maintenance import (
+    auth_session_maintenance_loop,
+)
+from app.core.session_maintenance import (
+    run_auth_session_cleanup,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -25,8 +36,8 @@ from app.api.routes.accounts import router as accounts_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.brain import router as brain_router
 from app.api.routes.executive import router as executive_router
+from app.api.routes.health import router as health_router
 from app.api.routes.orchestrator import router as orchestrator_router
-from app.agents.notification_agent import NotificationAgent
 
 import app.agents.finance_agent
 import app.agents.analytics_agent
@@ -47,6 +58,15 @@ async def lifespan(_: FastAPI):
         check_database_connection()
     )
 
+    if database_online:
+        await asyncio.to_thread(
+            run_auth_session_cleanup
+        )
+
+    maintenance_task = asyncio.create_task(
+        auth_session_maintenance_loop()
+    )
+
     application_logger.info(
         "application_started",
         extra={
@@ -61,6 +81,13 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        maintenance_task.cancel()
+
+        with suppress(
+            asyncio.CancelledError
+        ):
+            await maintenance_task
+
         engine.dispose()
 
         application_logger.info(
@@ -75,6 +102,10 @@ async def lifespan(_: FastAPI):
         )
 
 
+production_mode = (
+    settings.environment == "production"
+)
+
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -82,14 +113,51 @@ app = FastAPI(
         "Intelligent Business Operating System"
     ),
     lifespan=lifespan,
+    docs_url=(
+        None
+        if production_mode
+        else "/docs"
+    ),
+    redoc_url=(
+        None
+        if production_mode
+        else "/redoc"
+    ),
+    openapi_url=(
+        None
+        if production_mode
+        else "/openapi.json"
+    ),
 )
 
+if settings.cors_origin_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=(
+            settings.cors_origin_list
+        ),
+        allow_credentials=True,
+        allow_methods=[
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "OPTIONS",
+        ],
+        allow_headers=[
+            "Accept",
+            "Content-Type",
+            "X-Request-ID",
+        ],
+        expose_headers=[
+            "X-Request-ID",
+        ],
+        max_age=600,
+    )
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    SecurityHeadersMiddleware,
+    production=production_mode,
 )
 
 app.add_middleware(
@@ -108,35 +176,11 @@ def home():
     }
 
 
-@app.get("/health", tags=["Health"])
-def health():
-    database_online = (
-        check_database_connection()
-    )
-
-    return {
-        "status": (
-            "healthy"
-            if database_online
-            else "degraded"
-        ),
-        "database": (
-            "online"
-            if database_online
-            else "offline"
-        ),
-        "database_engine": (
-            "postgresql"
-            if settings.is_postgresql
-            else "sqlite"
-        ),
-        "agents": [
-            "FinanceAgent",
-            "AnalyticsAgent",
-            "NotificationAgent",
-            "RiskAgent",
-        ],
-    }
+# Health/readiness são públicos para probes operacionais.
+# /health mede somente o processo; /ready valida dependências.
+app.include_router(
+    health_router
+)
 
 
 service_dependencies = [

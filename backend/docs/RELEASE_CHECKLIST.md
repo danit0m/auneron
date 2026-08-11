@@ -44,7 +44,12 @@ Push-Location ..\frontend
 npm run lint
 npm run build
 Pop-Location
+
+python .\scripts\release_guard.py
 ```
+
+O release guard deve terminar com `RELEASE GUARD: OK` e confirmar que o
+bundle não contém segredo server-side.
 
 Confirme que não existem referências a:
 
@@ -61,7 +66,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
 ```
 
 A suíte deve validar autenticação e RBAC, incluindo API key sem sessão,
-permissão insuficiente e elevação.
+permissão insuficiente, elevação, rate limiting, `/health`, `/ready` e limpeza
+de sessões.
 
 ## 6. E2E
 
@@ -123,8 +129,10 @@ O smoke deve confirmar:
 ```text
 Backend sem API key: HTTP 401
 Frontend /api/health: HTTP 200
+Frontend /api/ready: HTTP 200
 Frontend /api/dashboard/ sem sessao: HTTP 401
 Frontend /api/auth/me sem sessao: HTTP 401
+Security headers do Nginx: OK
 COMPOSE SMOKE TEST: OK
 ```
 
@@ -138,6 +146,9 @@ O workflow valida:
 - Python 3.11;
 - Node 22;
 - lint e build;
+- release guard;
+- validação do Docker Compose;
+- build das imagens backend e frontend;
 - Alembic;
 - pytest/RBAC;
 - diagnóstico do banco;
@@ -149,6 +160,7 @@ O workflow valida:
 Confirme:
 
 - `APP_ENV=production`;
+- configuração fail-fast de produção está válida;
 - PostgreSQL não está exposto publicamente;
 - HTTPS está ativo;
 - `API_KEY` possui pelo menos 32 caracteres;
@@ -156,8 +168,12 @@ Confirme:
 - cookie de sessão é `HttpOnly`, `SameSite=Strict` e `Secure`;
 - existe pelo menos um operador válido;
 - TTL de sessão e elevação estão definidos;
+- limites de login/elevação e janelas estão definidos;
+- manutenção periódica de sessões está configurada;
 - `DATABASE_APPLICATION_NAME` identifica o ambiente;
-- health check aponta para `/health`.
+- liveness aponta para `/health`;
+- readiness aponta para `/ready`;
+- headers de segurança são entregues no endpoint HTTPS.
 
 ## 12. Pós-deploy
 
@@ -172,7 +188,10 @@ Valide:
 - usuário sem permissão recebe 403;
 - recurso administrativo exige elevação;
 - `X-Request-ID` aparece nos logs;
-- API key não existe nos assets JavaScript.
+- API key não existe nos assets JavaScript;
+- `/ready` retorna 200 com PostgreSQL disponível;
+- `HTTP 429` inclui `Retry-After` quando o limite é atingido em teste controlado;
+- headers de segurança são retornados pelo proxy público.
 
 ## 13. Rollback
 

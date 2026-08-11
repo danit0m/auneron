@@ -42,6 +42,7 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["API_KEY"] = TEST_API_KEY
 
 from app.core.authentication import hash_password
+from app.core.rate_limiting import auth_rate_limiter
 from app.core.security import API_KEY_HEADER_NAME
 from app.database.database import SessionLocal
 from app.database.database import engine
@@ -149,10 +150,12 @@ def clean_database() -> Generator[
     None,
     None,
 ]:
+    auth_rate_limiter.reset()
     _clean_database()
 
     yield
 
+    auth_rate_limiter.reset()
     _clean_database()
 
 

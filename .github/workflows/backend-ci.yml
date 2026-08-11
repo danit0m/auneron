@@ -30,7 +30,7 @@ jobs:
   test:
     name: Python 3.11 / Node 22 / PostgreSQL 17
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -111,13 +111,26 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Executar release guard
+        run: python scripts/release_guard.py
+
+      - name: Validar Docker Compose
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Build da imagem backend
+        working-directory: ${{ github.workspace }}
+        run: docker build -f backend/Dockerfile -t auneron-backend:ci .
+
+      - name: Build da imagem frontend
+        working-directory: ${{ github.workspace }}
+        run: docker build -f frontend/Dockerfile -t auneron-frontend:ci .
+
       - name: Validar isolamento do banco
         run: |
           python - <<'PY'
           import os
 
           from sqlalchemy import text
-
           from app.database.database import engine
 
 
@@ -180,7 +193,6 @@ jobs:
         run: |
           python - <<'PY'
           from sqlalchemy import text
-
           from app.database.database import engine
 
 

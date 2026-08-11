@@ -14,8 +14,12 @@ A API key sozinha não concede acesso aos dados de negócio.
 Permanecem públicos:
 
 - `GET /`
-- `GET /health`
+- `GET /health`: liveness do processo, sem depender do PostgreSQL;
+- `GET /ready`: readiness; retorna `503` quando o PostgreSQL não está
+  disponível;
 - documentação OpenAPI em ambientes onde estiver habilitada.
+
+Em `production`, Swagger, ReDoc e o schema OpenAPI ficam desabilitados.
 
 ## Credencial de serviço
 
@@ -50,6 +54,27 @@ Comportamento da camada de serviço:
 - em `production`, `API_KEY` é obrigatória.
 
 A comparação usa `secrets.compare_digest`.
+
+Em `production`, a configuração também falha no startup quando:
+
+- a API key é ausente, placeholder ou possui baixa diversidade;
+- `DATABASE_URL` não aponta para PostgreSQL;
+- `DEBUG=true`;
+- `DATABASE_ECHO=true`;
+- `CORS_ORIGINS` usa wildcard, loopback ou HTTP em uma origem cross-origin.
+
+Para frontend e API no mesmo host, prefira `CORS_ORIGINS` vazio.
+
+## Rate limiting de autenticação
+
+`POST /auth/login` e `POST /auth/elevate` possuem proteção por conta/usuário
+e por IP. Ao atingir o limite, a resposta é `HTTP 429` com `Retry-After`.
+
+O limiter não registra senha, e-mail bruto, IP bruto, API key ou token de
+sessão. Os identificadores internos de conta/IP são hashes SHA-256.
+
+A implementação atual é local ao processo FastAPI; escalabilidade horizontal
+exige um store compartilhado antes de usar múltiplas instâncias.
 
 ## Sessão e autorização
 
@@ -95,9 +120,26 @@ homologação ou produção.
 O CI também valida que `users` e `auth_sessions` ficam vazios após os
 testes e o E2E.
 
+## Headers HTTP
+
+A API adiciona:
+
+```text
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+X-Frame-Options: DENY
+Permissions-Policy: ...
+```
+
+Em `production`, o backend também envia HSTS. O Nginx que serve a SPA aplica
+headers equivalentes e uma Content Security Policy para os assets do frontend.
+
 ## Produção
 
 Exija HTTPS. O cookie de sessão usa `Secure` em `APP_ENV=production`.
 
 Não exponha PostgreSQL diretamente à Internet e não publique a API key em
 variáveis `VITE_*`, HTML, JavaScript, `localStorage` ou `sessionStorage`.
+
+Monitore separadamente `/health` e `/ready`: liveness não deve reiniciar um
+processo saudável apenas porque o banco ficou temporariamente indisponível.

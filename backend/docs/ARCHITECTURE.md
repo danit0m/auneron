@@ -64,10 +64,16 @@ O FastAPI contém:
 - agentes e orquestrador;
 - SQLAlchemy;
 - configuração por ambiente;
-- observabilidade estruturada.
+- observabilidade estruturada;
+- headers HTTP de segurança;
+- rate limiting de login e elevação;
+- liveness em `/health` e readiness em `/ready`;
+- manutenção periódica de sessões expiradas/revogadas.
 
 A aplicação testa a conectividade com o banco no startup e libera o pool
-no shutdown.
+no shutdown. O resultado da checagem inicial é registrado, mas `/health`
+permanece independente do banco; disponibilidade do PostgreSQL é refletida
+por `/ready`.
 
 ## Banco de dados
 
@@ -98,8 +104,10 @@ Proteções relevantes:
 
 - o ambiente de teste só pode utilizar o banco `auneron_test`;
 - o banco `auneron_test` não pode ser usado como banco normal;
-- produção exige configuração explícita da segurança;
-- segredos não devem existir no código-fonte.
+- produção exige PostgreSQL e configuração explícita da segurança;
+- produção rejeita API key fraca/placeholder, debug e echo de SQL;
+- CORS de produção aceita somente origens HTTPS explícitas quando cross-origin;
+- segredos não devem existir no código-fonte ou no bundle React.
 
 ## Testes
 
@@ -107,8 +115,8 @@ A suíte possui dois níveis principais.
 
 ### Backend
 
-Pytest valida endpoints, banco, constraints, segurança, configuração e
-observabilidade.
+Pytest valida endpoints, banco, constraints, segurança, configuração,
+observabilidade, rate limiting, liveness/readiness e manutenção de sessões.
 
 ### E2E
 
@@ -136,6 +144,9 @@ Logs HTTP estruturados incluem, entre outros:
 Credenciais, URLs de banco, cookies, tokens e outros campos sensíveis
 devem permanecer mascarados.
 
+Eventos de autenticação registram sucesso/falha, elevação, logout e excesso
+de tentativas sem incluir senha, token bruto, cookie ou API key.
+
 ## Limites atuais
 
 A arquitetura atual implementa autenticação individual real de
@@ -155,3 +166,11 @@ administrativas sensíveis exigem também uma elevação temporária vinculada
 
 O frontend replica a matriz de permissões para navegação e experiência de
 uso, mas a fronteira efetiva de segurança permanece no backend.
+
+O rate limiter de autenticação atual é em memória e por processo. A topologia
+atual utiliza um processo backend; antes de escalar horizontalmente, o limiter
+deve migrar para um armazenamento compartilhado.
+
+O `backend/docker-compose.yml` é uma topologia local de desenvolvimento.
+Produção deve usar HTTPS, segredos gerenciados e PostgreSQL não exposto
+publicamente.

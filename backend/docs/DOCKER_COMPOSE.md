@@ -52,6 +52,9 @@ BACKEND_HTTP_PORT=8000
 AUNERON_HTTP_PORT=8080
 ```
 
+O serviço backend também recebe as configurações de autenticação, rate
+limiting e manutenção de sessões definidas em `.env.example`.
+
 O password padrão existe somente para desenvolvimento local.
 
 ### Volume PostgreSQL existente
@@ -114,7 +117,10 @@ Backend local para diagnóstico:
 
 ```text
 http://127.0.0.1:8000/health
+http://127.0.0.1:8000/ready
 ```
+
+`/health` mede liveness do processo. `/ready` verifica o PostgreSQL.
 
 PostgreSQL local:
 
@@ -192,12 +198,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\compose_smoke.ps1
 
 O smoke test:
 
-- sobe a stack;
-- aguarda os healthchecks;
-- confirma `/health`;
-- confirma HTTP 401 no backend protegido sem chave;
-- confirma o frontend;
-- confirma `/api/dashboard/` pelo Nginx;
+- valida a configuração do Compose;
+- sobe/reconstrói a stack;
+- aguarda liveness `/health`;
+- aguarda readiness `/ready`;
+- confirma HTTP 401 no backend protegido sem API key;
+- confirma `/api/health` e `/api/ready` pelo Nginx;
+- confirma HTTP 401 em `/api/dashboard/` e `/api/auth/me` sem sessão;
+- valida headers de segurança do Nginx, incluindo CSP;
 - não remove o volume PostgreSQL ao terminar.
 
 ## Produção
@@ -212,6 +220,9 @@ docs/DEPLOYMENT.md
 
 Produção deve utilizar segredos gerenciados, HTTPS, banco protegido e
 uma estratégia de deploy adequada à plataforma.
+
+O rate limiter atual é por processo. O Compose local utiliza uma instância de
+backend; não use múltiplas instâncias sem um limiter compartilhado.
 
 ## Autenticação da interface
 
