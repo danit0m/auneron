@@ -8,13 +8,13 @@ from sqlalchemy import ForeignKey
 from sqlalchemy import Index
 from sqlalchemy import Integer
 from sqlalchemy import JSON
+from sqlalchemy import func
 from sqlalchemy import Numeric
 from sqlalchemy import String
 from sqlalchemy import Text
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.sql import func
 
 from app.database.database import Base
 
@@ -297,6 +297,23 @@ Index(
     MemoryItem.source_type,
     MemoryItem.source_reference,
 )
+
+MEMORY_SEARCH_VECTOR_SQL = (
+    "to_tsvector('portuguese'::regconfig, "
+    "(coalesce(title, ''::character varying)::text "
+    "|| ' '::text) || coalesce(content, ''::text))"
+)
+
+_memory_search_index = Index(
+    "ix_memory_items_search_portuguese_gin",
+    text(MEMORY_SEARCH_VECTOR_SQL),
+    postgresql_using="gin",
+)
+
+if _memory_search_index.table is None:
+    MemoryItem.__table__.append_constraint(
+        _memory_search_index
+    )
 
 _active_expiration_where = text(
     "status = 'active' AND valid_until IS NOT NULL"

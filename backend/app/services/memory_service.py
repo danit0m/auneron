@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 import re
 from collections.abc import Sequence
@@ -12,13 +13,19 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.core.memory_cursor import MemoryCursorCodec
+from app.core.memory_errors import InvalidCursorError
 from app.core.memory_errors import MemoryConflictError
 from app.core.memory_errors import MemoryNotFoundError
 from app.core.memory_errors import MemoryStateError
 from app.core.memory_errors import MemoryValidationError
+from app.core.memory_query import MemoryQuery
+from app.core.memory_query import MemoryScope
 from app.models.memory import MemoryEvidence
 from app.models.memory import MemoryItem
 from app.repositories.memory_repository import MemoryRepository
+from app.repositories.memory_repository import MemorySearchRow
 
 
 MEMORY_TYPES = frozenset({
@@ -69,6 +76,21 @@ MAX_CONTEXT_BYTES = 32 * 1024
 MAX_CONTEXT_DEPTH = 5
 MAX_EVIDENCE_PER_CREATE = 20
 MAX_EXPIRATION_BATCH = 100
+MAX_RECALL_LIMIT = 100
+MEMORY_STATUSES = frozenset({
+    "active",
+    "superseded",
+    "expired",
+    "invalidated",
+    "archived",
+})
+MEMORY_SORTS = frozenset({
+    "relevance",
+    "newest",
+    "oldest",
+    "importance",
+    "confidence",
+})
 
 
 @dataclass(frozen=True)
@@ -106,6 +128,14 @@ class SupersedeResult:
     previous: MemoryItem
     replacement: MemoryItem
     evidence: tuple[MemoryEvidence, ...]
+
+
+@dataclass(frozen=True)
+class RecallResult:
+    items: tuple[MemoryItem, ...]
+    limit: int
+    has_more: bool
+    next_cursor: str | None
 
 
 def _utc_now() -> datetime:
@@ -340,6 +370,7 @@ class MemoryService:
         self,
         db: Session,
         repository: MemoryRepository | None = None,
+        cursor_secret: str | bytes | None = None,
     ) -> None:
         self.db = db
         self.repository = (
@@ -347,6 +378,7 @@ class MemoryService:
             if repository is not None
             else MemoryRepository(db)
         )
+        self._cursor_secret = cursor_secret
 
     def remember(
         self,
@@ -478,6 +510,135 @@ class MemoryService:
             )
 
         return memory
+
+    def recall(
+        self,
+        *,
+        scope_type: str,
+        account_id: int | None = None,
+        subject_user_id: int | None = None,
+        memory_types: Sequence[str] | None = None,
+        statuses: Sequence[str] | None = None,
+        memory_key: str | None = None,
+        source_types: Sequence[str] | None = None,
+        min_importance: Decimal | float | int | str | None = None,
+        min_confidence: Decimal | float | int | str | None = None,
+        as_of: datetime | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        text_query: str | None = None,
+        limit: int = 20,
+        cursor: str | None = None,
+        sort: str | None = None,
+    ) -> RecallResult:
+        codec = MemoryCursorCodec(self._get_cursor_secret())
+        decoded = None
+
+        if cursor is not None:
+            if not isinstance(cursor, str) or not cursor:
+                raise InvalidCursorError("Cursor de memória inválido.")
+
+            decoded = codec.decode(cursor)
+
+        normalized_text = self._normalize_text_query(text_query)
+        normalized_sort = self._normalize_sort(sort, normalized_text)
+
+        if decoded is not None and decoded.sort != normalized_sort:
+            raise InvalidCursorError("Cursor incompatível com a ordenação.")
+
+        normalized_as_of = (
+            decoded.valid_at
+            if decoded is not None and as_of is None
+            else _utc_now() if as_of is None
+            else _aware_datetime(as_of, field_name="as_of")
+        )
+        query = MemoryQuery(
+            scope=self._normalize_recall_scope(
+                scope_type=scope_type,
+                account_id=account_id,
+                subject_user_id=subject_user_id,
+            ),
+            memory_types=self._normalize_filter_values(
+                memory_types,
+                allowed=MEMORY_TYPES,
+                field_name="memory_types",
+            ),
+            statuses=self._normalize_filter_values(
+                ("active",) if statuses is None else statuses,
+                allowed=MEMORY_STATUSES,
+                field_name="statuses",
+                required=True,
+            ),
+            source_types=self._normalize_filter_values(
+                source_types,
+                allowed=SOURCE_TYPES,
+                field_name="source_types",
+            ),
+            memory_key=_normalized_memory_key(memory_key),
+            min_importance=(
+                None
+                if min_importance is None
+                else _score(min_importance, field_name="min_importance")
+            ),
+            min_confidence=(
+                None
+                if min_confidence is None
+                else _score(min_confidence, field_name="min_confidence")
+            ),
+            valid_at=normalized_as_of,
+            created_after=(
+                None
+                if created_after is None
+                else _aware_datetime(created_after, field_name="created_after")
+            ),
+            created_before=(
+                None
+                if created_before is None
+                else _aware_datetime(created_before, field_name="created_before")
+            ),
+            text_query=normalized_text,
+            sort=normalized_sort,
+            limit=self._normalize_recall_limit(limit),
+        )
+        self._validate_created_range(query)
+        fingerprint = self._query_fingerprint(query)
+        cursor_position = None
+
+        if decoded is not None:
+            if not hmac.compare_digest(decoded.fingerprint, fingerprint):
+                raise InvalidCursorError("Cursor incompatível com a consulta.")
+
+            cursor_position = self._decode_cursor_position(
+                decoded.position,
+                query.sort,
+            )
+
+        rows = self.repository.search(
+            query,
+            cursor_position=cursor_position,
+        )
+        has_more = len(rows) > query.limit
+        page_rows = tuple(rows[: query.limit])
+        items = tuple(row.memory for row in page_rows)
+        next_cursor = None
+
+        if has_more and page_rows:
+            next_cursor = codec.encode(
+                fingerprint=fingerprint,
+                sort=query.sort,
+                valid_at=query.valid_at,
+                position=self._cursor_position(
+                    page_rows[-1],
+                    query.sort,
+                ),
+            )
+
+        return RecallResult(
+            items=items,
+            limit=query.limit,
+            has_more=has_more,
+            next_cursor=next_cursor,
+        )
 
     def add_evidence(
         self,
@@ -781,6 +942,318 @@ class MemoryService:
             raise
 
         return memories
+
+    def _get_cursor_secret(self) -> str | bytes:
+        if self._cursor_secret is not None:
+            return self._cursor_secret
+
+        if settings.api_key is None:
+            raise MemoryValidationError(
+                "Cursor HMAC indisponível sem API_KEY configurada."
+            )
+
+        api_key = settings.api_key.get_secret_value().encode(
+            "utf-8"
+        )
+
+        return hmac.new(
+            api_key,
+            b"auneron-memory-cursor-v1",
+            hashlib.sha256,
+        ).digest()
+
+    @staticmethod
+    def _normalize_recall_scope(
+        *,
+        scope_type: str,
+        account_id: int | None,
+        subject_user_id: int | None,
+    ) -> MemoryScope:
+        if not isinstance(scope_type, str):
+            raise MemoryValidationError("scope_type inválido.")
+
+        normalized = scope_type.strip().lower()
+
+        if normalized not in SCOPE_TYPES:
+            raise MemoryValidationError("scope_type inválido.")
+
+        if account_id is not None and (
+            not isinstance(account_id, int)
+            or isinstance(account_id, bool)
+            or account_id <= 0
+        ):
+            raise MemoryValidationError("account_id inválido.")
+
+        if subject_user_id is not None and (
+            not isinstance(subject_user_id, int)
+            or isinstance(subject_user_id, bool)
+            or subject_user_id <= 0
+        ):
+            raise MemoryValidationError("subject_user_id inválido.")
+
+        if normalized == "global":
+            if account_id is not None or subject_user_id is not None:
+                raise MemoryValidationError(
+                    "Escopo global não aceita identificadores."
+                )
+        elif normalized == "account":
+            if account_id is None or subject_user_id is not None:
+                raise MemoryValidationError(
+                    "Escopo account exige somente account_id."
+                )
+        elif subject_user_id is None or account_id is not None:
+            raise MemoryValidationError(
+                "Escopo user exige somente subject_user_id."
+            )
+
+        return MemoryScope(
+            scope_type=normalized,
+            account_id=account_id,
+            subject_user_id=subject_user_id,
+        )
+
+    @staticmethod
+    def _normalize_filter_values(
+        values: Sequence[str] | None,
+        *,
+        allowed: frozenset[str],
+        field_name: str,
+        required: bool = False,
+    ) -> tuple[str, ...]:
+        if values is None:
+            if required:
+                raise MemoryValidationError(f"{field_name} é obrigatório.")
+
+            return ()
+
+        if isinstance(values, (str, bytes)):
+            raise MemoryValidationError(
+                f"{field_name} deve ser uma sequência."
+            )
+
+        normalized: list[str] = []
+
+        for value in values:
+            if not isinstance(value, str):
+                raise MemoryValidationError(f"{field_name} inválido.")
+
+            item = value.strip().lower()
+
+            if item not in allowed:
+                raise MemoryValidationError(f"{field_name} inválido.")
+
+            if item not in normalized:
+                normalized.append(item)
+
+        if required and not normalized:
+            raise MemoryValidationError(f"{field_name} não pode ser vazio.")
+
+        return tuple(sorted(normalized))
+
+    @staticmethod
+    def _normalize_text_query(value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise MemoryValidationError("text_query inválida.")
+
+        normalized = value.strip()
+
+        if not normalized:
+            raise MemoryValidationError("text_query não pode ser vazia.")
+
+        if len(normalized) > 500:
+            raise MemoryValidationError("text_query excede 500 caracteres.")
+
+        return normalized
+
+    @staticmethod
+    def _normalize_sort(sort: str | None, text_query: str | None) -> str:
+        if sort is not None and not isinstance(sort, str):
+            raise MemoryValidationError("sort inválido.")
+
+        normalized = (
+            "relevance" if text_query is not None else "importance"
+        ) if sort is None else sort.strip().lower()
+
+        if normalized not in MEMORY_SORTS:
+            raise MemoryValidationError("sort inválido.")
+
+        if normalized == "relevance" and text_query is None:
+            raise MemoryValidationError(
+                "sort relevance exige text_query."
+            )
+
+        return normalized
+
+    @staticmethod
+    def _normalize_recall_limit(limit: int) -> int:
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise MemoryValidationError("limit inválido.")
+
+        if limit <= 0 or limit > MAX_RECALL_LIMIT:
+            raise MemoryValidationError("limit deve estar entre 1 e 100.")
+
+        return limit
+
+    @staticmethod
+    def _validate_created_range(query: MemoryQuery) -> None:
+        if (
+            query.created_after is not None
+            and query.created_before is not None
+            and query.created_after > query.created_before
+        ):
+            raise MemoryValidationError(
+                "created_after deve ser anterior a created_before."
+            )
+
+    @staticmethod
+    def _query_fingerprint(query: MemoryQuery) -> str:
+        def instant(value: datetime | None) -> str | None:
+            if value is None:
+                return None
+
+            return value.astimezone(timezone.utc).isoformat()
+
+        payload = {
+            "created_after": instant(query.created_after),
+            "created_before": instant(query.created_before),
+            "memory_key": query.memory_key,
+            "memory_types": list(query.memory_types),
+            "min_confidence": (
+                None
+                if query.min_confidence is None
+                else str(query.min_confidence)
+            ),
+            "min_importance": (
+                None
+                if query.min_importance is None
+                else str(query.min_importance)
+            ),
+            "scope": {
+                "account_id": query.scope.account_id,
+                "scope_type": query.scope.scope_type,
+                "subject_user_id": query.scope.subject_user_id,
+            },
+            "sort": query.sort,
+            "source_types": list(query.source_types),
+            "statuses": list(query.statuses),
+            "text_query": query.text_query,
+            "valid_at": instant(query.valid_at),
+        }
+        serialized = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _cursor_position(
+        row: MemorySearchRow,
+        sort: str,
+    ) -> tuple[str, ...]:
+        memory = row.memory
+
+        if sort == "relevance":
+            if row.relevance is None:
+                raise MemoryValidationError(
+                    "Resultado textual sem relevância."
+                )
+
+            return (
+                str(row.relevance),
+                str(memory.importance),
+                str(memory.confidence),
+                memory.valid_from.isoformat(),
+                str(memory.id),
+            )
+
+        if sort in {"newest", "oldest"}:
+            return (
+                memory.created_at.isoformat(),
+                str(memory.id),
+            )
+
+        first = memory.importance
+        second = memory.confidence
+
+        if sort == "confidence":
+            first, second = second, first
+
+        return (
+            str(first),
+            str(second),
+            memory.valid_from.isoformat(),
+            str(memory.id),
+        )
+
+    @staticmethod
+    def _decode_cursor_position(
+        position: tuple[str, ...],
+        sort: str,
+    ) -> tuple[Any, ...]:
+        try:
+            if sort == "relevance":
+                if len(position) != 5:
+                    raise ValueError("invalid position")
+
+                relevance = Decimal(position[0])
+                importance = Decimal(position[1])
+                confidence = Decimal(position[2])
+                valid_from = datetime.fromisoformat(position[3])
+                memory_id = int(position[4])
+
+                if (
+                    not relevance.is_finite()
+                    or not importance.is_finite()
+                    or not confidence.is_finite()
+                    or valid_from.tzinfo is None
+                    or memory_id <= 0
+                ):
+                    raise ValueError("invalid position")
+
+                return (
+                    relevance,
+                    importance,
+                    confidence,
+                    valid_from,
+                    memory_id,
+                )
+
+            if sort in {"newest", "oldest"}:
+                if len(position) != 2:
+                    raise ValueError("invalid position")
+
+                created_at = datetime.fromisoformat(position[0])
+                memory_id = int(position[1])
+
+                if created_at.tzinfo is None or memory_id <= 0:
+                    raise ValueError("invalid position")
+
+                return created_at, memory_id
+
+            if len(position) != 4:
+                raise ValueError("invalid position")
+
+            first = Decimal(position[0])
+            second = Decimal(position[1])
+            valid_from = datetime.fromisoformat(position[2])
+            memory_id = int(position[3])
+
+            if (
+                not first.is_finite()
+                or not second.is_finite()
+                or valid_from.tzinfo is None
+                or memory_id <= 0
+            ):
+                raise ValueError("invalid position")
+
+            return first, second, valid_from, memory_id
+        except (ValueError, InvalidOperation) as error:
+            raise InvalidCursorError("Cursor de memória inválido.") from error
 
     def _find_existing(
         self,
