@@ -76,6 +76,8 @@ def _clean_database() -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    memory_evidence,
+                    memory_items,
                     auth_sessions,
                     users,
                     knowledge,
