@@ -1,5 +1,7 @@
+import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
@@ -12,7 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.core.memory_errors import MemoryConflictError
 from app.core.memory_errors import MemoryNotFoundError
+from app.core.memory_errors import MemoryStateError
 from app.core.memory_errors import MemoryValidationError
+from app.models.memory import MemoryEvidence
 from app.models.memory import MemoryItem
 from app.repositories.memory_repository import MemoryRepository
 
@@ -41,6 +45,12 @@ SOURCE_TYPES = frozenset({
     "derived",
 })
 
+EVIDENCE_RELATIONS = frozenset({
+    "supports",
+    "contradicts",
+    "context",
+})
+
 MEMORY_KEY_PATTERN = re.compile(
     r"^[a-z0-9][a-z0-9._:-]{0,254}$"
 )
@@ -51,8 +61,14 @@ ACTIVE_KEY_CONSTRAINTS = frozenset({
     "uq_memory_items_active_user_key",
 })
 
+EVIDENCE_HASH_CONSTRAINT = (
+    "uq_memory_evidence_memory_hash"
+)
+
 MAX_CONTEXT_BYTES = 32 * 1024
 MAX_CONTEXT_DEPTH = 5
+MAX_EVIDENCE_PER_CREATE = 20
+MAX_EXPIRATION_BATCH = 100
 
 
 @dataclass(frozen=True)
@@ -60,6 +76,36 @@ class RememberResult:
     memory: MemoryItem
     created: bool
     duplicate: bool
+    evidence: tuple[MemoryEvidence, ...] = ()
+
+
+@dataclass(frozen=True)
+class EvidenceResult:
+    evidence: MemoryEvidence
+    created: bool
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class EvidenceInput:
+    relation: str
+    source_type: str
+    source_reference: str
+    evidence_text: str
+    weight: Decimal | float | int | str = Decimal(
+        "1.000"
+    )
+    source_memory_id: int | None = None
+    observed_at: datetime | None = None
+    created_by_user_id: int | None = None
+    context_data: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class SupersedeResult:
+    previous: MemoryItem
+    replacement: MemoryItem
+    evidence: tuple[MemoryEvidence, ...]
 
 
 def _utc_now() -> datetime:
@@ -222,6 +268,44 @@ def _normalized_context(
     return dict(context_data)
 
 
+def _evidence_hash(
+    normalized: dict[str, Any],
+) -> str:
+    observed_at = normalized["observed_at"]
+
+    canonical = {
+        "context_data": normalized["context_data"],
+        "evidence_text": normalized["evidence_text"],
+        "observed_at": (
+            None
+            if observed_at is None
+            else observed_at.astimezone(
+                timezone.utc
+            ).isoformat()
+        ),
+        "relation": normalized["relation"],
+        "source_memory_id": normalized[
+            "source_memory_id"
+        ],
+        "source_reference": normalized[
+            "source_reference"
+        ],
+        "source_type": normalized["source_type"],
+        "weight": str(normalized["weight"]),
+    }
+
+    serialized = json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+    return hashlib.sha256(
+        serialized.encode("utf-8")
+    ).hexdigest()
+
+
 def _constraint_name(
     error: IntegrityError,
 ) -> str | None:
@@ -247,8 +331,8 @@ class MemoryService:
     """
     Fronteira transacional do Memory System.
 
-    21C.2 implementa a fundação de remember/get. RBAC,
-    recall avançado, evidence e lifecycle completo entram
+    21C.2 implementa remember/get. 21C.3 adiciona
+    evidence e lifecycle. RBAC e recall avançado entram
     nas fases subsequentes já congeladas na arquitetura.
     """
 
@@ -284,7 +368,12 @@ class MemoryService:
         valid_from: datetime | None = None,
         valid_until: datetime | None = None,
         context_data: dict[str, Any] | None = None,
+        evidence: Sequence[EvidenceInput] | None = None,
     ) -> RememberResult:
+        evidence_items = self._validate_evidence_items(
+            evidence,
+            operation="remember",
+        )
         normalized = self._normalize_remember(
             memory_type=memory_type,
             title=title,
@@ -324,8 +413,15 @@ class MemoryService:
             self.repository.add_memory(
                 memory
             )
+            created_evidence = self._insert_evidence_batch(
+                memory.id,
+                evidence_items,
+            )
             self.db.commit()
             self.db.refresh(memory)
+
+            for item in created_evidence:
+                self.db.refresh(item)
         except IntegrityError as error:
             self.db.rollback()
 
@@ -360,6 +456,7 @@ class MemoryService:
             memory=memory,
             created=True,
             duplicate=False,
+            evidence=tuple(created_evidence),
         )
 
     def get(
@@ -382,6 +479,309 @@ class MemoryService:
 
         return memory
 
+    def add_evidence(
+        self,
+        memory_id: int,
+        *,
+        relation: str,
+        source_type: str,
+        source_reference: str,
+        evidence_text: str,
+        weight: Decimal | float | int | str = (
+            Decimal("1.000")
+        ),
+        source_memory_id: int | None = None,
+        observed_at: datetime | None = None,
+        created_by_user_id: int | None = None,
+        context_data: dict[str, Any] | None = None,
+    ) -> EvidenceResult:
+        memory = self.get(memory_id)
+        normalized = self._normalize_evidence(
+            memory_id=memory.id,
+            relation=relation,
+            source_type=source_type,
+            source_reference=source_reference,
+            source_memory_id=source_memory_id,
+            evidence_text=evidence_text,
+            weight=weight,
+            observed_at=observed_at,
+            created_by_user_id=created_by_user_id,
+            context_data=context_data,
+        )
+
+        if source_memory_id is not None:
+            source_memory = self.repository.get_by_id(
+                source_memory_id
+            )
+
+            if source_memory is None:
+                raise MemoryValidationError(
+                    "source_memory_id não encontrada."
+                )
+
+        evidence_hash = _evidence_hash(normalized)
+        existing = (
+            self.repository.find_evidence_by_hash(
+                memory_id=memory.id,
+                evidence_hash=evidence_hash,
+            )
+        )
+
+        if existing is not None:
+            return EvidenceResult(
+                evidence=existing,
+                created=False,
+                duplicate=True,
+            )
+
+        evidence = MemoryEvidence(
+            memory_id=memory.id,
+            evidence_hash=evidence_hash,
+            **normalized,
+        )
+
+        try:
+            self.repository.insert_evidence(evidence)
+            self.db.commit()
+            self.db.refresh(evidence)
+        except IntegrityError as error:
+            self.db.rollback()
+
+            if (
+                _constraint_name(error)
+                == EVIDENCE_HASH_CONSTRAINT
+            ):
+                concurrent = (
+                    self.repository.find_evidence_by_hash(
+                        memory_id=memory.id,
+                        evidence_hash=evidence_hash,
+                    )
+                )
+
+                if concurrent is not None:
+                    return EvidenceResult(
+                        evidence=concurrent,
+                        created=False,
+                        duplicate=True,
+                    )
+
+            raise MemoryValidationError(
+                "A evidência viola uma restrição "
+                "de integridade."
+            ) from error
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return EvidenceResult(
+            evidence=evidence,
+            created=True,
+            duplicate=False,
+        )
+
+    def list_evidence(
+        self,
+        memory_id: int,
+    ) -> list[MemoryEvidence]:
+        memory = self.get(memory_id)
+
+        return self.repository.list_evidence(
+            memory.id
+        )
+
+    def supersede(
+        self,
+        memory_id: int,
+        *,
+        reason: str,
+        memory_type: str,
+        title: str,
+        content: str,
+        source_type: str,
+        source_reference: str,
+        confidence: Decimal | float | int | str,
+        created_by_user_id: int | None = None,
+        importance: Decimal | float | int | str = (
+            Decimal("0.500")
+        ),
+        valid_from: datetime | None = None,
+        valid_until: datetime | None = None,
+        context_data: dict[str, Any] | None = None,
+        evidence: Sequence[EvidenceInput] | None = None,
+    ) -> SupersedeResult:
+        self._validate_memory_id(memory_id)
+        normalized_reason = _required_text(
+            reason,
+            field_name="reason",
+            max_length=2000,
+        )
+        evidence_items = self._validate_evidence_items(
+            evidence,
+            operation="supersede",
+        )
+
+        try:
+            previous = self.repository.lock_by_id(
+                memory_id
+            )
+
+            if previous is None:
+                raise MemoryNotFoundError(
+                    "Memória não encontrada."
+                )
+
+            self._require_active(previous)
+            normalized = self._normalize_remember(
+                memory_type=memory_type,
+                title=title,
+                content=content,
+                scope_type=previous.scope_type,
+                source_type=source_type,
+                source_reference=source_reference,
+                confidence=confidence,
+                memory_key=previous.memory_key,
+                account_id=previous.account_id,
+                subject_user_id=(
+                    previous.subject_user_id
+                ),
+                created_by_user_id=created_by_user_id,
+                importance=importance,
+                valid_from=valid_from,
+                valid_until=valid_until,
+                context_data=context_data,
+            )
+            changed_at = _utc_now()
+            self.repository.update_status(
+                previous,
+                status="superseded",
+                reason=normalized_reason,
+                changed_at=changed_at,
+            )
+
+            normalized["supersedes_memory_id"] = (
+                previous.id
+            )
+            replacement = MemoryItem(
+                **normalized,
+                status="active",
+                status_reason=None,
+                status_changed_at=changed_at,
+            )
+            self.repository.add_memory(replacement)
+            created_evidence = (
+                self._insert_evidence_batch(
+                    replacement.id,
+                    evidence_items,
+                )
+            )
+            self.db.commit()
+            self.db.refresh(previous)
+            self.db.refresh(replacement)
+
+            for item in created_evidence:
+                self.db.refresh(item)
+        except IntegrityError as error:
+            self.db.rollback()
+
+            if (
+                _constraint_name(error)
+                in ACTIVE_KEY_CONSTRAINTS
+            ):
+                raise MemoryConflictError(
+                    "Conflito concorrente ao substituir memória."
+                ) from error
+
+            raise MemoryValidationError(
+                "Supersede viola uma restrição "
+                "de integridade."
+            ) from error
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return SupersedeResult(
+            previous=previous,
+            replacement=replacement,
+            evidence=tuple(created_evidence),
+        )
+
+    def invalidate(
+        self,
+        memory_id: int,
+        *,
+        reason: str,
+    ) -> MemoryItem:
+        return self._transition(
+            memory_id,
+            status="invalidated",
+            reason=reason,
+            reason_required=True,
+        )
+
+    def archive(
+        self,
+        memory_id: int,
+        *,
+        reason: str | None = None,
+    ) -> MemoryItem:
+        return self._transition(
+            memory_id,
+            status="archived",
+            reason=reason,
+            reason_required=False,
+        )
+
+    def expire(
+        self,
+        memory_id: int,
+        *,
+        reason: str | None = None,
+    ) -> MemoryItem:
+        return self._transition(
+            memory_id,
+            status="expired",
+            reason=reason,
+            reason_required=False,
+        )
+
+    def expire_due_batch(
+        self,
+        *,
+        as_of: datetime | None = None,
+        limit: int = 100,
+    ) -> list[MemoryItem]:
+        if limit <= 0 or limit > MAX_EXPIRATION_BATCH:
+            raise MemoryValidationError(
+                "limit deve estar entre 1 e 100."
+            )
+
+        normalized_as_of = (
+            _utc_now()
+            if as_of is None
+            else _aware_datetime(
+                as_of,
+                field_name="as_of",
+            )
+        )
+        changed_at = _utc_now()
+
+        try:
+            memories = self.repository.expire_due_batch(
+                as_of=normalized_as_of,
+                limit=limit,
+                reason="Validade temporal encerrada.",
+                changed_at=changed_at,
+            )
+            self.db.commit()
+
+            for memory in memories:
+                self.db.refresh(memory)
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return memories
+
     def _find_existing(
         self,
         normalized: dict[str, Any],
@@ -401,6 +801,258 @@ class MemoryService:
                 normalized["subject_user_id"]
             ),
         )
+
+    def _transition(
+        self,
+        memory_id: int,
+        *,
+        status: str,
+        reason: str | None,
+        reason_required: bool,
+    ) -> MemoryItem:
+        self._validate_memory_id(memory_id)
+        normalized_reason = self._normalize_reason(
+            reason,
+            required=reason_required,
+        )
+
+        try:
+            memory = self.repository.lock_by_id(
+                memory_id
+            )
+
+            if memory is None:
+                raise MemoryNotFoundError(
+                    "Memória não encontrada."
+                )
+
+            self._require_active(memory)
+            self.repository.update_status(
+                memory,
+                status=status,
+                reason=normalized_reason,
+                changed_at=_utc_now(),
+            )
+            self.db.commit()
+            self.db.refresh(memory)
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return memory
+
+    def _insert_evidence_batch(
+        self,
+        memory_id: int,
+        evidence: Sequence[EvidenceInput],
+    ) -> list[MemoryEvidence]:
+        created: list[MemoryEvidence] = []
+        seen_hashes: set[str] = set()
+
+        for item in evidence:
+            normalized = self._normalize_evidence(
+                memory_id=memory_id,
+                relation=item.relation,
+                source_type=item.source_type,
+                source_reference=item.source_reference,
+                source_memory_id=item.source_memory_id,
+                evidence_text=item.evidence_text,
+                weight=item.weight,
+                observed_at=item.observed_at,
+                created_by_user_id=(
+                    item.created_by_user_id
+                ),
+                context_data=item.context_data,
+            )
+            self._validate_source_memory(
+                memory_id,
+                item.source_memory_id,
+            )
+            evidence_hash = _evidence_hash(normalized)
+
+            if evidence_hash in seen_hashes:
+                continue
+
+            seen_hashes.add(evidence_hash)
+            evidence_item = MemoryEvidence(
+                memory_id=memory_id,
+                evidence_hash=evidence_hash,
+                **normalized,
+            )
+            self.repository.insert_evidence(
+                evidence_item
+            )
+            created.append(evidence_item)
+
+        return created
+
+    @staticmethod
+    def _validate_evidence_items(
+        evidence: Sequence[EvidenceInput] | None,
+        *,
+        operation: str,
+    ) -> tuple[EvidenceInput, ...]:
+        items = tuple(evidence or ())
+
+        if len(items) > MAX_EVIDENCE_PER_CREATE:
+            raise MemoryValidationError(
+                f"{operation} aceita no máximo 20 evidências."
+            )
+
+        if not all(
+            isinstance(item, EvidenceInput)
+            for item in items
+        ):
+            raise MemoryValidationError(
+                "evidence deve conter EvidenceInput."
+            )
+
+        return items
+
+    def _validate_source_memory(
+        self,
+        memory_id: int,
+        source_memory_id: int | None,
+    ) -> None:
+        if source_memory_id is None:
+            return
+
+        if source_memory_id == memory_id:
+            raise MemoryValidationError(
+                "Evidência não pode referenciar "
+                "a própria memória."
+            )
+
+        source_memory = self.repository.get_by_id(
+            source_memory_id
+        )
+
+        if source_memory is None:
+            raise MemoryValidationError(
+                "source_memory_id não encontrada."
+            )
+
+    @staticmethod
+    def _validate_memory_id(memory_id: int) -> None:
+        if memory_id <= 0:
+            raise MemoryValidationError(
+                "memory_id inválido."
+            )
+
+    @staticmethod
+    def _require_active(memory: MemoryItem) -> None:
+        if memory.status != "active":
+            raise MemoryStateError(
+                "Somente memória active pode "
+                "mudar de lifecycle."
+            )
+
+    @staticmethod
+    def _normalize_reason(
+        reason: str | None,
+        *,
+        required: bool,
+    ) -> str | None:
+        if reason is None:
+            if required:
+                raise MemoryValidationError(
+                    "reason é obrigatório."
+                )
+
+            return None
+
+        normalized = reason.strip()
+
+        if not normalized:
+            if required:
+                raise MemoryValidationError(
+                    "reason não pode ser vazio."
+                )
+
+            return None
+
+        if len(normalized) > 2000:
+            raise MemoryValidationError(
+                "reason excede 2000 caracteres."
+            )
+
+        return normalized
+
+    @staticmethod
+    def _normalize_evidence(
+        *,
+        memory_id: int,
+        relation: str,
+        source_type: str,
+        source_reference: str,
+        source_memory_id: int | None,
+        evidence_text: str,
+        weight: Decimal | float | int | str,
+        observed_at: datetime | None,
+        created_by_user_id: int | None,
+        context_data: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        normalized_relation = relation.strip().lower()
+
+        if normalized_relation not in EVIDENCE_RELATIONS:
+            raise MemoryValidationError(
+                "relation de evidência inválida."
+            )
+
+        normalized_source_type = (
+            source_type.strip().lower()
+        )
+
+        if normalized_source_type not in SOURCE_TYPES:
+            raise MemoryValidationError(
+                "source_type de evidência inválido."
+            )
+
+        if source_memory_id is not None:
+            if source_memory_id <= 0:
+                raise MemoryValidationError(
+                    "source_memory_id inválida."
+                )
+
+            if source_memory_id == memory_id:
+                raise MemoryValidationError(
+                    "Evidência não pode referenciar "
+                    "a própria memória."
+                )
+
+        return {
+            "relation": normalized_relation,
+            "source_type": normalized_source_type,
+            "source_reference": _required_text(
+                source_reference,
+                field_name=(
+                    "source_reference da evidência"
+                ),
+                max_length=500,
+            ),
+            "source_memory_id": source_memory_id,
+            "evidence_text": _required_text(
+                evidence_text,
+                field_name="evidence_text",
+                max_length=10000,
+            ),
+            "weight": _score(
+                weight,
+                field_name="weight",
+            ),
+            "observed_at": (
+                None
+                if observed_at is None
+                else _aware_datetime(
+                    observed_at,
+                    field_name="observed_at",
+                )
+            ),
+            "created_by_user_id": created_by_user_id,
+            "context_data": _normalized_context(
+                context_data
+            ),
+        }
 
     def _existing_result(
         self,
