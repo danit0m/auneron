@@ -750,6 +750,110 @@ class MemoryService:
             memory.id
         )
 
+    def history(
+        self,
+        memory_id: int,
+    ) -> tuple[MemoryItem, ...]:
+        self._validate_memory_id(memory_id)
+        memories = self.repository.list_history_chain(
+            memory_id
+        )
+
+        if not memories:
+            raise MemoryNotFoundError(
+                "Memória não encontrada."
+            )
+
+        by_id = {
+            memory.id: memory
+            for memory in memories
+        }
+        requested = by_id.get(memory_id)
+
+        if requested is None:
+            raise MemoryNotFoundError(
+                "Memória não encontrada."
+            )
+
+        identity = self._history_identity(
+            requested
+        )
+
+        if any(
+            self._history_identity(memory)
+            != identity
+            for memory in memories
+        ):
+            raise MemoryStateError(
+                "Cadeia de histórico inconsistente."
+            )
+
+        oldest = requested
+        ancestor_ids: set[int] = set()
+
+        while oldest.supersedes_memory_id is not None:
+            if oldest.id in ancestor_ids:
+                raise MemoryStateError(
+                    "Ciclo na cadeia de histórico."
+                )
+
+            ancestor_ids.add(oldest.id)
+            parent = by_id.get(
+                oldest.supersedes_memory_id
+            )
+
+            if parent is None:
+                raise MemoryStateError(
+                    "Cadeia de histórico incompleta."
+                )
+
+            oldest = parent
+
+        children: dict[int, list[MemoryItem]] = {}
+
+        for memory in memories:
+            if memory.supersedes_memory_id is None:
+                continue
+
+            children.setdefault(
+                memory.supersedes_memory_id,
+                [],
+            ).append(memory)
+
+        ordered: list[MemoryItem] = []
+        visited: set[int] = set()
+        current = oldest
+
+        while True:
+            if current.id in visited:
+                raise MemoryStateError(
+                    "Ciclo na cadeia de histórico."
+                )
+
+            ordered.append(current)
+            visited.add(current.id)
+            replacements = children.get(
+                current.id,
+                [],
+            )
+
+            if len(replacements) > 1:
+                raise MemoryStateError(
+                    "Cadeia de histórico ramificada."
+                )
+
+            if not replacements:
+                break
+
+            current = replacements[0]
+
+        if visited != set(by_id):
+            raise MemoryStateError(
+                "Cadeia de histórico inconsistente."
+            )
+
+        return tuple(ordered)
+
     def supersede(
         self,
         memory_id: int,
@@ -864,6 +968,17 @@ class MemoryService:
             previous=previous,
             replacement=replacement,
             evidence=tuple(created_evidence),
+        )
+
+    @staticmethod
+    def _history_identity(
+        memory: MemoryItem,
+    ) -> tuple[str, int | None, int | None, str | None]:
+        return (
+            memory.scope_type,
+            memory.account_id,
+            memory.subject_user_id,
+            memory.memory_key,
         )
 
     def invalidate(

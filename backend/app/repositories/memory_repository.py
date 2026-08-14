@@ -8,8 +8,10 @@ from sqlalchemy import literal_column
 from sqlalchemy import Numeric
 from sqlalchemy import select
 from sqlalchemy import tuple_
-from sqlalchemy.sql import Select
+from sqlalchemy import union
+from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from app.core.memory_query import MemoryQuery
 from app.models.memory import MemoryEvidence
@@ -401,6 +403,77 @@ class MemoryRepository:
                 MemoryEvidence.created_at.asc(),
                 MemoryEvidence.id.asc(),
             )
+        )
+
+        return list(
+            self.db.execute(statement).scalars()
+        )
+
+    def list_history_chain(
+        self,
+        memory_id: int,
+    ) -> list[MemoryItem]:
+        ancestors = (
+            select(
+                MemoryItem.id.label("id"),
+                MemoryItem.supersedes_memory_id.label(
+                    "supersedes_memory_id"
+                ),
+            )
+            .where(MemoryItem.id == memory_id)
+            .cte(
+                "memory_history_ancestors",
+                recursive=True,
+            )
+        )
+        ancestor = aliased(MemoryItem)
+        ancestors = ancestors.union(
+            select(
+                ancestor.id,
+                ancestor.supersedes_memory_id,
+            ).join(
+                ancestors,
+                ancestor.id
+                == ancestors.c.supersedes_memory_id,
+            )
+        )
+
+        descendants = (
+            select(
+                MemoryItem.id.label("id"),
+                MemoryItem.supersedes_memory_id.label(
+                    "supersedes_memory_id"
+                ),
+            )
+            .where(MemoryItem.id == memory_id)
+            .cte(
+                "memory_history_descendants",
+                recursive=True,
+            )
+        )
+        descendant = aliased(MemoryItem)
+        descendants = descendants.union(
+            select(
+                descendant.id,
+                descendant.supersedes_memory_id,
+            ).join(
+                descendants,
+                descendant.supersedes_memory_id
+                == descendants.c.id,
+            )
+        )
+
+        connected_ids = union(
+            select(ancestors.c.id),
+            select(descendants.c.id),
+        ).subquery()
+        statement = (
+            select(MemoryItem)
+            .join(
+                connected_ids,
+                connected_ids.c.id == MemoryItem.id,
+            )
+            .order_by(MemoryItem.id.asc())
         )
 
         return list(

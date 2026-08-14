@@ -5,12 +5,21 @@ from contextlib import suppress
 
 from fastapi import Depends
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.authentication import require_permission
 from app.core.config import settings
 from app.core.http_security import (
     SecurityHeadersMiddleware,
+)
+from app.core.memory_http import MemoryHTTPMiddleware
+from app.core.memory_http import (
+    memory_http_exception_handler,
+)
+from app.core.memory_http import (
+    memory_validation_exception_handler,
 )
 from app.core.observability import (
     RequestObservabilityMiddleware,
@@ -37,6 +46,7 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.brain import router as brain_router
 from app.api.routes.executive import router as executive_router
 from app.api.routes.health import router as health_router
+from app.api.routes.memory import router as memory_router
 from app.api.routes.orchestrator import router as orchestrator_router
 
 import app.agents.finance_agent
@@ -156,12 +166,25 @@ if settings.cors_origin_list:
     )
 
 app.add_middleware(
+    MemoryHTTPMiddleware,
+)
+
+app.add_middleware(
     SecurityHeadersMiddleware,
     production=production_mode,
 )
 
 app.add_middleware(
     RequestObservabilityMiddleware
+)
+
+app.add_exception_handler(
+    StarletteHTTPException,
+    memory_http_exception_handler,
+)
+app.add_exception_handler(
+    RequestValidationError,
+    memory_validation_exception_handler,
 )
 
 
@@ -247,4 +270,12 @@ app.include_router(
     dependencies=business_dependencies(
         "brain.view"
     ),
+)
+
+# Memory possui permissoes distintas por operacao e escopo.
+# A API key permanece no nivel do router; sessao, RBAC e scope
+# authorization sao aplicados diretamente em cada endpoint.
+app.include_router(
+    memory_router,
+    dependencies=service_dependencies,
 )
