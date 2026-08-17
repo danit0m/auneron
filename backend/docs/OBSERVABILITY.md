@@ -62,6 +62,23 @@ A autenticação registra somente o resultado da tentativa
 (`missing`, `invalid` ou `not_configured`) e o `request_id`.
 A chave recebida nunca é registrada.
 
+## Work Manager
+
+Cada mutação concluída no Work Manager registra `work.change` com:
+
+- `request_id`;
+- resultado `applied`, `replayed` ou `unchanged`;
+- ID e versão do Work Item;
+- tipo de escopo;
+- tipo do evento de domínio;
+- tipo do ator e ID do usuário quando aplicável.
+
+Título, descrição, comentário, `context_data`, `event_data`, referências de
+ator/origem e chave idempotente não são registrados. Campos futuros cujo nome
+contenha `idempotency` ou `credential` também são mascarados pelo formatador.
+
+O runbook completo está em `work/WORK_MANAGER_OPERATIONS.md`.
+
 ## Banco
 
 Falhas do health check do banco registram apenas o tipo da exceção.

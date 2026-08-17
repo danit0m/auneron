@@ -76,6 +76,12 @@ def _clean_database() -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    work_recurrence_occurrences,
+                    work_recurrence_rules,
+                    work_memory_links,
+                    work_events,
+                    work_dependencies,
+                    work_items,
                     memory_evidence,
                     memory_items,
                     auth_sessions,

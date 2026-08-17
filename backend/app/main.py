@@ -21,6 +21,7 @@ from app.core.memory_http import (
 from app.core.memory_http import (
     memory_validation_exception_handler,
 )
+from app.core.work_http import WorkHTTPMiddleware
 from app.core.observability import (
     RequestObservabilityMiddleware,
 )
@@ -48,6 +49,7 @@ from app.api.routes.executive import router as executive_router
 from app.api.routes.health import router as health_router
 from app.api.routes.memory import router as memory_router
 from app.api.routes.orchestrator import router as orchestrator_router
+from app.api.routes.work import router as work_router
 
 import app.agents.finance_agent
 import app.agents.analytics_agent
@@ -151,6 +153,7 @@ if settings.cors_origin_list:
             "GET",
             "POST",
             "PUT",
+            "PATCH",
             "DELETE",
             "OPTIONS",
         ],
@@ -158,6 +161,7 @@ if settings.cors_origin_list:
             "Accept",
             "Content-Type",
             "X-Request-ID",
+            "Idempotency-Key",
         ],
         expose_headers=[
             "X-Request-ID",
@@ -167,6 +171,10 @@ if settings.cors_origin_list:
 
 app.add_middleware(
     MemoryHTTPMiddleware,
+)
+
+app.add_middleware(
+    WorkHTTPMiddleware,
 )
 
 app.add_middleware(
@@ -277,5 +285,12 @@ app.include_router(
 # authorization sao aplicados diretamente em cada endpoint.
 app.include_router(
     memory_router,
+    dependencies=service_dependencies,
+)
+
+# Work Manager possui RBAC por operação, autorização por escopo
+# e ator vinculado exclusivamente à sessão autenticada.
+app.include_router(
+    work_router,
     dependencies=service_dependencies,
 )

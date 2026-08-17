@@ -3,12 +3,6 @@ from collections.abc import Awaitable
 from collections.abc import Callable
 
 from fastapi import Request
-from fastapi.exception_handlers import (
-    http_exception_handler as default_http_exception_handler,
-)
-from fastapi.exception_handlers import (
-    request_validation_exception_handler as default_validation_handler,
-)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
@@ -22,16 +16,13 @@ from starlette.types import Scope
 from starlette.types import Send
 
 from app.core.observability import get_request_id
-from app.core.work_http import is_work_path
-from app.core.work_http import work_http_exception_response
-from app.core.work_http import work_validation_exception_response
 
 
-MEMORY_PATH_PREFIX = "/memories"
-MAX_MEMORY_REQUEST_BYTES = 512 * 1024
+WORK_PATH_PREFIX = "/work-items"
+MAX_WORK_REQUEST_BYTES = 512 * 1024
 
-memory_http_logger = logging.getLogger(
-    "auneron.memory.http"
+work_http_logger = logging.getLogger(
+    "auneron.work.http"
 )
 
 ASGIApp = Callable[
@@ -44,54 +35,80 @@ _DEFAULT_ERRORS: dict[
     tuple[str, str],
 ] = {
     400: (
-        "invalid_memory_request",
-        "Requisicao de memoria invalida.",
+        "invalid_work_request",
+        "Requisição de trabalho inválida.",
     ),
     401: (
-        "memory_unauthenticated",
-        "Autenticacao necessaria para acessar memoria.",
+        "work_unauthenticated",
+        "Autenticação necessária para acessar trabalhos.",
     ),
     403: (
-        "memory_forbidden",
-        "Operacao de memoria nao autorizada.",
+        "work_forbidden",
+        "Operação de trabalho não autorizada.",
     ),
     404: (
-        "memory_not_found",
-        "Memoria nao encontrada.",
+        "work_not_found",
+        "Trabalho não encontrado.",
     ),
     409: (
-        "memory_conflict",
-        "Conflito na operacao de memoria.",
+        "work_conflict",
+        "Conflito na operação de trabalho.",
     ),
     413: (
-        "memory_payload_too_large",
-        "Payload de memoria excede o limite permitido.",
+        "work_payload_too_large",
+        "Payload de trabalho excede o limite permitido.",
     ),
     422: (
-        "invalid_memory_request",
-        "Requisicao de memoria invalida.",
+        "invalid_work_request",
+        "Requisição de trabalho inválida.",
     ),
     429: (
-        "memory_rate_limited",
-        "Limite de requisicoes de memoria excedido.",
+        "work_rate_limited",
+        "Limite de requisições de trabalho excedido.",
     ),
     503: (
-        "memory_unavailable",
-        "Servico de memoria indisponivel.",
+        "work_unavailable",
+        "Serviço de trabalho indisponível.",
     ),
     500: (
-        "memory_internal_error",
-        "Erro interno no servico de memoria.",
+        "work_internal_error",
+        "Erro interno no serviço de trabalho.",
     ),
 }
 
 
-def is_memory_path(path: str) -> bool:
+def is_work_path(path: str) -> bool:
     return (
-        path == MEMORY_PATH_PREFIX
+        path == WORK_PATH_PREFIX
         or path.startswith(
-            f"{MEMORY_PATH_PREFIX}/"
+            f"{WORK_PATH_PREFIX}/"
         )
+    )
+
+
+def work_http_exception_response(
+    exception: HTTPException,
+) -> JSONResponse:
+    code, message = _exception_contract(exception)
+    return _error_response(
+        status_code=exception.status_code,
+        code=code,
+        message=message,
+        headers=(
+            dict(exception.headers)
+            if exception.headers is not None
+            else None
+        ),
+    )
+
+
+def work_validation_exception_response(
+    _: RequestValidationError,
+) -> JSONResponse:
+    return _error_response(
+        status_code=422,
+        code="invalid_work_request",
+        message="Requisição de trabalho inválida.",
     )
 
 
@@ -136,80 +153,23 @@ def _exception_contract(
     return _DEFAULT_ERRORS.get(
         exception.status_code,
         (
-            "memory_request_failed",
-            "Requisicao de memoria nao concluida.",
+            "work_request_failed",
+            "Requisição de trabalho não concluída.",
         ),
     )
 
 
-async def memory_http_exception_handler(
-    request: Request,
-    exception: HTTPException,
-) -> Response:
-    if is_work_path(request.url.path):
-        return work_http_exception_response(
-            exception
-        )
-
-    if not is_memory_path(
-        request.url.path
-    ):
-        return await default_http_exception_handler(
-            request,
-            exception,
-        )
-
-    code, message = _exception_contract(
-        exception
-    )
-
-    return _error_response(
-        status_code=exception.status_code,
-        code=code,
-        message=message,
-        headers=(
-            dict(exception.headers)
-            if exception.headers is not None
-            else None
-        ),
-    )
-
-
-async def memory_validation_exception_handler(
-    request: Request,
-    exception: RequestValidationError,
-) -> Response:
-    if is_work_path(request.url.path):
-        return work_validation_exception_response(
-            exception
-        )
-
-    if not is_memory_path(
-        request.url.path
-    ):
-        return await default_validation_handler(
-            request,
-            exception,
-        )
-
-    return _error_response(
-        status_code=422,
-        code="invalid_memory_request",
-        message="Requisicao de memoria invalida.",
-    )
-
-
-class _MemoryPayloadTooLargeError(Exception):
+class _WorkPayloadTooLargeError(Exception):
     pass
 
 
-class MemoryHTTPMiddleware:
+class WorkHTTPMiddleware:
     def __init__(
         self,
         app: ASGIApp,
         *,
         max_request_bytes: int = (
-            MAX_MEMORY_REQUEST_BYTES
+            MAX_WORK_REQUEST_BYTES
         ),
     ) -> None:
         self.app = app
@@ -223,16 +183,14 @@ class MemoryHTTPMiddleware:
     ) -> None:
         if (
             scope["type"] != "http"
-            or not is_memory_path(
+            or not is_work_path(
                 scope.get("path", "")
             )
         ):
-            await self.app(
-                scope,
-                receive,
-                send,
-            )
+            await self.app(scope, receive, send)
             return
+
+        response_started = False
 
         async def send_with_no_store(
             message: Message,
@@ -248,25 +206,22 @@ class MemoryHTTPMiddleware:
 
             await send(message)
 
-        response_started = False
         content_length = Headers(
             scope=scope
         ).get("content-length")
 
         if content_length is not None:
             try:
-                declared_length = int(
-                    content_length
-                )
+                declared_length = int(content_length)
             except ValueError:
                 declared_length = 0
 
             if declared_length > self.max_request_bytes:
                 response = _error_response(
                     status_code=413,
-                    code="memory_payload_too_large",
+                    code="work_payload_too_large",
                     message=(
-                        "Payload de memoria excede "
+                        "Payload de trabalho excede "
                         "o limite permitido."
                     ),
                 )
@@ -281,7 +236,6 @@ class MemoryHTTPMiddleware:
 
         async def limited_receive() -> Message:
             nonlocal received_bytes
-
             message = await receive()
 
             if message["type"] == "http.request":
@@ -289,11 +243,8 @@ class MemoryHTTPMiddleware:
                     message.get("body", b"")
                 )
 
-                if (
-                    received_bytes
-                    > self.max_request_bytes
-                ):
-                    raise _MemoryPayloadTooLargeError
+                if received_bytes > self.max_request_bytes:
+                    raise _WorkPayloadTooLargeError
 
             return message
 
@@ -303,12 +254,12 @@ class MemoryHTTPMiddleware:
                 limited_receive,
                 send_with_no_store,
             )
-        except _MemoryPayloadTooLargeError:
+        except _WorkPayloadTooLargeError:
             response = _error_response(
                 status_code=413,
-                code="memory_payload_too_large",
+                code="work_payload_too_large",
                 message=(
-                    "Payload de memoria excede "
+                    "Payload de trabalho excede "
                     "o limite permitido."
                 ),
             )
@@ -326,14 +277,12 @@ class MemoryHTTPMiddleware:
                 OperationalError,
             )
             status_code = 503 if unavailable else 500
-            code, message = _DEFAULT_ERRORS[
-                status_code
-            ]
+            code, message = _DEFAULT_ERRORS[status_code]
 
-            memory_http_logger.error(
-                "memory_http_failed",
+            work_http_logger.error(
+                "work_http_failed",
                 extra={
-                    "event": "memory.internal_error",
+                    "event": "work.internal_error",
                     "request_id": get_request_id(),
                     "status_code": status_code,
                     "error_type": type(error).__name__,

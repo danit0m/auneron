@@ -69,6 +69,14 @@ A suíte deve validar autenticação e RBAC, incluindo API key sem sessão,
 permissão insuficiente, elevação, rate limiting, `/health`, `/ready` e limpeza
 de sessões.
 
+Para uma release com Work Manager, confirme também:
+
+- todos os testes `tests/test_work*.py` passam;
+- respostas `/work-items` usam `Cache-Control: no-store`;
+- listas históricas rejeitam `limit` maior que 100 e continuam por cursor;
+- uma mutação controlada gera `work.change` correlacionado por request ID;
+- o log não contém título, comentário, contexto ou chave idempotente.
+
 ## 6. E2E
 
 ```powershell
@@ -108,6 +116,11 @@ python -m alembic current
 ```
 
 Faça backup antes de migrações em banco real.
+
+Quando o Work Manager estiver incluído, o head esperado é
+`d7b3e5f1a902`. O downgrade de qualquer migração do Commit 22 remove dados de
+Work; siga `docs/work/WORK_MANAGER_OPERATIONS.md` antes de considerar rollback
+de schema.
 
 ## 9. Containers
 

@@ -69,6 +69,8 @@ O FastAPI contém:
 - rate limiting de login e elevação;
 - liveness em `/health` e readiness em `/ready`;
 - manutenção periódica de sessões expiradas/revogadas.
+- Work Manager com serviço transacional, RBAC por operação, escopo
+  global/conta/usuário e histórico de eventos append-only.
 
 A aplicação testa a conectividade com o banco no startup e libera o pool
 no shutdown. O resultado da checagem inicial é registrado, mas `/health`
@@ -146,6 +148,10 @@ devem permanecer mascarados.
 
 Eventos de autenticação registram sucesso/falha, elevação, logout e excesso
 de tentativas sem incluir senha, token bruto, cookie ou API key.
+
+Mutações do Work Manager registram somente metadados operacionais do evento e
+o resultado aplicado/repetido, correlacionados pelo request ID. Conteúdo do
+trabalho, comentários, contexto e chaves idempotentes não entram nesses logs.
 
 ## Limites atuais
 
