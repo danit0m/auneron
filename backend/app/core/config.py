@@ -167,6 +167,43 @@ class Settings(BaseSettings):
         le=720,
     )
 
+    skill_runtime_max_workers: int = Field(
+        default=4,
+        validation_alias="SKILL_RUNTIME_MAX_WORKERS",
+        ge=1,
+        le=32,
+    )
+    skill_rate_limit_user_max_requests: int = Field(
+        default=60,
+        validation_alias="SKILL_RATE_LIMIT_USER_MAX_REQUESTS",
+        ge=1,
+        le=10000,
+    )
+    skill_rate_limit_window_seconds: int = Field(
+        default=60,
+        validation_alias="SKILL_RATE_LIMIT_WINDOW_SECONDS",
+        ge=1,
+        le=3600,
+    )
+    skill_stale_running_seconds: int = Field(
+        default=600,
+        validation_alias="SKILL_STALE_RUNNING_SECONDS",
+        ge=301,
+        le=86400,
+    )
+    skill_recovery_interval_seconds: int = Field(
+        default=60,
+        validation_alias="SKILL_RECOVERY_INTERVAL_SECONDS",
+        ge=30,
+        le=3600,
+    )
+    skill_recovery_batch_size: int = Field(
+        default=100,
+        validation_alias="SKILL_RECOVERY_BATCH_SIZE",
+        ge=1,
+        le=1000,
+    )
+
     log_level: Literal[
         "DEBUG",
         "INFO",

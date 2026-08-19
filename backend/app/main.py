@@ -15,11 +15,12 @@ from app.core.http_security import (
     SecurityHeadersMiddleware,
 )
 from app.core.memory_http import MemoryHTTPMiddleware
-from app.core.memory_http import (
-    memory_http_exception_handler,
+from app.core.skill_http import SkillHTTPMiddleware
+from app.core.skill_http import (
+    application_http_exception_handler,
 )
-from app.core.memory_http import (
-    memory_validation_exception_handler,
+from app.core.skill_http import (
+    application_validation_exception_handler,
 )
 from app.core.work_http import WorkHTTPMiddleware
 from app.core.observability import (
@@ -35,6 +36,12 @@ from app.core.session_maintenance import (
 from app.core.session_maintenance import (
     run_auth_session_cleanup,
 )
+from app.core.skill_maintenance import (
+    run_skill_invocation_recovery,
+)
+from app.core.skill_maintenance import (
+    skill_invocation_maintenance_loop,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -49,6 +56,7 @@ from app.api.routes.executive import router as executive_router
 from app.api.routes.health import router as health_router
 from app.api.routes.memory import router as memory_router
 from app.api.routes.orchestrator import router as orchestrator_router
+from app.api.routes.skills import router as skills_router
 from app.api.routes.work import router as work_router
 
 import app.agents.finance_agent
@@ -74,9 +82,17 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(
             run_auth_session_cleanup
         )
+        await asyncio.to_thread(
+            run_skill_invocation_recovery
+        )
 
-    maintenance_task = asyncio.create_task(
-        auth_session_maintenance_loop()
+    maintenance_tasks = (
+        asyncio.create_task(
+            auth_session_maintenance_loop()
+        ),
+        asyncio.create_task(
+            skill_invocation_maintenance_loop()
+        ),
     )
 
     application_logger.info(
@@ -93,12 +109,14 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        maintenance_task.cancel()
+        for maintenance_task in maintenance_tasks:
+            maintenance_task.cancel()
 
-        with suppress(
-            asyncio.CancelledError
-        ):
-            await maintenance_task
+        for maintenance_task in maintenance_tasks:
+            with suppress(
+                asyncio.CancelledError
+            ):
+                await maintenance_task
 
         engine.dispose()
 
@@ -178,6 +196,10 @@ app.add_middleware(
 )
 
 app.add_middleware(
+    SkillHTTPMiddleware,
+)
+
+app.add_middleware(
     SecurityHeadersMiddleware,
     production=production_mode,
 )
@@ -188,11 +210,11 @@ app.add_middleware(
 
 app.add_exception_handler(
     StarletteHTTPException,
-    memory_http_exception_handler,
+    application_http_exception_handler,
 )
 app.add_exception_handler(
     RequestValidationError,
-    memory_validation_exception_handler,
+    application_validation_exception_handler,
 )
 
 
@@ -292,5 +314,13 @@ app.include_router(
 # e ator vinculado exclusivamente à sessão autenticada.
 app.include_router(
     work_router,
+    dependencies=service_dependencies,
+)
+
+# Agent Skills expõe apenas execução explícita de versão publicada.
+# A sessão autenticada define o ator; RBAC e capability scope são
+# resolvidos antes do runtime. Seleção autônoma continua no Commit 24.
+app.include_router(
+    skills_router,
     dependencies=service_dependencies,
 )

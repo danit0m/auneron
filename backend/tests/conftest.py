@@ -44,6 +44,7 @@ os.environ["API_KEY"] = TEST_API_KEY
 from app.core.authentication import hash_password
 from app.core.rate_limiting import auth_rate_limiter
 from app.core.security import API_KEY_HEADER_NAME
+from app.core.skill_rate_limiting import skill_rate_limiter
 from app.database.database import SessionLocal
 from app.database.database import engine
 from app.main import app
@@ -76,6 +77,11 @@ def _clean_database() -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    skill_invocations,
+                    agent_skill_bindings,
+                    skill_capabilities,
+                    skill_versions,
+                    skills,
                     work_recurrence_occurrences,
                     work_recurrence_rules,
                     work_memory_links,
@@ -159,11 +165,13 @@ def clean_database() -> Generator[
     None,
 ]:
     auth_rate_limiter.reset()
+    skill_rate_limiter.reset()
     _clean_database()
 
     yield
 
     auth_rate_limiter.reset()
+    skill_rate_limiter.reset()
     _clean_database()
 
 

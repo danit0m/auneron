@@ -40,6 +40,10 @@ Permission = Literal[
     "work:manage_user_scope",
     "work:read_global",
     "work:manage_global",
+    "skill:execute",
+    "skill:execute_mutating",
+    "skill:execute_external",
+    "skill:execute_user_scope",
 ]
 
 USER_ROLES: tuple[UserRole, ...] = (
@@ -75,6 +79,7 @@ ROLE_PERMISSIONS: dict[
         "work:create",
         "work:update",
         "work:comment",
+        "skill:execute",
     }),
     "manager": frozenset({
         "dashboard.view",
@@ -97,6 +102,8 @@ ROLE_PERMISSIONS: dict[
         "work:manage_dependencies",
         "work:manage_recurrence",
         "work:assign",
+        "skill:execute",
+        "skill:execute_mutating",
     }),
     "executive": frozenset({
         "dashboard.view",
@@ -119,6 +126,8 @@ ROLE_PERMISSIONS: dict[
         "work:manage_dependencies",
         "work:manage_recurrence",
         "work:assign",
+        "skill:execute",
+        "skill:execute_mutating",
     }),
     "administrator": frozenset({
         "dashboard.view",
@@ -149,6 +158,10 @@ ROLE_PERMISSIONS: dict[
         "work:manage_user_scope",
         "work:read_global",
         "work:manage_global",
+        "skill:execute",
+        "skill:execute_mutating",
+        "skill:execute_external",
+        "skill:execute_user_scope",
     }),
     "developer": frozenset({
         "dashboard.view",
@@ -180,6 +193,10 @@ ROLE_PERMISSIONS: dict[
         "work:manage_user_scope",
         "work:read_global",
         "work:manage_global",
+        "skill:execute",
+        "skill:execute_mutating",
+        "skill:execute_external",
+        "skill:execute_user_scope",
     }),
 }
 
