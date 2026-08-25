@@ -52,6 +52,7 @@ def _published_version(
     skill_key: str,
     runtime_kind: str = "internal_python",
     execution_mode: str = "read_only",
+    manifest: dict | None = None,
     capabilities: tuple[
         CapabilityInput,
         ...,
@@ -81,6 +82,7 @@ def _published_version(
             )
         ),
         execution_mode=execution_mode,
+        manifest=manifest,
         input_schema={
             "type": "object",
             "properties": {
@@ -115,6 +117,7 @@ def _runtime(
     handler,
     trusted_for_autonomy: bool = True,
     autonomy_entrypoint: str | None = None,
+    runtime_context_protocol: str | None = None,
 ):
     registry = SkillHandlerRegistry()
     effective_entrypoint = autonomy_entrypoint
@@ -133,6 +136,7 @@ def _runtime(
         handler=handler,
         trusted_for_autonomy=trusted_for_autonomy,
         autonomy_entrypoint=effective_entrypoint,
+        runtime_context_protocol=runtime_context_protocol,
     )
     isolated_executor = IsolatedSkillExecutor(
         max_workers=1,
@@ -915,3 +919,115 @@ def test_internal_autonomy_trust_requires_isolated_entrypoint(
             handler=lambda payload: payload,
             trusted_for_autonomy=True,
         )
+
+
+def test_governed_runtime_context_requires_matching_registry_opt_in(
+    db_session: Session,
+) -> None:
+    authority = _user(
+        db_session,
+        email="governed.context.registry@example.com",
+        role="developer",
+    )
+    version = _published_version(
+        db_session,
+        skill_key="governed.context.registry",
+        manifest={
+            "runtime_context_protocol": "work_learning_v1",
+        },
+    )
+    governed, executor = _runtime(
+        db_session,
+        version=version,
+        handler=lambda payload: {
+            "result": payload["value"],
+        },
+    )
+
+    try:
+        with pytest.raises(
+            ApprovalAuthorizationError,
+            match="Handler governado",
+        ):
+            governed.execute(
+                version.id,
+                actor=_actor(),
+                authority_user_id=authority.id,
+                input_payload={"value": 1},
+                idempotency_key="governed-context-registry-1",
+                runtime_context={
+                    "protocol": "work_learning_v1",
+                    "items": [],
+                },
+            )
+    finally:
+        executor.shutdown()
+
+    assert (
+        db_session.query(
+            SkillInvocation
+        ).count()
+        == 0
+    )
+    assert (
+        db_session.query(
+            ApprovalConsumption
+        ).count()
+        == 0
+    )
+
+
+def test_governed_rejects_runtime_context_on_mutating_before_consumption(
+    db_session: Session,
+) -> None:
+    authority = _user(
+        db_session,
+        email="governed.context.mutating@example.com",
+        role="manager",
+    )
+    version = _published_version(
+        db_session,
+        skill_key="governed.context.mutating",
+        execution_mode="mutating",
+        manifest={
+            "runtime_context_protocol": "work_learning_v1",
+        },
+    )
+    governed, executor = _runtime(
+        db_session,
+        version=version,
+        handler=lambda payload: {
+            "result": payload["value"],
+        },
+    )
+
+    try:
+        with pytest.raises(
+            ApprovalValidationError,
+            match="internal_python read_only",
+        ):
+            governed.execute(
+                version.id,
+                actor=_actor(),
+                authority_user_id=authority.id,
+                input_payload={"value": 1},
+                runtime_context={
+                    "protocol": "work_learning_v1",
+                    "items": [],
+                },
+            )
+    finally:
+        executor.shutdown()
+
+    assert (
+        db_session.query(
+            SkillInvocation
+        ).count()
+        == 0
+    )
+    assert (
+        db_session.query(
+            ApprovalConsumption
+        ).count()
+        == 0
+    )

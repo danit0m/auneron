@@ -18,6 +18,9 @@ from app.models.work import WorkMemoryLink
 from app.models.work import WorkRecurrenceOccurrence
 from app.models.work import WorkRecurrenceRule
 from app.models.work_skill_execution import WorkSkillExecution
+from app.models.work_learning_runtime_context_snapshot import (
+    WorkLearningRuntimeContextSnapshot,
+)
 from app.models.work_outcome_evaluation import WorkOutcomeEvaluation
 
 __all__ = [
@@ -41,5 +44,6 @@ __all__ = [
     "WorkRecurrenceOccurrence",
     "WorkRecurrenceRule",
     "WorkSkillExecution",
+    "WorkLearningRuntimeContextSnapshot",
     "WorkOutcomeEvaluation",
 ]

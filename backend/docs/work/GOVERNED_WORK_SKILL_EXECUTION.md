@@ -162,3 +162,24 @@ cumulative gate.
 
 `external` Work dispatch remains blocked because database idempotency alone
 does not establish exactly-once semantics for external business side effects.
+
+## 25D authorized learning runtime context
+
+25D adds an optional internal side-band learning context only for
+`internal_python` `read_only` Work execution. A SkillVersion must declare
+`runtime_context_protocol=work_learning_v1`, and the trusted handler registry
+must independently opt in to the same protocol.
+
+The Work execution resolves or reuses one durable immutable context snapshot
+after current Skill authorization and rate limiting but before Work starts and
+before `dispatch_attempts` is incremented. Snapshot access independently
+revalidates current Work-read and Memory-read authority.
+
+A creating snapshot commit is followed by reacquisition of the Work/Execution
+locks and current Skill authorization before dispatch continues. Context
+failure therefore cannot start Work or run the handler. No contextless fallback
+is allowed for an opted-in execution.
+
+`input_payload`, Work input digest, Approval identity, dispatch key and the
+mutating Approval path are unchanged. Mutating and external runtime context
+remain forbidden. See `WORK_LEARNING_RUNTIME_CONTEXT.md`.

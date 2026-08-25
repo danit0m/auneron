@@ -114,3 +114,25 @@ durable, but external side effects are not exactly-once.
 - Mutating/external learning context, public context input, model-driven action
   selection, automatic retry/replan and legacy Orchestrator integration remain
   blocked behind later gates.
+
+## Commit 25D durable learning-context hookup
+
+25D enables the first production Work learning-context path, but only for
+trusted isolated `internal_python` `read_only` Skills with immutable manifest
+opt-in and matching server registry opt-in.
+
+Context drift across retries is controlled by one immutable durable snapshot per
+`WorkSkillExecution`. Current Work and Memory read authority is revalidated on
+every snapshot access, while prior outcomes are not re-resolved on retry.
+Snapshot integrity is checked against its canonical digest, item count and byte
+count.
+
+Context resolution occurs after current Skill authorization and rate limiting
+but before Work starts or dispatch attempts are incremented. An opted-in
+context failure has no contextless fallback.
+
+Residual risk remains: snapshots intentionally preserve previously authorized
+metadata even if source observations later expire or are superseded. They are
+execution evidence/identity, not a live knowledge view, and cannot grant
+authority. Mutating/external learning context, automatic action selection,
+automatic retry/replan and legacy Orchestrator integration remain deferred.

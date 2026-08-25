@@ -58,6 +58,7 @@ def _published_version(
     *,
     skill_key: str,
     execution_mode: str = "read_only",
+    manifest: dict | None = None,
     capabilities: tuple[
         CapabilityInput,
         ...,
@@ -87,6 +88,7 @@ def _published_version(
             )
         ),
         execution_mode=execution_mode,
+        manifest=manifest,
         input_schema={
             "type": "object",
             "properties": {
@@ -756,3 +758,152 @@ def test_cancelled_work_cannot_dispatch(
         )
 
     assert item.status == "cancelled"
+
+
+class _FailingSnapshotService:
+    def __init__(self):
+        self.calls = []
+
+    def get_or_create(self, **kwargs):
+        self.calls.append(kwargs)
+        raise WorkStateError(
+            "snapshot resolution failed"
+        )
+
+
+def test_context_manifest_is_rejected_for_mutating_work_before_ledger(
+    db_session: Session,
+) -> None:
+    authority = _user(
+        db_session,
+        email="work.context.mutating@example.com",
+        role="manager",
+    )
+    version = _published_version(
+        db_session,
+        skill_key="work.context.mutating",
+        execution_mode="mutating",
+        manifest={
+            "runtime_context_protocol": "work_learning_v1",
+        },
+    )
+    item = _work(
+        db_session,
+        key="work.context.mutating",
+    )
+
+    with pytest.raises(
+        WorkStateError,
+        match="internal_python read_only",
+    ):
+        WorkSkillExecutionService(
+            db_session
+        ).configure(
+            item.id,
+            version_id=version.id,
+            authority_user_id=authority.id,
+            input_payload={"value": 1},
+        )
+
+    assert (
+        db_session.query(
+            WorkSkillExecution
+        ).count()
+        == 0
+    )
+
+
+def test_unknown_context_protocol_is_rejected_before_ledger(
+    db_session: Session,
+) -> None:
+    authority = _user(
+        db_session,
+        email="work.context.unknown@example.com",
+        role="developer",
+    )
+    version = _published_version(
+        db_session,
+        skill_key="work.context.unknown",
+        manifest={
+            "runtime_context_protocol": "unknown_v1",
+        },
+    )
+    item = _work(
+        db_session,
+        key="work.context.unknown",
+    )
+
+    with pytest.raises(
+        WorkStateError,
+        match="não suportado",
+    ):
+        WorkSkillExecutionService(
+            db_session
+        ).configure(
+            item.id,
+            version_id=version.id,
+            authority_user_id=authority.id,
+            input_payload={"value": 1},
+        )
+
+    assert (
+        db_session.query(
+            WorkSkillExecution
+        ).count()
+        == 0
+    )
+
+
+def test_context_snapshot_failure_does_not_start_work_or_increment_attempt(
+    db_session: Session,
+) -> None:
+    authority = _user(
+        db_session,
+        email="work.context.snapshot-failure@example.com",
+        role="developer",
+    )
+    version = _published_version(
+        db_session,
+        skill_key="work.context.snapshot-failure",
+        manifest={
+            "runtime_context_protocol": "work_learning_v1",
+        },
+    )
+    item = _work(
+        db_session,
+        key="work.context.snapshot-failure",
+    )
+    snapshots = _FailingSnapshotService()
+    service = WorkSkillExecutionService(
+        db_session,
+        learning_context_snapshot_service=snapshots,
+    )
+    configured = service.configure(
+        item.id,
+        version_id=version.id,
+        authority_user_id=authority.id,
+        input_payload={"value": 1},
+    )
+
+    with pytest.raises(
+        WorkStateError,
+        match="snapshot resolution failed",
+    ):
+        service.dispatch(
+            item.id,
+            input_payload={"value": 1},
+        )
+
+    db_session.refresh(item)
+    db_session.refresh(configured.execution)
+    assert item.status == "ready"
+    assert configured.execution.status == "ready"
+    assert configured.execution.dispatch_attempts == 0
+    assert configured.execution.started_at is None
+    assert len(snapshots.calls) == 1
+    assert (
+        db_session.query(
+            SkillInvocation
+        ).count()
+        == 0
+    )

@@ -1,6 +1,6 @@
 # Work Learning Context
 
-**Status:** Commit 25B first APPLY — internal resolver only.
+**Status:** 25B authorized resolver, consumed by the 25D durable Work runtime-context hook.
 
 ## Purpose
 
@@ -88,3 +88,19 @@ Later checkpoints must separately design and gate any runtime context channel,
 handler envelope change, context snapshot persistence, model ranking,
 automatic action selection, automatic retry/replan or legacy Orchestrator
 adapter. None is authorized by this document.
+
+## 25D production hookup
+
+25D preserves this resolver unchanged and consumes it only through the
+server-only `WorkLearningRuntimeContextSnapshotService`.
+
+For an opted-in `internal_python` `read_only` Work execution, the first
+authorized result is normalized through `work_learning_v1` and persisted as one
+immutable snapshot per `WorkSkillExecution`. Production retrieval uses limit 5;
+the 25B resolver ceiling remains 10.
+
+Retries re-authorize current Work and Memory reads but reuse the exact snapshot
+instead of re-querying outcomes. Learning still grants no authority and is
+never merged into `input_payload`.
+
+See `WORK_LEARNING_RUNTIME_CONTEXT.md`.

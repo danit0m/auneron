@@ -51,10 +51,17 @@ from app.services.governed_skill_execution import (
     GovernedSkillExecutionService,
 )
 from app.services.skill_runtime import SkillInvocationActor
+from app.services.skill_runtime_context import (
+    WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL,
+)
+from app.services.skill_runtime_context import WorkLearningRuntimeContext
 from app.services.work_service import WorkActor
 from app.services.work_service import WorkManagerService
 from app.services.work_outcome_evaluation import (
     WorkOutcomeEvaluationService,
+)
+from app.services.work_learning_runtime_context_snapshot import (
+    WorkLearningRuntimeContextSnapshotService,
 )
 
 
@@ -147,6 +154,9 @@ class WorkSkillExecutionService:
         outcome_evaluation_service: (
             WorkOutcomeEvaluationService | None
         ) = None,
+        learning_context_snapshot_service: (
+            WorkLearningRuntimeContextSnapshotService | None
+        ) = None,
     ) -> None:
         self.db = db
         self.execution_repository = (
@@ -193,6 +203,11 @@ class WorkSkillExecutionService:
             outcome_evaluation_service
             if outcome_evaluation_service is not None
             else WorkOutcomeEvaluationService(db)
+        )
+        self.learning_context_snapshot_service = (
+            learning_context_snapshot_service
+            if learning_context_snapshot_service is not None
+            else WorkLearningRuntimeContextSnapshotService(db)
         )
 
     def configure(
@@ -247,6 +262,10 @@ class WorkSkillExecutionService:
             raise WorkStateError(
                 "Execução external por Work permanece bloqueada no 24E.2."
             )
+
+        self._runtime_context_protocol(
+            version
+        )
 
         authority, grant = self._authorize_current_action(
             work_item=work_item,
@@ -485,11 +504,14 @@ class WorkSkillExecutionService:
                 duplicate=True,
             )
 
-        authority, _ = self._authorize_current_action(
+        authority, grant = self._authorize_current_action(
             work_item=work_item,
             version_id=execution.skill_version_id,
             authority_user_id=execution.authority_user_id,
             input_payload=normalized_input,
+        )
+        runtime_context_protocol = self._runtime_context_protocol(
+            grant.version
         )
 
         if work_item.status not in {
@@ -523,6 +545,102 @@ class WorkSkillExecutionService:
                 retry_after_seconds=retry_after,
             )
 
+        runtime_context: WorkLearningRuntimeContext | None = None
+        if runtime_context_protocol is not None:
+            runtime_context = (
+                self.learning_context_snapshot_service.get_or_create(
+                    work_skill_execution_id=execution.id,
+                    work_item_id=work_item.id,
+                    skill_version_id=execution.skill_version_id,
+                    authority_user_id=authority.id,
+                )
+            )
+
+            execution = (
+                self.execution_repository
+                .lock_by_work_item(
+                    normalized_work_id
+                )
+            )
+            if execution is None:
+                raise WorkNotFoundError(
+                    "Execução governada não configurada para o Work."
+                )
+            work_item = self.work_repository.lock_by_id(
+                normalized_work_id
+            )
+            if work_item is None:
+                raise WorkNotFoundError(
+                    "Trabalho inexistente."
+                )
+
+            self._validate_server_identity(
+                execution
+            )
+            if execution.input_digest != input_digest:
+                raise WorkConflictError(
+                    "Payload atual diverge da ação Work configurada."
+                )
+
+            if execution.status in {
+                "succeeded",
+                "failed",
+                "timed_out",
+                "cancelled",
+            }:
+                work_item = self._repair_work_from_terminal(
+                    execution,
+                    work_item,
+                )
+                return self._result(
+                    execution,
+                    work_item=work_item,
+                    outcome=self._outcome_for_status(
+                        execution.status
+                    ),
+                    duplicate=True,
+                )
+
+            if execution.status != "ready":
+                raise WorkStateError(
+                    "Execução Work não está pronta para dispatch."
+                )
+
+            existing_invocation = self._find_runtime_invocation(
+                execution
+            )
+            if existing_invocation is not None:
+                return self._reconcile_invocation(
+                    execution,
+                    work_item=work_item,
+                    invocation=existing_invocation,
+                    duplicate=True,
+                )
+
+            authority, grant = self._authorize_current_action(
+                work_item=work_item,
+                version_id=execution.skill_version_id,
+                authority_user_id=execution.authority_user_id,
+                input_payload=normalized_input,
+            )
+            if (
+                self._runtime_context_protocol(
+                    grant.version
+                )
+                != runtime_context_protocol
+            ):
+                raise WorkConflictError(
+                    "Runtime context declarado divergiu durante dispatch."
+                )
+
+            if work_item.status not in {
+                "ready",
+                "in_progress",
+            }:
+                raise WorkStateError(
+                    "Work não está em estado executável."
+                )
+
         if work_item.status == "ready":
             work_item = self.work_service.transition_status(
                 work_item.id,
@@ -554,23 +672,31 @@ class WorkSkillExecutionService:
         )
 
         try:
-            governed_result = self.governed_service.execute(
-                execution.skill_version_id,
-                actor=actor,
-                authority_user_id=authority.id,
-                input_payload=normalized_input,
-                idempotency_key=(
+            governed_kwargs = {
+                "actor": actor,
+                "authority_user_id": authority.id,
+                "input_payload": normalized_input,
+                "idempotency_key": (
                     execution.dispatch_key
                     if execution.execution_mode
                     == "read_only"
                     else None
                 ),
-                approval_request_id=(
+                "approval_request_id": (
                     execution.approval_request_id
                     if execution.execution_mode
                     == "mutating"
                     else None
                 ),
+            }
+            if runtime_context is not None:
+                governed_kwargs["runtime_context"] = (
+                    runtime_context.payload
+                )
+
+            governed_result = self.governed_service.execute(
+                execution.skill_version_id,
+                **governed_kwargs,
             )
         except SkillInvocationInProgressError:
             invocation = self._find_runtime_invocation(
@@ -839,6 +965,40 @@ class WorkSkillExecutionService:
                 else "approval_" + request.status
             ),
         )
+
+    @staticmethod
+    def _runtime_context_protocol(
+        version,
+    ) -> str | None:
+        manifest = (
+            version.manifest
+            if isinstance(version.manifest, dict)
+            else {}
+        )
+        declared = manifest.get(
+            "runtime_context_protocol"
+        )
+        if declared is None:
+            return None
+
+        if (
+            declared
+            != WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+        ):
+            raise WorkStateError(
+                "Work Skill declarou runtime context protocol não suportado."
+            )
+
+        if (
+            version.runtime_kind != "internal_python"
+            or version.execution_mode != "read_only"
+        ):
+            raise WorkStateError(
+                "Work learning runtime context exige "
+                "internal_python read_only."
+            )
+
+        return declared
 
     def _authorize_current_action(
         self,

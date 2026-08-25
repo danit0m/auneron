@@ -91,3 +91,19 @@ runtime in the first APPLY. It does not alter `input_payload`, handler
 signatures, OpenAPI, Work execution, approval/autonomy policy or the legacy
 Orchestrator. Learning and Memory remain context, never authority. See
 `WORK_LEARNING_CONTEXT.md`.
+
+## Commit 25D durable Work learning runtime context
+
+25D connects the authorized 25B outcome resolver to the 25C side-band runtime
+protocol for explicitly opted-in, isolated `internal_python` `read_only` Work
+Skills.
+
+The first authorized context is persisted as one immutable snapshot per
+`WorkSkillExecution`; retries re-authorize Work and Memory reads but reuse the
+same snapshot and digest. Production retrieval is bounded to five items.
+
+The hook does not modify `input_payload`, Approval identity, Work dispatch
+identity, public APIs or the legacy Orchestrator. Mutating/external context,
+automatic action selection and automatic retry/replan remain forbidden.
+
+See `WORK_LEARNING_RUNTIME_CONTEXT.md`.

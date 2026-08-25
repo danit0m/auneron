@@ -17,6 +17,7 @@ from app.core.autonomy_policy import evaluate_skill_autonomy
 from app.core.authorization import has_permission
 from app.core.skill_authorization import authorize_skill_execution
 from app.core.skill_errors import SkillHandlerNotAllowedError
+from app.core.skill_errors import SkillValidationError
 from app.models.approval import ApprovalConsumption
 from app.models.approval import ApprovalDecision
 from app.models.approval import ApprovalRequest
@@ -28,6 +29,12 @@ from app.services.approval_service import ApprovalRequester
 from app.services.approval_service import approval_input_identity
 from app.services.approval_service import approval_request_fingerprint
 from app.services.skill_runtime import SkillInvocationActor
+from app.services.skill_runtime_context import (
+    WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL,
+)
+from app.services.skill_runtime_context import (
+    normalize_work_learning_runtime_context,
+)
 from app.services.skill_runtime import SkillInvocationResult
 from app.services.skill_runtime import SkillRuntimeService
 
@@ -193,6 +200,8 @@ class GovernedSkillExecutionService:
                 "isolado configurado pelo servidor."
             )
 
+        return registered
+
     def execute(
         self,
         version_id: int,
@@ -203,6 +212,7 @@ class GovernedSkillExecutionService:
         idempotency_key: str | None = None,
         approval_request_id: int | None = None,
         now: datetime | None = None,
+        runtime_context: Any | None = None,
     ) -> GovernedSkillExecutionResult:
         normalized_version_id = _positive_id(
             version_id,
@@ -262,9 +272,53 @@ class GovernedSkillExecutionService:
             )
         )
 
-        self._require_trusted_autonomy_handler(
+        registered = self._require_trusted_autonomy_handler(
             version=version,
         )
+
+        normalized_runtime_context = None
+        if runtime_context is not None:
+            if (
+                version.runtime_kind != "internal_python"
+                or version.execution_mode != "read_only"
+            ):
+                raise ApprovalValidationError(
+                    "Work learning runtime context exige "
+                    "internal_python read_only."
+                )
+
+            manifest = (
+                version.manifest
+                if isinstance(version.manifest, dict)
+                else {}
+            )
+            if (
+                manifest.get("runtime_context_protocol")
+                != WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+            ):
+                raise ApprovalAuthorizationError(
+                    "Versão de Skill não declarou o runtime context exigido."
+                )
+
+            if (
+                registered.runtime_context_protocol
+                != WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+            ):
+                raise ApprovalAuthorizationError(
+                    "Handler governado não declarou o runtime context exigido."
+                )
+
+            try:
+                normalized_runtime_context = (
+                    normalize_work_learning_runtime_context(
+                        runtime_context,
+                        expected_skill_version_id=version.id,
+                    )
+                )
+            except SkillValidationError as error:
+                raise ApprovalValidationError(
+                    "Work learning runtime context inválido."
+                ) from error
 
         policy = evaluate_skill_autonomy(
             actor_type=normalized_actor.actor_type,
@@ -275,6 +329,14 @@ class GovernedSkillExecutionService:
         if policy.disposition == "blocked":
             raise ApprovalAuthorizationError(
                 "A via autônoma está bloqueada para este ator."
+            )
+
+        if (
+            normalized_runtime_context is not None
+            and not policy.autonomous_allowed
+        ):
+            raise ApprovalAuthorizationError(
+                "Work learning runtime context exige política autônoma read_only."
             )
 
         if policy.autonomous_allowed:
@@ -296,12 +358,20 @@ class GovernedSkillExecutionService:
                 input_payload=normalized_input,
             )
 
+            runtime_kwargs = {
+                "actor": normalized_actor,
+                "input_payload": normalized_input,
+                "idempotency_key": idempotency_key,
+                "isolated": True,
+            }
+            if normalized_runtime_context is not None:
+                runtime_kwargs["runtime_context"] = (
+                    normalized_runtime_context.payload
+                )
+
             invocation_result = self.runtime.invoke(
                 grant.version.id,
-                actor=normalized_actor,
-                input_payload=normalized_input,
-                idempotency_key=idempotency_key,
-                isolated=True,
+                **runtime_kwargs,
             )
 
             return GovernedSkillExecutionResult(

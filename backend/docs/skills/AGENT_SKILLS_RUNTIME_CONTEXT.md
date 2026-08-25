@@ -1,6 +1,6 @@
 # Agent Skills Runtime Context Protocol V1
 
-**Status:** 25C protocol foundation. No production Work learning hook.
+**Status:** 25C protocol foundation with the 25D governed Work production hook.
 
 ## Purpose
 
@@ -145,3 +145,20 @@ The following remain explicitly deferred:
 - legacy Orchestrator integration.
 
 Learning, Memory and model output remain data, never authority.
+
+## 25D production Work hook
+
+25D is the separately gated production hookup deferred by 25C.
+
+Only governed `WorkSkillExecution` read-only actions may supply the protocol.
+The immutable SkillVersion manifest and trusted handler registry must both
+declare `work_learning_v1`. The Work layer persists one immutable authorized
+snapshot per execution before Work starts.
+
+The snapshot service revalidates current Work and Memory read authority on every
+access. Retries reuse the exact snapshot and digest rather than re-resolving
+learning metadata, preserving the 25C request fingerprint identity.
+
+The public `SkillInvokeRequest` remains `input_payload` only. Direct HTTP callers
+cannot inject runtime context. `SkillRuntimeService`, the isolated executor and
+the worker retain the 25C transport contract unchanged.
