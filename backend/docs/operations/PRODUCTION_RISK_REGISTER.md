@@ -76,3 +76,21 @@ durable, but external side effects are not exactly-once.
   Orchestrator.
 - The legacy Orchestrator remains outside the first closed-loop APPLY. Public
   API/OpenAPI and the external Work execution block remain unchanged.
+
+## Commit 25B authorized learning context
+
+- The first 25B APPLY exposes no public endpoint and injects no learning data
+  into Skill runtime. `input_payload` identity, Approval binding and handler
+  invocation remain unchanged.
+- Prior outcomes are eligible only when the completed deterministic 25A ledger,
+  active outcome Memory, exact Work scope, same Skill version and
+  `WorkMemoryLink(relation=outcome)` all agree.
+- The resolver reloads the current active authority User and independently
+  rechecks Work-read and Memory-read authorization. Caller-supplied role/scope
+  and Memory/model content cannot grant authority.
+- Returned context is a bounded metadata allowlist. Raw input/output/error,
+  Memory title/content/context/evidence, credentials, approval payloads and
+  actor references remain excluded.
+- Runtime context injection, model ranking, automatic action selection,
+  retry/replan and the legacy Orchestrator adapter remain deferred and require
+  separate threat-model and Gate evidence.

@@ -78,3 +78,16 @@ explicitly request generation for due recurrence rules. The Work Manager can
 organize and audit work, but it cannot authorize or execute a sensitive action.
 That authority remains reserved for the policy and approval boundary in
 Commit 24.
+
+## Commit 25B authorized learning context
+
+25B adds an internal read-only `WorkLearningContextService` that can resolve
+prior deterministic 25A outcomes for the exact persisted Work scope and same
+Skill version. Current Work-read and Memory-read authorization are rechecked
+from the persisted authority User before any candidate query.
+
+The resolver returns safe outcome metadata only and is not connected to Skill
+runtime in the first APPLY. It does not alter `input_payload`, handler
+signatures, OpenAPI, Work execution, approval/autonomy policy or the legacy
+Orchestrator. Learning and Memory remain context, never authority. See
+`WORK_LEARNING_CONTEXT.md`.
