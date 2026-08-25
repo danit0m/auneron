@@ -40,6 +40,7 @@ from app.models.skill import SkillDefinition
 from app.models.skill import SkillInvocation
 from app.models.skill import SkillVersion
 from app.core.skill_observability import log_skill_runtime_event
+from app.services.isolated_skill_executor import IsolatedSkillExecutor
 from app.repositories.skill_repository import SkillRepository
 
 
@@ -92,6 +93,8 @@ class RegisteredSkillHandler:
     runtime_kind: str
     handler_reference: str
     handler: SkillHandler
+    trusted_for_autonomy: bool = False
+    autonomy_entrypoint: str | None = None
 
 
 def _utc_now() -> datetime:
@@ -496,6 +499,8 @@ class SkillHandlerRegistry:
         runtime_kind: str,
         handler_reference: str,
         handler: SkillHandler,
+        trusted_for_autonomy: bool = False,
+        autonomy_entrypoint: str | None = None,
     ) -> RegisteredSkillHandler:
         normalized_runtime = _required_text(
             runtime_kind,
@@ -519,10 +524,52 @@ class SkillHandlerRegistry:
                 "handler deve ser callable."
             )
 
+        if not isinstance(trusted_for_autonomy, bool):
+            raise SkillValidationError(
+                "trusted_for_autonomy deve ser booleano."
+            )
+
+        normalized_autonomy_entrypoint = None
+        if autonomy_entrypoint is not None:
+            normalized_autonomy_entrypoint = _required_text(
+                autonomy_entrypoint,
+                field_name="autonomy_entrypoint",
+                max_length=320,
+            )
+
+        if (
+            normalized_autonomy_entrypoint is not None
+            and not trusted_for_autonomy
+        ):
+            raise SkillValidationError(
+                "autonomy_entrypoint exige trust autônomo explícito."
+            )
+
+        if (
+            trusted_for_autonomy
+            and normalized_runtime == "internal_python"
+            and normalized_autonomy_entrypoint is None
+        ):
+            raise SkillValidationError(
+                "Handler internal_python confiado para autonomia "
+                "exige autonomy_entrypoint isolado."
+            )
+
+        if (
+            normalized_runtime != "internal_python"
+            and normalized_autonomy_entrypoint is not None
+        ):
+            raise SkillValidationError(
+                "autonomy_entrypoint isolado é permitido apenas "
+                "para internal_python."
+            )
+
         registered = RegisteredSkillHandler(
             runtime_kind=normalized_runtime,
             handler_reference=normalized_reference,
             handler=handler,
+            trusted_for_autonomy=trusted_for_autonomy,
+            autonomy_entrypoint=normalized_autonomy_entrypoint,
         )
         identity = (
             normalized_runtime,
@@ -535,7 +582,13 @@ class SkillHandlerRegistry:
             )
 
             if existing is not None:
-                if existing.handler is handler:
+                if (
+                    existing.handler is handler
+                    and existing.trusted_for_autonomy
+                    == trusted_for_autonomy
+                    and existing.autonomy_entrypoint
+                    == normalized_autonomy_entrypoint
+                ):
                     return existing
 
                 raise SkillConflictError(
@@ -704,6 +757,12 @@ skill_handler_registry = SkillHandlerRegistry()
 skill_executor = BoundedSkillExecutor(
     max_workers=settings.skill_runtime_max_workers
 )
+skill_isolated_executor = IsolatedSkillExecutor(
+    max_workers=settings.skill_autonomy_process_max_workers,
+    kill_grace_seconds=(
+        settings.skill_autonomy_process_kill_grace_seconds
+    ),
+)
 
 
 class SkillRuntimeService:
@@ -722,6 +781,7 @@ class SkillRuntimeService:
         repository: SkillRepository | None = None,
         handler_registry: SkillHandlerRegistry | None = None,
         executor: BoundedSkillExecutor | None = None,
+        isolated_executor: IsolatedSkillExecutor | None = None,
     ) -> None:
         self.db = db
         self.repository = (
@@ -739,6 +799,11 @@ class SkillRuntimeService:
             if executor is not None
             else skill_executor
         )
+        self.isolated_executor = (
+            isolated_executor
+            if isolated_executor is not None
+            else skill_isolated_executor
+        )
 
     def invoke(
         self,
@@ -747,7 +812,13 @@ class SkillRuntimeService:
         actor: SkillInvocationActor,
         input_payload: Any,
         idempotency_key: str | None = None,
+        isolated: bool = False,
     ) -> SkillInvocationResult:
+        if not isinstance(isolated, bool):
+            raise SkillValidationError(
+                "isolated deve ser booleano."
+            )
+
         normalized_version_id = _positive_id(
             version_id,
             field_name="version_id",
@@ -953,18 +1024,52 @@ class SkillRuntimeService:
                 raise
 
             try:
-                raw_output = self.executor.execute(
-                    registered.handler,
-                    normalized_input,
-                    timeout_seconds=(
-                        version.timeout_seconds
-                    ),
-                )
+                if isolated:
+                    if (
+                        not registered.trusted_for_autonomy
+                        or registered.autonomy_entrypoint is None
+                        or version.runtime_kind != "internal_python"
+                    ):
+                        self._finish_failure(
+                            invocation.id,
+                            status="rejected",
+                            error_code=(
+                                "isolated_handler_not_allowed"
+                            ),
+                            started=started,
+                        )
+                        raise SkillHandlerNotAllowedError(
+                            "Handler não possui fronteira isolada "
+                            "autônoma autorizada."
+                        )
+
+                    raw_output = self.isolated_executor.execute(
+                        registered.autonomy_entrypoint,
+                        normalized_input,
+                        timeout_seconds=(
+                            version.timeout_seconds
+                        ),
+                        max_output_bytes=(
+                            version.max_output_bytes
+                        ),
+                    )
+                else:
+                    raw_output = self.executor.execute(
+                        registered.handler,
+                        normalized_input,
+                        timeout_seconds=(
+                            version.timeout_seconds
+                        ),
+                    )
             except SkillRuntimeBusyError:
                 self._finish_failure(
                     invocation.id,
                     status="rejected",
-                    error_code="runtime_busy",
+                    error_code=(
+                        "isolated_runtime_busy"
+                        if isolated
+                        else "runtime_busy"
+                    ),
                     started=started,
                 )
                 raise
@@ -972,7 +1077,23 @@ class SkillRuntimeService:
                 self._finish_failure(
                     invocation.id,
                     status="timed_out",
-                    error_code="timeout",
+                    error_code=(
+                        "isolated_timeout_killed"
+                        if isolated
+                        else "timeout"
+                    ),
+                    started=started,
+                )
+                raise
+            except SkillOutputLimitError:
+                self._finish_failure(
+                    invocation.id,
+                    status="failed",
+                    error_code=(
+                        "isolated_output_limit"
+                        if isolated
+                        else "output_limit_or_json_invalid"
+                    ),
                     started=started,
                 )
                 raise
@@ -980,7 +1101,11 @@ class SkillRuntimeService:
                 self._finish_failure(
                     invocation.id,
                     status="failed",
-                    error_code="execution_failed",
+                    error_code=(
+                        "isolated_execution_failed"
+                        if isolated
+                        else "execution_failed"
+                    ),
                     started=started,
                 )
                 raise
@@ -1202,17 +1327,32 @@ class SkillRuntimeService:
             "handler_not_allowed": (
                 SkillHandlerNotAllowedError
             ),
+            "isolated_handler_not_allowed": (
+                SkillHandlerNotAllowedError
+            ),
             "input_schema_invalid": (
                 SkillSchemaError
             ),
             "runtime_busy": (
                 SkillRuntimeBusyError
             ),
+            "isolated_runtime_busy": (
+                SkillRuntimeBusyError
+            ),
             "timeout": (
+                SkillExecutionTimeoutError
+            ),
+            "isolated_timeout_killed": (
                 SkillExecutionTimeoutError
             ),
             "execution_failed": (
                 SkillExecutionError
+            ),
+            "isolated_execution_failed": (
+                SkillExecutionError
+            ),
+            "isolated_output_limit": (
+                SkillOutputLimitError
             ),
             "output_limit_or_json_invalid": (
                 SkillOutputLimitError

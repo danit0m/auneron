@@ -45,6 +45,7 @@ from app.core.authentication import hash_password
 from app.core.rate_limiting import auth_rate_limiter
 from app.core.security import API_KEY_HEADER_NAME
 from app.core.skill_rate_limiting import skill_rate_limiter
+from app.core.work_skill_rate_limiting import work_skill_dispatch_rate_limiter
 from app.database.database import SessionLocal
 from app.database.database import engine
 from app.main import app
@@ -77,6 +78,10 @@ def _clean_database() -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    work_skill_executions,
+                    approval_consumptions,
+                    approval_decisions,
+                    approval_requests,
                     skill_invocations,
                     agent_skill_bindings,
                     skill_capabilities,
@@ -166,12 +171,14 @@ def clean_database() -> Generator[
 ]:
     auth_rate_limiter.reset()
     skill_rate_limiter.reset()
+    work_skill_dispatch_rate_limiter.reset()
     _clean_database()
 
     yield
 
     auth_rate_limiter.reset()
     skill_rate_limiter.reset()
+    work_skill_dispatch_rate_limiter.reset()
     _clean_database()
 
 

@@ -1,3 +1,7 @@
+from app.services.approval_service import ApprovalCreationResult
+from app.services.approval_service import ApprovalDecisionResult
+from app.services.approval_service import ApprovalRequester
+from app.services.approval_service import ApprovalService
 from app.services.skill_service import CapabilityInput
 from app.services.skill_service import PublicationResult
 from app.services.skill_service import ResolvedSkillBinding
@@ -16,6 +20,10 @@ from app.services.work_service import WorkMutationResult
 from app.services.work_service import WorkSLAStatus
 
 __all__ = [
+    "ApprovalCreationResult",
+    "ApprovalDecisionResult",
+    "ApprovalRequester",
+    "ApprovalService",
     "CapabilityInput",
     "PublicationResult",
     "RecurrenceConfigurationResult",

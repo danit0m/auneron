@@ -9,6 +9,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.approval_http import ApprovalHTTPMiddleware
+from app.core.approval_http import (
+    application_http_exception_handler as approval_http_exception_handler,
+)
+from app.core.approval_http import (
+    application_validation_exception_handler as approval_validation_exception_handler,
+)
 from app.core.authentication import require_permission
 from app.core.config import settings
 from app.core.http_security import (
@@ -16,12 +23,6 @@ from app.core.http_security import (
 )
 from app.core.memory_http import MemoryHTTPMiddleware
 from app.core.skill_http import SkillHTTPMiddleware
-from app.core.skill_http import (
-    application_http_exception_handler,
-)
-from app.core.skill_http import (
-    application_validation_exception_handler,
-)
 from app.core.work_http import WorkHTTPMiddleware
 from app.core.observability import (
     RequestObservabilityMiddleware,
@@ -42,6 +43,12 @@ from app.core.skill_maintenance import (
 from app.core.skill_maintenance import (
     skill_invocation_maintenance_loop,
 )
+from app.core.work_skill_maintenance import (
+    run_work_skill_execution_recovery,
+)
+from app.core.work_skill_maintenance import (
+    work_skill_execution_maintenance_loop,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -50,6 +57,7 @@ from app.database.database import (
 from app.api.routes.upload import router as upload_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.accounts import router as accounts_router
+from app.api.routes.approvals import router as approvals_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.brain import router as brain_router
 from app.api.routes.executive import router as executive_router
@@ -85,6 +93,9 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(
             run_skill_invocation_recovery
         )
+        await asyncio.to_thread(
+            run_work_skill_execution_recovery
+        )
 
     maintenance_tasks = (
         asyncio.create_task(
@@ -92,6 +103,9 @@ async def lifespan(_: FastAPI):
         ),
         asyncio.create_task(
             skill_invocation_maintenance_loop()
+        ),
+        asyncio.create_task(
+            work_skill_execution_maintenance_loop()
         ),
     )
 
@@ -188,6 +202,10 @@ if settings.cors_origin_list:
     )
 
 app.add_middleware(
+    ApprovalHTTPMiddleware,
+)
+
+app.add_middleware(
     MemoryHTTPMiddleware,
 )
 
@@ -210,11 +228,11 @@ app.add_middleware(
 
 app.add_exception_handler(
     StarletteHTTPException,
-    application_http_exception_handler,
+    approval_http_exception_handler,
 )
 app.add_exception_handler(
     RequestValidationError,
-    application_validation_exception_handler,
+    approval_validation_exception_handler,
 )
 
 
@@ -314,6 +332,14 @@ app.include_router(
 # e ator vinculado exclusivamente à sessão autenticada.
 app.include_router(
     work_router,
+    dependencies=service_dependencies,
+)
+
+# Approval expõe somente operações humanas de proposta, fila e decisão.
+# A API key permanece no router; sessão e RBAC são aplicados por endpoint.
+# Nenhuma rota desta camada executa Skills.
+app.include_router(
+    approvals_router,
     dependencies=service_dependencies,
 )
 

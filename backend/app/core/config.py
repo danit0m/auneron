@@ -173,6 +173,20 @@ class Settings(BaseSettings):
         ge=1,
         le=32,
     )
+    skill_autonomy_process_max_workers: int = Field(
+        default=2,
+        validation_alias="SKILL_AUTONOMY_PROCESS_MAX_WORKERS",
+        ge=1,
+        le=8,
+    )
+    skill_autonomy_process_kill_grace_seconds: int = Field(
+        default=2,
+        validation_alias=(
+            "SKILL_AUTONOMY_PROCESS_KILL_GRACE_SECONDS"
+        ),
+        ge=1,
+        le=10,
+    )
     skill_rate_limit_user_max_requests: int = Field(
         default=60,
         validation_alias="SKILL_RATE_LIMIT_USER_MAX_REQUESTS",
@@ -202,6 +216,38 @@ class Settings(BaseSettings):
         validation_alias="SKILL_RECOVERY_BATCH_SIZE",
         ge=1,
         le=1000,
+    )
+
+    work_skill_dispatch_max_requests: int = Field(
+        default=30,
+        validation_alias="WORK_SKILL_DISPATCH_MAX_REQUESTS",
+        ge=1,
+        le=10000,
+    )
+    work_skill_dispatch_window_seconds: int = Field(
+        default=60,
+        validation_alias="WORK_SKILL_DISPATCH_WINDOW_SECONDS",
+        ge=1,
+        le=3600,
+    )
+    work_skill_recovery_interval_seconds: int = Field(
+        default=60,
+        validation_alias="WORK_SKILL_RECOVERY_INTERVAL_SECONDS",
+        ge=30,
+        le=3600,
+    )
+    work_skill_recovery_batch_size: int = Field(
+        default=100,
+        validation_alias="WORK_SKILL_RECOVERY_BATCH_SIZE",
+        ge=1,
+        le=1000,
+    )
+
+    approval_request_ttl_minutes: int = Field(
+        default=1440,
+        validation_alias="APPROVAL_REQUEST_TTL_MINUTES",
+        ge=5,
+        le=10080,
     )
 
     log_level: Literal[

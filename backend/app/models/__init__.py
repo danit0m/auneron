@@ -1,4 +1,6 @@
 from app.models.account import Account
+from app.models.approval import ApprovalDecision
+from app.models.approval import ApprovalRequest
 from app.models.auth_session import AuthSession
 from app.models.knowledge import Knowledge
 from app.models.memory import MemoryEvidence
@@ -15,9 +17,12 @@ from app.models.work import WorkItem
 from app.models.work import WorkMemoryLink
 from app.models.work import WorkRecurrenceOccurrence
 from app.models.work import WorkRecurrenceRule
+from app.models.work_skill_execution import WorkSkillExecution
 
 __all__ = [
     "Account",
+    "ApprovalDecision",
+    "ApprovalRequest",
     "AuthSession",
     "Knowledge",
     "MemoryEvidence",
@@ -34,4 +39,5 @@ __all__ = [
     "WorkMemoryLink",
     "WorkRecurrenceOccurrence",
     "WorkRecurrenceRule",
+    "WorkSkillExecution",
 ]

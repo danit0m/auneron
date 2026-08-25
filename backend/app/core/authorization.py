@@ -44,6 +44,9 @@ Permission = Literal[
     "skill:execute_mutating",
     "skill:execute_external",
     "skill:execute_user_scope",
+    "approval:read",
+    "approval:decide",
+    "approval:decide_sensitive",
 ]
 
 USER_ROLES: tuple[UserRole, ...] = (
@@ -104,6 +107,8 @@ ROLE_PERMISSIONS: dict[
         "work:assign",
         "skill:execute",
         "skill:execute_mutating",
+        "approval:read",
+        "approval:decide",
     }),
     "executive": frozenset({
         "dashboard.view",
@@ -128,6 +133,9 @@ ROLE_PERMISSIONS: dict[
         "work:assign",
         "skill:execute",
         "skill:execute_mutating",
+        "approval:read",
+        "approval:decide",
+        "approval:decide_sensitive",
     }),
     "administrator": frozenset({
         "dashboard.view",
@@ -162,6 +170,9 @@ ROLE_PERMISSIONS: dict[
         "skill:execute_mutating",
         "skill:execute_external",
         "skill:execute_user_scope",
+        "approval:read",
+        "approval:decide",
+        "approval:decide_sensitive",
     }),
     "developer": frozenset({
         "dashboard.view",
@@ -197,6 +208,9 @@ ROLE_PERMISSIONS: dict[
         "skill:execute_mutating",
         "skill:execute_external",
         "skill:execute_user_scope",
+        "approval:read",
+        "approval:decide",
+        "approval:decide_sensitive",
     }),
 }
 
