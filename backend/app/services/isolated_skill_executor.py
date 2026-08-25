@@ -13,6 +13,9 @@ from app.core.skill_errors import SkillExecutionTimeoutError
 from app.core.skill_errors import SkillOutputLimitError
 from app.core.skill_errors import SkillRuntimeBusyError
 from app.core.skill_errors import SkillValidationError
+from app.services.skill_runtime_context import MAX_WORK_LEARNING_CONTEXT_BYTES
+from app.services.skill_runtime_context import WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+from app.services.skill_runtime_context import normalize_work_learning_runtime_context
 
 
 ENTRYPOINT_PATTERN = re.compile(
@@ -21,6 +24,11 @@ ENTRYPOINT_PATTERN = re.compile(
 MAX_AUTONOMY_WORKERS = 8
 MAX_INPUT_BYTES = 64 * 1024
 MAX_OUTPUT_BYTES = 1024 * 1024
+MAX_CONTEXT_WIRE_BYTES = (
+    MAX_INPUT_BYTES
+    + MAX_WORK_LEARNING_CONTEXT_BYTES
+    + 1024
+)
 _SAFE_ENV_KEYS = (
     "HOME",
     "LANG",
@@ -105,6 +113,8 @@ class IsolatedSkillExecutor:
         *,
         timeout_seconds: int,
         max_output_bytes: int,
+        runtime_context_protocol: str | None = None,
+        runtime_context: Any | None = None,
     ) -> Any:
         normalized_entrypoint = self._validate_entrypoint(entrypoint)
         if (
@@ -127,7 +137,7 @@ class IsolatedSkillExecutor:
             )
 
         try:
-            input_bytes = json.dumps(
+            payload_bytes = json.dumps(
                 payload,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -139,10 +149,55 @@ class IsolatedSkillExecutor:
                 "Payload isolado não é JSON válido."
             ) from error
 
-        if len(input_bytes) > MAX_INPUT_BYTES:
+        if len(payload_bytes) > MAX_INPUT_BYTES:
             raise SkillValidationError(
                 "Payload isolado excede 65536 bytes."
             )
+
+        if (runtime_context_protocol is None) != (runtime_context is None):
+            raise SkillValidationError(
+                "runtime context isolado está incompleto."
+            )
+
+        input_bytes = payload_bytes
+        normalized_context = None
+        if runtime_context_protocol is not None:
+            if (
+                runtime_context_protocol
+                != WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+            ):
+                raise SkillValidationError(
+                    "runtime_context_protocol isolado inválido."
+                )
+
+            normalized_context = (
+                normalize_work_learning_runtime_context(
+                    runtime_context
+                )
+            )
+            try:
+                input_bytes = json.dumps(
+                    {
+                        "payload": json.loads(
+                            payload_bytes.decode("utf-8")
+                        ),
+                        "protocol": normalized_context.protocol,
+                        "runtime_context": normalized_context.payload,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")
+            except (TypeError, ValueError) as error:
+                raise SkillValidationError(
+                    "Envelope de runtime context isolado inválido."
+                ) from error
+
+            if len(input_bytes) > MAX_CONTEXT_WIRE_BYTES:
+                raise SkillValidationError(
+                    "Envelope de runtime context isolado excede o limite."
+                )
 
         acquired = self._semaphore.acquire(blocking=False)
         if not acquired:
@@ -155,6 +210,11 @@ class IsolatedSkillExecutor:
             process = self._start_process(
                 normalized_entrypoint,
                 max_output_bytes=max_output_bytes,
+                runtime_context_protocol=(
+                    normalized_context.protocol
+                    if normalized_context is not None
+                    else None
+                ),
             )
             try:
                 stdout, _ = process.communicate(
@@ -220,6 +280,7 @@ class IsolatedSkillExecutor:
         entrypoint: str,
         *,
         max_output_bytes: int,
+        runtime_context_protocol: str | None = None,
     ) -> subprocess.Popen[bytes]:
         worker_script = Path(__file__).with_name(
             "skill_process_worker.py"
@@ -230,6 +291,8 @@ class IsolatedSkillExecutor:
             entrypoint,
             str(max_output_bytes),
         ]
+        if runtime_context_protocol is not None:
+            command.append(runtime_context_protocol)
 
         kwargs: dict[str, Any] = {
             "cwd": str(self._backend_dir),

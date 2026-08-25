@@ -202,3 +202,29 @@ authorize untrusted executable plugins.
 
 Commit 24 owns sensitive-action approval, autonomous selection and execution
 authority for non-user actors.
+
+## 11. Commit 25C side-band runtime context foundation
+
+25C adds the internal `work_learning_v1` runtime-context protocol without
+changing public Skill input. The protocol is side-band because `input_payload`
+is already bound into input schema validation, Work/Approval identity and the
+runtime input digest.
+
+Contextless execution remains on the existing `handler(payload)` path and keeps
+the legacy request fingerprint envelope unchanged. A contextful execution is
+allowed only for `internal_python`, `read_only`, `isolated=True` and requires
+both the immutable SkillVersion manifest and the trusted server-side registry
+to declare `runtime_context_protocol=work_learning_v1`.
+
+The context contains at most 10 deterministic 25A outcome metadata items using
+an exact safe field allowlist and a 16384-byte canonical ceiling. The runtime
+binds the protocol plus context digest into the request fingerprint while
+leaving `input_digest` unchanged. The isolated worker uses a versioned
+side-band wire envelope and calls only opted-in handlers as
+`handler(payload, runtime_context)`.
+
+The first 25C APPLY contains no Work learning resolver hook, no
+`WorkSkillExecutionService` or `GovernedSkillExecutionService` change, no
+public API change, no migration and no legacy Orchestrator integration. Durable
+production Work-context snapshotting and actual resolver-to-runtime forwarding
+remain separately gated.

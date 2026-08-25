@@ -120,3 +120,64 @@ def test_entrypoint_validation_fails_closed() -> None:
             timeout_seconds=2,
             max_output_bytes=4096,
         )
+
+
+def _runtime_context():
+    return {
+        "protocol": "work_learning_v1",
+        "items": [
+            {
+                "memory_id": 11,
+                "source_work_item_id": 12,
+                "work_skill_execution_id": 13,
+                "skill_version_id": 7,
+                "terminal_status": "succeeded",
+                "evaluation_code": "execution_succeeded",
+                "learning_signal": "positive",
+                "observed_at": "2026-08-25T12:30:45.123456Z",
+            }
+        ],
+    }
+
+
+def test_isolated_executor_delivers_opted_in_side_band_runtime_context() -> None:
+    executor = _executor()
+
+    result = executor.execute(
+        "isolated_skill_handlers:context_probe",
+        {"value": 4},
+        timeout_seconds=2,
+        max_output_bytes=4096,
+        runtime_context_protocol="work_learning_v1",
+        runtime_context=_runtime_context(),
+    )
+
+    assert result == {
+        "result": 8,
+        "context_protocol": "work_learning_v1",
+        "learning_signal": "positive",
+        "context_items": 1,
+    }
+
+
+def test_isolated_executor_rejects_incomplete_or_unknown_runtime_context() -> None:
+    executor = _executor()
+
+    with pytest.raises(SkillValidationError):
+        executor.execute(
+            "isolated_skill_handlers:context_probe",
+            {"value": 4},
+            timeout_seconds=2,
+            max_output_bytes=4096,
+            runtime_context_protocol="work_learning_v1",
+        )
+
+    with pytest.raises(SkillValidationError):
+        executor.execute(
+            "isolated_skill_handlers:context_probe",
+            {"value": 4},
+            timeout_seconds=2,
+            max_output_bytes=4096,
+            runtime_context_protocol="unknown_v1",
+            runtime_context=_runtime_context(),
+        )

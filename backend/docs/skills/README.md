@@ -28,6 +28,8 @@ belong to Commit 24.
   publication, immutability and binding resolution.
 - `AGENT_SKILLS_RUNTIME_CONTRACT.md`: allowlist, JSON Schema validation,
   idempotency, execution limits and retained outcomes.
+- `AGENT_SKILLS_RUNTIME_CONTEXT.md`: 25C side-band learning-context protocol,
+  dual opt-in, safe metadata and identity preservation.
 - `AGENT_SKILLS_AUTHORIZATION.md`: RBAC, resource scope, anti-IDOR and
   explicit-execution HTTP boundary.
 - `AGENT_SKILLS_OPERATIONS.md`: runtime telemetry, rate limits, stale recovery
@@ -47,3 +49,12 @@ Gate 23E finalizes runtime observability, per-user abuse limiting, stale
 invocation recovery and the production operating contract. The cumulative
 Commit 23 audit must pass before staging or commit. After that audit, Commit 23
 is pushed to `origin/main` and the working tree must be clean.
+
+## Commit 25C runtime-context foundation
+
+25C introduces the internal `work_learning_v1` side-band protocol for future
+authorized Work learning context. The first APPLY is protocol-only: it keeps
+`input_payload`, Approval identity, public API, Work execution services,
+database schema and the legacy Orchestrator unchanged. Contextful execution is
+restricted to trusted `internal_python`, `read_only`, isolated handlers with
+manifest + registry dual opt-in.

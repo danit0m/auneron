@@ -41,3 +41,13 @@ def environment_probe(_payload):
 
 def oversized(payload):
     return {"result": "x" * payload["size"]}
+
+
+def context_probe(payload, runtime_context):
+    first = runtime_context["items"][0]
+    return {
+        "result": payload["value"] * 2,
+        "context_protocol": runtime_context["protocol"],
+        "learning_signal": first["learning_signal"],
+        "context_items": len(runtime_context["items"]),
+    }

@@ -41,13 +41,13 @@ from app.models.skill import SkillInvocation
 from app.models.skill import SkillVersion
 from app.core.skill_observability import log_skill_runtime_event
 from app.services.isolated_skill_executor import IsolatedSkillExecutor
+from app.services.skill_runtime_context import WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+from app.services.skill_runtime_context import WorkLearningRuntimeContext
+from app.services.skill_runtime_context import normalize_work_learning_runtime_context
 from app.repositories.skill_repository import SkillRepository
 
 
-SkillHandler = Callable[
-    [Any],
-    Any,
-]
+SkillHandler = Callable[..., Any]
 
 RUNTIME_KINDS = frozenset({
     "internal_python",
@@ -95,6 +95,7 @@ class RegisteredSkillHandler:
     handler: SkillHandler
     trusted_for_autonomy: bool = False
     autonomy_entrypoint: str | None = None
+    runtime_context_protocol: str | None = None
 
 
 def _utc_now() -> datetime:
@@ -278,7 +279,14 @@ def _fingerprint(
     version: SkillVersion,
     actor: SkillInvocationActor,
     normalized_input: Any,
+    runtime_context_protocol: str | None = None,
+    runtime_context_digest: str | None = None,
 ) -> str:
+    if (runtime_context_protocol is None) != (runtime_context_digest is None):
+        raise SkillValidationError(
+            "runtime context fingerprint incompleto."
+        )
+
     envelope = {
         "actor": {
             "actor_reference": actor.actor_reference,
@@ -289,6 +297,12 @@ def _fingerprint(
         "manifest_digest": version.manifest_digest,
         "skill_version_id": version.id,
     }
+
+    if runtime_context_protocol is not None:
+        envelope["runtime_context"] = {
+            "digest": runtime_context_digest,
+            "protocol": runtime_context_protocol,
+        }
 
     serialized = json.dumps(
         envelope,
@@ -501,6 +515,7 @@ class SkillHandlerRegistry:
         handler: SkillHandler,
         trusted_for_autonomy: bool = False,
         autonomy_entrypoint: str | None = None,
+        runtime_context_protocol: str | None = None,
     ) -> RegisteredSkillHandler:
         normalized_runtime = _required_text(
             runtime_kind,
@@ -564,12 +579,39 @@ class SkillHandlerRegistry:
                 "para internal_python."
             )
 
+        normalized_runtime_context_protocol = None
+        if runtime_context_protocol is not None:
+            normalized_runtime_context_protocol = _required_text(
+                runtime_context_protocol,
+                field_name="runtime_context_protocol",
+                max_length=64,
+            ).lower()
+            if (
+                normalized_runtime_context_protocol
+                != WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+            ):
+                raise SkillValidationError(
+                    "runtime_context_protocol inválido."
+                )
+            if (
+                normalized_runtime != "internal_python"
+                or not trusted_for_autonomy
+                or normalized_autonomy_entrypoint is None
+            ):
+                raise SkillValidationError(
+                    "runtime context exige handler internal_python "
+                    "confiado e isolado."
+                )
+
         registered = RegisteredSkillHandler(
             runtime_kind=normalized_runtime,
             handler_reference=normalized_reference,
             handler=handler,
             trusted_for_autonomy=trusted_for_autonomy,
             autonomy_entrypoint=normalized_autonomy_entrypoint,
+            runtime_context_protocol=(
+                normalized_runtime_context_protocol
+            ),
         )
         identity = (
             normalized_runtime,
@@ -588,6 +630,8 @@ class SkillHandlerRegistry:
                     == trusted_for_autonomy
                     and existing.autonomy_entrypoint
                     == normalized_autonomy_entrypoint
+                    and existing.runtime_context_protocol
+                    == normalized_runtime_context_protocol
                 ):
                     return existing
 
@@ -813,6 +857,7 @@ class SkillRuntimeService:
         input_payload: Any,
         idempotency_key: str | None = None,
         isolated: bool = False,
+        runtime_context: Any | None = None,
     ) -> SkillInvocationResult:
         if not isinstance(isolated, bool):
             raise SkillValidationError(
@@ -845,6 +890,44 @@ class SkillRuntimeService:
             )
         )
 
+        normalized_runtime_context: WorkLearningRuntimeContext | None = None
+        if runtime_context is not None:
+            if not isolated:
+                raise SkillValidationError(
+                    "runtime context exige execução isolada."
+                )
+            if (
+                version.runtime_kind != "internal_python"
+                or version.execution_mode != "read_only"
+            ):
+                raise SkillHandlerNotAllowedError(
+                    "runtime context é permitido apenas para "
+                    "internal_python read_only."
+                )
+
+            manifest = (
+                version.manifest
+                if isinstance(version.manifest, dict)
+                else {}
+            )
+            manifest_protocol = manifest.get(
+                "runtime_context_protocol"
+            )
+            if (
+                manifest_protocol
+                != WORK_LEARNING_RUNTIME_CONTEXT_PROTOCOL
+            ):
+                raise SkillHandlerNotAllowedError(
+                    "Versão de skill não optou pelo runtime context."
+                )
+
+            normalized_runtime_context = (
+                normalize_work_learning_runtime_context(
+                    runtime_context,
+                    expected_skill_version_id=version.id,
+                )
+            )
+
         if (
             version.execution_mode
             in {"mutating", "external"}
@@ -859,6 +942,16 @@ class SkillRuntimeService:
             version=version,
             actor=normalized_actor,
             normalized_input=normalized_input,
+            runtime_context_protocol=(
+                normalized_runtime_context.protocol
+                if normalized_runtime_context is not None
+                else None
+            ),
+            runtime_context_digest=(
+                normalized_runtime_context.digest
+                if normalized_runtime_context is not None
+                else None
+            ),
         )
         input_digest = _digest_bytes(
             input_bytes
@@ -1023,6 +1116,23 @@ class SkillRuntimeService:
                 )
                 raise
 
+            if (
+                normalized_runtime_context is not None
+                and registered.runtime_context_protocol
+                != normalized_runtime_context.protocol
+            ):
+                self._finish_failure(
+                    invocation.id,
+                    status="rejected",
+                    error_code=(
+                        "runtime_context_handler_not_allowed"
+                    ),
+                    started=started,
+                )
+                raise SkillHandlerNotAllowedError(
+                    "Handler não optou pelo runtime context exigido."
+                )
+
             try:
                 if isolated:
                     if (
@@ -1051,6 +1161,16 @@ class SkillRuntimeService:
                         ),
                         max_output_bytes=(
                             version.max_output_bytes
+                        ),
+                        runtime_context_protocol=(
+                            normalized_runtime_context.protocol
+                            if normalized_runtime_context is not None
+                            else None
+                        ),
+                        runtime_context=(
+                            normalized_runtime_context.payload
+                            if normalized_runtime_context is not None
+                            else None
                         ),
                     )
                 else:

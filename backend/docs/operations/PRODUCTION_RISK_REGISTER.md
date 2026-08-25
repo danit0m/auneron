@@ -94,3 +94,23 @@ durable, but external side effects are not exactly-once.
 - Runtime context injection, model ranking, automatic action selection,
   retry/replan and the legacy Orchestrator adapter remain deferred and require
   separate threat-model and Gate evidence.
+
+## Commit 25C side-band runtime context foundation
+
+- The first 25C APPLY creates only the `work_learning_v1` validation and
+  isolated-worker transport protocol. It does not connect the 25B resolver to
+  production Work dispatch.
+- Learning context never mutates `input_payload`, `input_digest`, Approval
+  identity, role or scope authority. Contextful idempotency instead binds a
+  separate canonical context digest into the request fingerprint.
+- Context requires immutable SkillVersion-manifest opt-in plus trusted registry
+  opt-in and is limited to `internal_python`, `read_only`, `isolated=True`.
+- The safe context allowlist contains deterministic outcome metadata only; raw
+  input/output/error, Memory content/evidence, credentials, Approval payloads
+  and actor references remain excluded.
+- The first APPLY persists no runtime-context payload or digest column. A later
+  production hookup must add durable Work-context snapshot/reconciliation
+  evidence before context can affect repeatable autonomous execution.
+- Mutating/external learning context, public context input, model-driven action
+  selection, automatic retry/replan and legacy Orchestrator integration remain
+  blocked behind later gates.
