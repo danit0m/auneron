@@ -17,6 +17,9 @@ from app.core.skill_errors import SkillRuntimeError
 from app.core.work_skill_observability import (
     log_work_skill_execution_event,
 )
+from app.core.work_outcome_evaluation_observability import (
+    log_work_outcome_evaluation_event,
+)
 from app.core.work_skill_rate_limiting import (
     WorkSkillDispatchRateLimiter,
 )
@@ -50,6 +53,9 @@ from app.services.governed_skill_execution import (
 from app.services.skill_runtime import SkillInvocationActor
 from app.services.work_service import WorkActor
 from app.services.work_service import WorkManagerService
+from app.services.work_outcome_evaluation import (
+    WorkOutcomeEvaluationService,
+)
 
 
 WorkSkillExecutionOutcome = Literal[
@@ -138,6 +144,9 @@ class WorkSkillExecutionService:
         approval_service: ApprovalService | None = None,
         governed_service: GovernedSkillExecutionService | None = None,
         limiter: WorkSkillDispatchRateLimiter | None = None,
+        outcome_evaluation_service: (
+            WorkOutcomeEvaluationService | None
+        ) = None,
     ) -> None:
         self.db = db
         self.execution_repository = (
@@ -179,6 +188,11 @@ class WorkSkillExecutionService:
             limiter
             if limiter is not None
             else work_skill_dispatch_rate_limiter
+        )
+        self.outcome_evaluation_service = (
+            outcome_evaluation_service
+            if outcome_evaluation_service is not None
+            else WorkOutcomeEvaluationService(db)
         )
 
     def configure(
@@ -1038,6 +1052,9 @@ class WorkSkillExecutionService:
         work_item = self._complete_work(
             work_item
         )
+        self._evaluate_terminal_outcome_best_effort(
+            execution
+        )
 
         return self._result(
             execution,
@@ -1076,6 +1093,9 @@ class WorkSkillExecutionService:
             raise
         work_item = self._complete_work(
             work_item
+        )
+        self._evaluate_terminal_outcome_best_effort(
+            execution
         )
         return self._result(
             execution,
@@ -1128,6 +1148,9 @@ class WorkSkillExecutionService:
                 status == "timed_out"
             ),
         )
+        self._evaluate_terminal_outcome_best_effort(
+            execution
+        )
 
         return self._result(
             execution,
@@ -1174,6 +1197,9 @@ class WorkSkillExecutionService:
                 status == "timed_out"
             ),
         )
+        self._evaluate_terminal_outcome_best_effort(
+            execution
+        )
         return self._result(
             execution,
             work_item=work_item,
@@ -1218,12 +1244,34 @@ class WorkSkillExecutionService:
                 ),
             ).work_item
 
+        self._evaluate_terminal_outcome_best_effort(
+            execution
+        )
         return self._result(
             execution,
             work_item=work_item,
             outcome="cancelled",
             duplicate=True,
         )
+
+    def _evaluate_terminal_outcome_best_effort(
+        self,
+        execution: WorkSkillExecution,
+    ) -> None:
+        try:
+            self.outcome_evaluation_service.evaluate(
+                execution.id
+            )
+        except Exception:
+            self.db.rollback()
+            log_work_outcome_evaluation_event(
+                "work.outcome_evaluation.best_effort_failed",
+                work_item_id=execution.work_item_id,
+                work_skill_execution_id=execution.id,
+                terminal_status=execution.status,
+                error_code="outcome_evaluation_retry_required",
+                outcome="retry_required",
+            )
 
     def _attach_invocation(
         self,

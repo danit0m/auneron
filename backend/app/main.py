@@ -49,6 +49,12 @@ from app.core.work_skill_maintenance import (
 from app.core.work_skill_maintenance import (
     work_skill_execution_maintenance_loop,
 )
+from app.core.work_outcome_evaluation_maintenance import (
+    run_work_outcome_evaluation_recovery_async,
+)
+from app.core.work_outcome_evaluation_maintenance import (
+    work_outcome_evaluation_maintenance_loop,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -94,6 +100,7 @@ async def lifespan(_: FastAPI):
             run_skill_invocation_recovery
         )
         await run_work_skill_execution_recovery_async()
+        await run_work_outcome_evaluation_recovery_async()
 
     maintenance_tasks = (
         asyncio.create_task(
@@ -104,6 +111,9 @@ async def lifespan(_: FastAPI):
         ),
         asyncio.create_task(
             work_skill_execution_maintenance_loop()
+        ),
+        asyncio.create_task(
+            work_outcome_evaluation_maintenance_loop()
         ),
     )
 

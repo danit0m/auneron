@@ -56,3 +56,23 @@ durable, but external side effects are not exactly-once.
   closed-loop intelligence after the cumulative Commit 24 security gate.
 - `external` Work dispatch remains blocked until provider/business
   reconciliation can resolve unknown outcomes and side effects.
+
+## Commit 25A Outcome Evaluation Foundation
+
+- Outcome learning starts only after a durable terminal `WorkSkillExecution`;
+  it cannot grant authority, retry, replan or dispatch a Skill.
+- Outcome Memory stores deterministic bounded metadata only. Raw input, raw
+  output, raw error/exception text, credentials, dispatch keys, approval
+  payloads and actor references are excluded from learning persistence.
+- `MemoryService` and `WorkManagerService` retain their existing commit
+  ownership, so 25A uses a recoverable state machine rather than pretending
+  that Memory and Work linking are one atomic transaction.
+- Recovery prechecks the exact `WorkMemoryLink(relation=outcome)` before
+  calling `link_memory()`. This avoids an idempotency fingerprint conflict
+  after a crash where the Work link committed but evaluation finalization did
+  not.
+- Outcome maintenance can only materialize ledger/Memory/Work-link state and
+  never invokes `dispatch`, governed execution, runtime handlers or the legacy
+  Orchestrator.
+- The legacy Orchestrator remains outside the first closed-loop APPLY. Public
+  API/OpenAPI and the external Work execution block remain unchanged.
