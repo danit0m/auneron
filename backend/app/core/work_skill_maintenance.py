@@ -118,11 +118,38 @@ def run_work_skill_execution_recovery(
         db.close()
 
 
+async def run_work_skill_execution_recovery_async(
+) -> WorkSkillRecoverySummary:
+    """
+    Run synchronous recovery without abandoning an in-flight DB worker.
+
+    Cancellation is delayed until the underlying thread finishes so shutdown
+    cannot proceed while that worker may still own a Session/transaction.
+    """
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            run_work_skill_execution_recovery
+        )
+    )
+
+    try:
+        return await asyncio.shield(
+            worker
+        )
+    except asyncio.CancelledError:
+        try:
+            await worker
+        except Exception:
+            log_work_skill_execution_event(
+                "work.skill_execution.shutdown_drain_failed",
+                outcome="worker_failed",
+            )
+        raise
+
+
 async def work_skill_execution_maintenance_loop() -> None:
     while True:
         await asyncio.sleep(
             settings.work_skill_recovery_interval_seconds
         )
-        await asyncio.to_thread(
-            run_work_skill_execution_recovery
-        )
+        await run_work_skill_execution_recovery_async()

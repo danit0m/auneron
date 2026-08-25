@@ -1,4 +1,6 @@
+import asyncio
 import inspect
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -147,5 +149,62 @@ def test_work_recovery_source_and_lifespan_preserve_non_execution_boundary() -> 
     lifespan_source = inspect.getsource(lifespan)
     assert ".dispatch(" not in maintenance_source
     assert "GovernedSkillExecutionService" not in maintenance_source
-    assert "run_work_skill_execution_recovery" in lifespan_source
+    assert "run_work_skill_execution_recovery_async" in lifespan_source
     assert "work_skill_execution_maintenance_loop" in lifespan_source
+    assert "asyncio.shield" in maintenance_source
+    assert (
+        "asyncio.to_thread(\n"
+        "            run_work_skill_execution_recovery\n"
+        "        )"
+        not in lifespan_source
+    )
+
+def test_async_recovery_drain_waits_for_worker_before_cancel_completes(
+    monkeypatch,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def blocking_recovery():
+        started.set()
+        try:
+            if not release.wait(timeout=5.0):
+                raise RuntimeError("test worker release timeout")
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(
+        work_skill_maintenance,
+        "run_work_skill_execution_recovery",
+        blocking_recovery,
+    )
+
+    async def exercise() -> None:
+        task = asyncio.create_task(
+            work_skill_maintenance
+            .run_work_skill_execution_recovery_async()
+        )
+
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.005)
+
+        assert started.is_set()
+
+        task.cancel()
+        await asyncio.sleep(0.05)
+
+        assert task.done() is False
+        assert finished.is_set() is False
+
+        release.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert finished.is_set() is True
+        assert task.done() is True
+
+    asyncio.run(exercise())

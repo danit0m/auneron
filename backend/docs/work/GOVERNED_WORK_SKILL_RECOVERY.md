@@ -31,3 +31,20 @@ after the Commit 24 cumulative security gate, in closed-loop intelligence.
 
 `external` Work dispatch remains blocked. Database idempotency alone does not
 establish exactly-once semantics for external business side effects.
+
+## 9. Shutdown drain semantics
+
+The asynchronous recovery boundary protects its `asyncio.to_thread()` worker
+with `asyncio.shield()`.
+
+If application shutdown cancels the surrounding asyncio task while a recovery
+cycle is in flight, cancellation is not considered complete until the
+synchronous worker finishes and closes its database Session. Only then is
+`CancelledError` propagated back to the lifespan shutdown path.
+
+This prevents application shutdown from advancing to engine disposal or a
+subsequent test lifecycle while a Work Skill recovery thread can still own a
+PostgreSQL Session/transaction.
+
+The shutdown drain does not retry, dispatch or execute a Skill handler. It only
+waits for an already-started non-executing reconciliation cycle to finish.
