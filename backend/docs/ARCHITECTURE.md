@@ -239,3 +239,24 @@ closed.
 The first 25G APPLY has no production EventBus wiring, database access, Work
 creation, Skill execution, Approval/Memory mutation, public API or schema
 migration.
+
+## Authenticated advisory context envelope
+
+Commit 25H adds an internal immutable `AuthenticatedAdvisoryEnvelope` that
+composes the existing `OrchestrationDecision`, `AdvisorySkillBindingPlan` and
+`AuthorityProvenance` without changing any production execution path.
+
+The envelope validates that `plan.decision_name` equals
+`decision.decision_name` and that the ordered `plan.agents` names exactly match
+`decision.selected_agents`. It grants no authority, is not an authorization
+decision and is not executable intent.
+
+Role, permissions, scope, session elevation, payload, runtime context, Work,
+Approval, credentials, tokens and Memory are not copied into the envelope. Any
+future consumer must reload current user/session authority and reauthorize
+scope and the exact Skill, failing closed on missing, expired, revoked or
+disabled authority.
+
+The first 25H APPLY has no production EventBus or route wiring, no database
+access, no Work creation, no Skill execution, no Approval/Memory mutation, no
+public API and no schema migration.

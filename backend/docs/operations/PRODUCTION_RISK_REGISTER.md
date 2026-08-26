@@ -204,3 +204,25 @@ Residual risk remains in the deferred bridge: provenance still needs a
 production capture point, durable proposal/idempotency identity and
 crash/reconciliation design before advisory Orchestrator metadata can influence
 Work or governed Skill execution.
+
+## Commit 25H authenticated advisory envelope foundation
+
+25H composes the 25F advisory Skill projection and 25G authority provenance
+inside an immutable, non-executable envelope.
+
+- The envelope contains only `decision`, `plan` and `authority`.
+- `plan.decision_name` must equal `decision.decision_name`.
+- Ordered plan agent names must exactly match `decision.selected_agents`.
+- The envelope grants no authority, is not an authorization decision and is
+  not executable intent.
+- Role, permissions, scope, session elevation, payload, Work, Approval,
+  credentials, tokens and Memory are excluded.
+- Future consumers must reload current user/session authority and reauthorize
+  scope and the exact Skill; invalid or stale authority fails closed.
+- The first APPLY has no EventBus/route wiring, database access, Work creation,
+  Skill execution, Approval/Memory mutation, public API or schema migration.
+
+Residual risk remains in the deferred bridge: a production capture point,
+durable proposal identity, idempotency, crash recovery and reconciliation are
+still required before advisory context can influence Work materialization or
+governed Skill execution.
