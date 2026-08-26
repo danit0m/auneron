@@ -181,3 +181,26 @@ carries no authorized user principal. A future Decision-to-Work bridge must
 persist and revalidate authority provenance, define exact proposal/idempotency
 semantics, preserve Approval scope and add crash/reconciliation behavior before
 projection metadata may influence action.
+
+## Commit 25G authenticated authority provenance foundation
+
+25G introduces only a minimal immutable server-derived provenance reference for
+the authenticated user/session. The reference itself grants no authority, is
+not an authorization decision and is not executable intent.
+
+- `authority_user_id` and `auth_session_id` come only from the existing
+  `AuthenticatedSession`; the session user id must match the authenticated user.
+- Role, permission set, account/user scope, session elevation, Approval state,
+  Skill/binding selection, payload, runtime context, Memory, credentials and
+  tokens are not copied into provenance.
+- A future consumer must reload the current User and AuthSession, validate the
+  session is still active, recalculate current RBAC and reauthorize scope and
+  the exact Skill. Missing/revoked/expired authority fails closed.
+- The first APPLY has no production EventBus hookup, Work creation, Skill
+  execution, Approval or Memory mutation, public API, database write or schema
+  migration.
+
+Residual risk remains in the deferred bridge: provenance still needs a
+production capture point, durable proposal/idempotency identity and
+crash/reconciliation design before advisory Orchestrator metadata can influence
+Work or governed Skill execution.

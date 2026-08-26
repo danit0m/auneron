@@ -218,3 +218,24 @@ executable intent.
 dispatch WorkSkillExecution, invoke governed Skill execution, mutate Approval or
 Memory, or synthesize `authority_user_id`. A later bridge requires a separate
 authority provenance and recovery contract before any action can be enabled.
+
+## Authenticated authority provenance reference
+
+Commit 25G adds an internal immutable `AuthorityProvenance` value derived only
+from the server's existing `AuthenticatedSession`. It records the authenticated
+user id, auth-session id, optional bounded request correlation id and a fixed
+server source marker.
+
+The reference grants no authority, is not an authorization decision and is not
+executable intent. Role, permissions, scope, session elevation, Approval state,
+Skill/binding selection, payload, runtime context, Memory, credentials and
+tokens are intentionally excluded.
+
+Any future bridge must reload the current User and AuthSession, confirm that the
+session remains active, recalculate current role/permissions and reauthorize
+scope and the exact Skill. Missing, expired, revoked or disabled authority fails
+closed.
+
+The first 25G APPLY has no production EventBus wiring, database access, Work
+creation, Skill execution, Approval/Memory mutation, public API or schema
+migration.
