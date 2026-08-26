@@ -180,3 +180,23 @@ deve migrar para um armazenamento compartilhado.
 O `backend/docker-compose.yml` é uma topologia local de desenvolvimento.
 Produção deve usar HTTPS, segredos gerenciados e PostgreSQL não exposto
 publicamente.
+
+## Legacy Orchestrator observe-only quarantine
+
+Commit 25E places the pre-Work Orchestrator execution plane behind a fail-closed
+quarantine. `EventBus.publish` now uses `AIOrchestrator.observe`, which preserves
+Decision Engine evaluation, the existing in-memory DecisionStore and candidate
+agent resolution, but stops before `ExecutionPipeline` or any legacy
+`agent.handler(payload)` call.
+
+`AIOrchestrator.execute`, `ExecutionPipeline.execute` and
+`ExecutionPipeline._execute_agent` remain compatibility symbols and immediately
+raise `LegacyAutonomyExecutionBlockedError`. There is no configuration or
+runtime bypass.
+
+This boundary is intentionally separate from the governed Work/Skill runtime.
+No authority user, role or scope is synthesized; decision output and selected
+agent names are advisory data only. Commit 25E creates no Work, selects no Skill,
+changes no Approval behavior and adds no automatic retry/replan. A future
+Decision-to-Work proposal adapter requires its own authority and idempotency
+design before implementation.

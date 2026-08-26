@@ -136,3 +136,29 @@ metadata even if source observations later expire or are superseded. They are
 execution evidence/identity, not a live knowledge view, and cannot grant
 authority. Mutating/external learning context, automatic action selection,
 automatic retry/replan and legacy Orchestrator integration remain deferred.
+
+## Commit 25E legacy autonomy quarantine
+
+25E removes the remaining production-reachable legacy handler execution path
+before any closed-loop Orchestrator integration is attempted.
+
+- `EventBus.publish` is observation-only and calls `AIOrchestrator.observe`.
+- Decision Engine evaluation, the in-memory DecisionStore and AgentRegistry
+  candidate resolution remain available for diagnostics and migration evidence.
+- Candidate agent names are advisory metadata and grant no authority.
+- `AIOrchestrator.execute`, `ExecutionPipeline.execute` and
+  `ExecutionPipeline._execute_agent` fail closed with
+  `LegacyAutonomyExecutionBlockedError` before decision-driven legacy execution,
+  metrics, telemetry or handler side effects.
+- Legacy agent modules remain registered as migration references, but their
+  `SessionLocal` / `KnowledgeService.create` side effects are no longer reachable
+  from the production EventBus/Orchestrator path.
+- No authority user, role or scope is synthesized to bridge the legacy plane.
+- Work/Skill/Approval, learning-context snapshots, SkillRuntime and public APIs
+  remain unchanged.
+
+Residual risk moves from uncontrolled legacy execution to migration design: a
+future Decision-to-Work proposal adapter still needs persisted authority
+provenance, exact Skill mapping, idempotency, approval semantics and recovery
+before it can be enabled. Automatic Work creation, Skill selection, action
+selection and retry/replan remain blocked.

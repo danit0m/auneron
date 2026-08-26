@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.knowledge_service import KnowledgeService
+
 
 def create_test_account(
     client: TestClient,
@@ -27,7 +29,34 @@ def create_test_account(
     return response.json()
 
 
-def test_agents_create_account_knowledge(
+def seed_account_knowledge(
+    db_session: Session,
+    *,
+    account_id: int,
+    items: tuple[tuple[str, str], ...],
+) -> list[int]:
+    knowledge_ids: list[int] = []
+
+    for index, (agent_name, severity) in enumerate(
+        items,
+        start=1,
+    ):
+        knowledge = KnowledgeService.create(
+            db=db_session,
+            agent_name=agent_name,
+            event_name="test_seed",
+            knowledge_type="test",
+            severity=severity,
+            title=f"Seed knowledge {index}",
+            message=f"Seeded by test for {agent_name}",
+            account_id=account_id,
+        )
+        knowledge_ids.append(knowledge.id)
+
+    return knowledge_ids
+
+
+def test_account_creation_does_not_create_legacy_agent_knowledge(
     client: TestClient,
 ) -> None:
     account = create_test_account(client)
@@ -42,41 +71,21 @@ def test_agents_create_account_knowledge(
     )
 
     assert response.status_code == 200
-
-    knowledge_items = response.json()
-
-    assert len(knowledge_items) == 3
-    assert all(
-        item["account_id"] == account_id
-        for item in knowledge_items
-    )
-
-    agent_names = {
-        item["agent_name"]
-        for item in knowledge_items
-    }
-
-    assert agent_names == {
-        "FinanceAgent",
-        "RiskAgent",
-        "AnalyticsAgent",
-    }
+    assert response.json() == []
 
 
 def test_resolve_and_reopen_knowledge(
     client: TestClient,
+    db_session: Session,
 ) -> None:
     account = create_test_account(client)
 
-    knowledge_response = client.get(
-        "/brain/",
-        params={
-            "account_id": account["id"],
-            "limit": 100,
-        },
+    knowledge_ids = seed_account_knowledge(
+        db_session,
+        account_id=account["id"],
+        items=(("FinanceAgent", "medium"),),
     )
-
-    knowledge_id = knowledge_response.json()[0]["id"]
+    knowledge_id = knowledge_ids[0]
 
     get_response = client.get(
         f"/brain/{knowledge_id}",
@@ -107,18 +116,15 @@ def test_account_delete_sets_knowledge_account_id_to_null(
     account = create_test_account(client)
     account_id = account["id"]
 
-    knowledge_response = client.get(
-        "/brain/",
-        params={
-            "account_id": account_id,
-            "limit": 100,
-        },
+    knowledge_ids = seed_account_knowledge(
+        db_session,
+        account_id=account_id,
+        items=(
+            ("FinanceAgent", "medium"),
+            ("RiskAgent", "high"),
+            ("AnalyticsAgent", "info"),
+        ),
     )
-
-    knowledge_ids = [
-        item["id"]
-        for item in knowledge_response.json()
-    ]
 
     assert len(knowledge_ids) == 3
 

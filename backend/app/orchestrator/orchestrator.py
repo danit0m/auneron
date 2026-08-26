@@ -1,5 +1,4 @@
-﻿from datetime import datetime
-from time import perf_counter
+from datetime import datetime
 from typing import Any
 
 from app.orchestrator.decision import (
@@ -9,32 +8,36 @@ from app.orchestrator.decision_engine import (
     decision_engine,
 )
 from app.orchestrator.pipeline import (
-    ExecutionPipeline,
     PipelineResult,
 )
 from app.orchestrator.registry import (
     registry,
 )
+from app.orchestrator.safety import (
+    LegacyAutonomyExecutionBlockedError,
+)
 
 
 class AIOrchestrator:
     """
-    Coordena o ciclo completo do Auneron AI.
+    Fronteira legada do Auneron AI em quarentena observe-only.
 
-    Fluxo:
-    - recebe um evento;
-    - solicita uma decisão ao Decision Engine;
-    - seleciona os agentes registrados;
-    - delega a execução ao Pipeline;
-    - apresenta o resumo da operação.
+    O modo de produção preserva decisão explicável, DecisionStore e seleção
+    consultiva de agentes, mas não executa handlers. A execução legada não
+    possui Work/Skill/Approval/RBAC suficiente para produzir efeitos.
     """
 
     @staticmethod
-    def execute(
+    def observe(
         event_name: str,
         payload: dict[str, Any],
-    ) -> PipelineResult | None:
-        orchestration_start = perf_counter()
+    ) -> OrchestrationDecision:
+        """
+        Produz e registra uma decisão sem executar o plano legado.
+
+        Os agentes selecionados são apenas metadado consultivo. Nenhum nome de
+        agente, decisão, modelo, memória ou contexto concede autoridade.
+        """
 
         decision = decision_engine.decide(
             event_name=event_name,
@@ -63,53 +66,32 @@ class AIOrchestrator:
             ),
         )
 
-        if not selected_agents:
-            duration = (
-                perf_counter()
-                - orchestration_start
-            )
-
-            print(
-                "Nenhum agente foi selecionado."
-            )
-            print(
-                f"Tempo total: {duration:.4f}s"
-            )
-            print(
-                "=========================================="
-            )
-            print()
-
-            return None
-
-        pipeline_result = (
-            ExecutionPipeline.execute(
-                event_name=event_name,
-                strategy_name=(
-                    decision.decision_name
-                ),
-                agents=selected_agents,
-                payload=payload,
-            )
+        print("Modo: OBSERVE-ONLY")
+        print(
+            "Execução legada: BLOQUEADA"
         )
-
-        total_duration = (
-            perf_counter()
-            - orchestration_start
+        print(
+            "Agentes selecionados são metadado consultivo; "
+            "nenhum handler foi executado."
         )
-
-        ignored_agents = (
-            len(available_agents)
-            - len(selected_agents)
+        print(
+            "=========================================="
         )
+        print()
 
-        AIOrchestrator._print_summary(
-            result=pipeline_result,
-            ignored_agents=ignored_agents,
-            total_duration=total_duration,
+        return decision
+
+    @staticmethod
+    def execute(
+        event_name: str,
+        payload: dict[str, Any],
+    ) -> PipelineResult | None:
+        """Compatibility symbol for the quarantined legacy execution path."""
+
+        raise LegacyAutonomyExecutionBlockedError(
+            "Legacy AIOrchestrator execution is quarantined. "
+            "Use AIOrchestrator.observe for observation-only decisions."
         )
-
-        return pipeline_result
 
     @staticmethod
     def _print_header(
@@ -153,43 +135,8 @@ class AIOrchestrator:
 
         if decision.selected_agents:
             print(
-                "Plano solicitado: "
+                "Plano observado: "
                 + " → ".join(
                     decision.selected_agents
                 )
             )
-
-    @staticmethod
-    def _print_summary(
-        *,
-        result: PipelineResult,
-        ignored_agents: int,
-        total_duration: float,
-    ) -> None:
-        print()
-        print(
-            "Resumo da orquestração:"
-        )
-        print(
-            "Agentes concluídos: "
-            f"{result.completed_agents}"
-        )
-        print(
-            "Agentes ignorados: "
-            f"{ignored_agents}"
-        )
-        print(
-            f"Falhas: {result.failed_agents}"
-        )
-        print(
-            "Tempo do pipeline: "
-            f"{result.duration_seconds:.4f}s"
-        )
-        print(
-            "Tempo total: "
-            f"{total_duration:.4f}s"
-        )
-        print(
-            "=========================================="
-        )
-        print()

@@ -1,6 +1,9 @@
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.services.knowledge_service import KnowledgeService
 
 
 def create_premium_account(
@@ -24,10 +27,48 @@ def create_premium_account(
     return response.json()
 
 
+def seed_account_knowledge(
+    db_session: Session,
+    *,
+    account_id: int,
+    items: tuple[tuple[str, str], ...],
+) -> list[int]:
+    knowledge_ids: list[int] = []
+
+    for index, (agent_name, severity) in enumerate(
+        items,
+        start=1,
+    ):
+        knowledge = KnowledgeService.create(
+            db=db_session,
+            agent_name=agent_name,
+            event_name="test_seed",
+            knowledge_type="test",
+            severity=severity,
+            title=f"Seed knowledge {index}",
+            message=f"Seeded by test for {agent_name}",
+            account_id=account_id,
+        )
+        knowledge_ids.append(knowledge.id)
+
+    return knowledge_ids
+
+
 def test_brain_filters_resolution_and_pagination(
     client: TestClient,
+    db_session: Session,
 ) -> None:
     account = create_premium_account(client)
+
+    seed_account_knowledge(
+        db_session,
+        account_id=account["id"],
+        items=(
+            ("FinanceAgent", "medium"),
+            ("RiskAgent", "high"),
+            ("AnalyticsAgent", "info"),
+        ),
+    )
 
     account_response = client.get(
         "/brain/",
@@ -117,17 +158,16 @@ def test_brain_filters_resolution_and_pagination(
 
 def test_delete_knowledge(
     client: TestClient,
+    db_session: Session,
 ) -> None:
     account = create_premium_account(client)
 
-    list_response = client.get(
-        "/brain/",
-        params={
-            "account_id": account["id"],
-        },
+    knowledge_ids = seed_account_knowledge(
+        db_session,
+        account_id=account["id"],
+        items=(("FinanceAgent", "medium"),),
     )
-
-    knowledge_id = list_response.json()[0]["id"]
+    knowledge_id = knowledge_ids[0]
 
     delete_response = client.delete(
         f"/brain/{knowledge_id}",

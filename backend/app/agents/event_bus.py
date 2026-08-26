@@ -13,12 +13,13 @@ class EventBus:
     """
     Porta de entrada dos eventos do Auneron AI.
 
-    Na Sprint 6, a execução dos agentes passou
-    a ser coordenada pelo AIOrchestrator.
+    O EventBus preserva a geração de decisões do Orchestrator em modo
+    observe-only. A execução de handlers legados permanece em quarentena e
+    não é uma fronteira de autoridade.
 
-    O método subscribe permanece temporariamente
-    para compatibilidade com partes antigas do projeto,
-    mas os novos agentes devem usar o AgentRegistry.
+    O método subscribe permanece temporariamente para compatibilidade com
+    partes antigas do projeto. Os callbacks legados não são executados por
+    publish().
     """
 
     def __init__(self) -> None:
@@ -35,9 +36,9 @@ class EventBus:
         """
         Mantido temporariamente por compatibilidade.
 
-        Os agentes da arquitetura atual devem utilizar:
-
-        registry.register(event_name, handler)
+        Os agentes da arquitetura legada continuam registrados no
+        AgentRegistry somente como referência de migração e metadado de
+        decisão. EventBus.publish não executa esses callbacks.
         """
 
         callbacks = (
@@ -56,14 +57,13 @@ class EventBus:
         payload: dict[str, Any],
     ) -> None:
         """
-        Publica o evento para o AIOrchestrator.
+        Publica o evento em modo observe-only.
 
-        Os callbacks antigos não são executados aqui,
-        evitando que agentes registrados nos dois
-        mecanismos sejam processados em duplicidade.
+        A decisão e a seleção de agentes podem ser observadas, mas nenhum
+        ExecutionPipeline ou handler legado é executado a partir desta porta.
         """
 
-        AIOrchestrator.execute(
+        AIOrchestrator.observe(
             event_name=event_name,
             payload=payload,
         )
