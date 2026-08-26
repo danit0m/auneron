@@ -200,3 +200,21 @@ agent names are advisory data only. Commit 25E creates no Work, selects no Skill
 changes no Approval behavior and adds no automatic retry/replan. A future
 Decision-to-Work proposal adapter requires its own authority and idempotency
 design before implementation.
+
+## Advisory Orchestrator-to-Skill binding projection
+
+Commit 25F adds a SELECT-only internal projection from the quarantined legacy
+Orchestrator's advisory `selected_agents` metadata to existing enabled
+`AgentSkillBinding` records. Only published SkillVersions on active Skills are
+eligible, and repository ordering (`priority ASC`, `id ASC`) is preserved.
+
+The projection returns a bounded metadata allowlist and intentionally excludes
+binding configuration, handler references, manifests, capabilities, input
+payload, authority identity, Approval state, runtime context and Memory. A
+projected binding is advisory metadata only: it grants no authority and is not
+executable intent.
+
+25F adds no production EventBus wiring and does not create Work, configure or
+dispatch WorkSkillExecution, invoke governed Skill execution, mutate Approval or
+Memory, or synthesize `authority_user_id`. A later bridge requires a separate
+authority provenance and recovery contract before any action can be enabled.

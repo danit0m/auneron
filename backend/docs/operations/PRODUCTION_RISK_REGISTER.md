@@ -162,3 +162,22 @@ future Decision-to-Work proposal adapter still needs persisted authority
 provenance, exact Skill mapping, idempotency, approval semantics and recovery
 before it can be enabled. Automatic Work creation, Skill selection, action
 selection and retry/replan remain blocked.
+
+## Commit 25F advisory Skill binding projection
+
+25F reduces Skill-mapping ambiguity without relaxing the 25E quarantine. It
+projects advisory legacy agent names to enabled AgentSkillBinding metadata using
+SELECT-only repository reads, then filters to published SkillVersions and active
+Skills.
+
+The projection is deliberately non-authoritative and non-executable. Binding
+configuration, handler references, manifests, capabilities, payloads, authority
+identity, Approval state, runtime context and Memory are excluded. There is no
+production EventBus hookup, Work creation, Skill execution, Approval mutation,
+Memory mutation, public API change or schema migration.
+
+Residual risk remains at the authority boundary: the legacy EventBus still
+carries no authorized user principal. A future Decision-to-Work bridge must
+persist and revalidate authority provenance, define exact proposal/idempotency
+semantics, preserve Approval scope and add crash/reconciliation behavior before
+projection metadata may influence action.
