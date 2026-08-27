@@ -1,6 +1,9 @@
 from app.models.account import Account
 from app.models.approval import ApprovalDecision
 from app.models.approval import ApprovalRequest
+from app.models.authenticated_advisory_proposal import (
+    AuthenticatedAdvisoryProposal,
+)
 from app.models.auth_session import AuthSession
 from app.models.knowledge import Knowledge
 from app.models.memory import MemoryEvidence
@@ -27,6 +30,7 @@ __all__ = [
     "Account",
     "ApprovalDecision",
     "ApprovalRequest",
+    "AuthenticatedAdvisoryProposal",
     "AuthSession",
     "Knowledge",
     "MemoryEvidence",

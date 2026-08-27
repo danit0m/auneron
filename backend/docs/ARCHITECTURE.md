@@ -283,3 +283,21 @@ The returned envelope remains provenance-only advisory context. Any future
 mutating consumer must reload current user/session authority, reauthorize
 current scope and the exact Skill, and fail closed for stale, revoked, expired,
 disabled or unauthorized authority.
+
+## Authenticated advisory proposal durability (25J)
+
+The internal `AuthenticatedAdvisoryProposalService` may durably snapshot an
+already-authenticated advisory envelope under protocol
+`authenticated_advisory_v1`. The proposal is immutable and non-executable.
+Its idempotency identity is `authority_user_id + auth_session_id +
+idempotency_key`; `request_id` remains correlation metadata only.
+
+The snapshot stores only the decision name, ordered selected agents, and safe
+ordered advisory Skill-binding metadata. It excludes reason, confidence,
+signals, event payload/name, role, permissions, scope, elevation, credentials,
+tokens, Work, Approval, Memory, and execution intent.
+
+Durable authority IDs are provenance references without foreign-key retention
+coupling and grant no authority. Every future mutating consumer must reload the
+current user/session, reauthorize current scope and the exact Skill, and fail
+closed before any action.

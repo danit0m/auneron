@@ -1,0 +1,20 @@
+class AdvisoryProposalError(Exception):
+    """Base error for durable authenticated advisory proposals."""
+
+
+class AdvisoryProposalValidationError(AdvisoryProposalError):
+    """Input violates the immutable advisory proposal contract."""
+
+
+class AdvisoryProposalConflictError(AdvisoryProposalError):
+    """Persisted advisory proposal state conflicts with the request."""
+
+
+class AdvisoryProposalIdempotencyConflictError(
+    AdvisoryProposalConflictError
+):
+    """One idempotency identity was reused for different advisory content."""
+
+
+class AdvisoryProposalNotFoundError(AdvisoryProposalError):
+    """Durable advisory proposal does not exist."""

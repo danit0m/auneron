@@ -251,3 +251,20 @@ Residual risk remains at the production bridge boundary. Authenticated capture,
 durable advisory proposal identity/idempotency, crash recovery, Work
 materialization, Approval semantics and governed dispatch still require
 separate designs and gates before advisory decisions may produce actions.
+
+### 25J — Durable authenticated advisory proposals
+
+The system may persist an immutable authenticated advisory proposal for crash
+recovery and idempotent advisory continuity. Persistence itself remains
+non-executable and grants no authority.
+
+Controls: identity is scoped by authenticated user + authentication session +
+canonical idempotency key; the snapshot is protocol-bound and digest-verified;
+payload/event name and decision internals are excluded; database bounds and a
+unique constraint fail closed; transaction races re-read the exact identity
+after rollback.
+
+Residual risk remains intentionally outside 25J: proposal consumption must
+reload and reauthorize current authority. Work materialization, Approval
+bridging, governed Skill execution, EventBus integration, and public route
+capture require separate architecture designs and gates.
