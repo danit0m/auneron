@@ -226,3 +226,28 @@ Residual risk remains in the deferred bridge: a production capture point,
 durable proposal identity, idempotency, crash recovery and reconciliation are
 still required before advisory context can influence Work materialization or
 governed Skill execution.
+
+## Commit 25I authenticated advisory envelope assembly
+
+25I composes the 25G/25H authority and advisory foundations without enabling a
+production bridge.
+
+- Authority is derived from `AuthenticatedSession` only; callers cannot provide
+  authority user/session ids.
+- `AIOrchestrator.observe` is the only Orchestrator entry used. Legacy execute
+  and EventBus publish remain blocked from the assembly path.
+- Advisory Skill projection is injected and remains SELECT-only.
+- `event_name` and `payload` are ephemeral and are not persisted or copied into
+  the immutable envelope.
+- Role, permissions, scope and session elevation are not copied.
+- The assembly module has no direct SQLAlchemy Session dependency.
+- There is no Work creation, Skill execution, Approval/Memory mutation,
+  production route wiring, public API change or schema migration.
+- Future mutating consumers must reload current user/session state and
+  reauthorize current scope and the exact Skill, failing closed on stale,
+  revoked, expired, disabled or unauthorized authority.
+
+Residual risk remains at the production bridge boundary. Authenticated capture,
+durable advisory proposal identity/idempotency, crash recovery, Work
+materialization, Approval semantics and governed dispatch still require
+separate designs and gates before advisory decisions may produce actions.

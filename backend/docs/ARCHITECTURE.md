@@ -260,3 +260,26 @@ disabled authority.
 The first 25H APPLY has no production EventBus or route wiring, no database
 access, no Work creation, no Skill execution, no Approval/Memory mutation, no
 public API and no schema migration.
+
+## Authenticated advisory envelope assembly service
+
+Commit 25I adds an internal non-routed assembly service that composes the
+existing authenticated authority provenance, observe-only Orchestrator decision,
+SELECT-only advisory Skill projection and immutable authenticated advisory
+envelope.
+
+The only authority source is the existing server `AuthenticatedSession`.
+`authority_user_id` and `auth_session_id` cannot be supplied by the caller.
+`event_name` is bounded non-blank text and `payload` must be a dictionary; both
+are ephemeral inputs and are not copied into the envelope or persisted.
+
+The assembly calls only `AIOrchestrator.observe`, never legacy execute or
+EventBus publish. Its projection dependency is injected and remains SELECT-only.
+The assembly module has no direct database Session dependency and creates no
+Work, executes no Skill, mutates no Approval or Memory, exposes no production
+route and changes no public API or database schema.
+
+The returned envelope remains provenance-only advisory context. Any future
+mutating consumer must reload current user/session authority, reauthorize
+current scope and the exact Skill, and fail closed for stale, revoked, expired,
+disabled or unauthorized authority.
