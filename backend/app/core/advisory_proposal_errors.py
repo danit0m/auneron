@@ -18,3 +18,15 @@ class AdvisoryProposalIdempotencyConflictError(
 
 class AdvisoryProposalNotFoundError(AdvisoryProposalError):
     """Durable advisory proposal does not exist."""
+
+
+class AdvisoryProposalConsumptionAuthorizationError(
+    AdvisoryProposalError
+):
+    """Current authenticated authority cannot consume the proposal."""
+
+
+class AdvisoryProposalConsumptionStaleError(
+    AdvisoryProposalConflictError
+):
+    """Persisted advisory proposal no longer matches current safe state."""

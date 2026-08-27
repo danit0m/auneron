@@ -268,3 +268,26 @@ Residual risk remains intentionally outside 25J: proposal consumption must
 reload and reauthorize current authority. Work materialization, Approval
 bridging, governed Skill execution, EventBus integration, and public route
 capture require separate architecture designs and gates.
+
+### 25K — Authenticated advisory proposal reauthorization validation
+
+25K reduces the risk that durable advisory metadata is mistaken for live
+authority. A stored proposal can influence no action until one exact binding
+candidate is checked against the current authenticated user/session, current
+catalog state, and current Skill/scope policy.
+
+Controls: exact proposal user/session ownership is required; current session
+revocation, expiry, token identity and user activity are rechecked; binding,
+version and Skill drift fails stale; `authorize_skill_execution` re-applies
+current role, current server-derived elevation, capability rules, account scope,
+and user scope against the ephemeral candidate input.
+
+The 25K result is a frozen ephemeral validation, not an authority token, and
+does not survive TOCTOU. There is no runtime invocation, no Work or Approval
+mutation, no EventBus integration, no database write/lock, and no public route
+or schema/OpenAPI change.
+
+Residual risk remains intentionally deferred to a later dispatch/materialization
+boundary: final execution must reauthorize again, Approval semantics remain
+separate, and binding configuration cannot become execution authority under
+`authenticated_advisory_v1`.

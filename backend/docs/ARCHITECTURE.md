@@ -301,3 +301,24 @@ Durable authority IDs are provenance references without foreign-key retention
 coupling and grant no authority. Every future mutating consumer must reload the
 current user/session, reauthorize current scope and the exact Skill, and fail
 closed before any action.
+
+## Authenticated advisory proposal reauthorization validation (25K)
+
+25K adds an internal, non-routed, SELECT-only consumer for one exact binding
+candidate from a durable authenticated advisory proposal. The stored proposal
+remains provenance-only and grants no authority.
+
+The boundary reloads the current User and AuthSession, verifies exact
+user/session identity and current session validity, reloads the exact current
+binding/version/Skill, and calls `authorize_skill_execution` with the current
+role, current server-derived session elevation, and the candidate's ephemeral
+input payload. Missing, revoked, expired, disabled, stale, or unauthorized state
+fails closed.
+
+The returned frozen validation is not reusable authorization and does not
+survive TOCTOU. Any later governed execution, Work or Approval mutation must
+reauthorize again at its final action boundary.
+
+25K has no runtime invocation, Work/Approval/Memory mutation, EventBus wiring,
+public route, database write, row lock, schema migration, Alembic change, or
+OpenAPI change.
