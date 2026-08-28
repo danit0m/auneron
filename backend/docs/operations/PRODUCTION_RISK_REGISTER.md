@@ -291,3 +291,27 @@ Residual risk remains intentionally deferred to a later dispatch/materialization
 boundary: final execution must reauthorize again, Approval semantics remain
 separate, and binding configuration cannot become execution authority under
 `authenticated_advisory_v1`.
+
+### 25L — Authenticated advisory read-only governed dispatch
+
+25L permits one narrowly bounded autonomous action from an authenticated
+advisory proposal only after 25K revalidates the exact current candidate.
+
+Controls: eligibility is limited to `read_only` + `internal_python`; actor
+identity is server-derived; `authority_user_id` comes from current 25K
+reauthorization; and final execution goes only through
+`GovernedSkillExecutionService`, which rechecks current authority, exact
+Skill/scope, autonomy policy, and trusted isolated handler state.
+
+Runtime idempotency is server-derived as
+`advisory:<proposal_id>:<binding_id>`. Same-input retries replay the existing
+invocation; a different input under the same candidate identity conflicts before
+a second handler execution. The existing durable SkillInvocation `running`
+ledger remains the crash boundary and stale-running recovery remains
+authoritative.
+
+Residual risk remains intentionally deferred: mutating and external actions
+still require separate Approval-sensitive bridges; plugin autonomy remains
+blocked; and Decision-to-Work materialization, EventBus production integration,
+public routes, distributed abuse control, and stronger external side-effect
+reconciliation remain outside 25L.

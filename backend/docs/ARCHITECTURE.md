@@ -322,3 +322,32 @@ reauthorize again at its final action boundary.
 25K has no runtime invocation, Work/Approval/Memory mutation, EventBus wiring,
 public route, database write, row lock, schema migration, Alembic change, or
 OpenAPI change.
+
+## Authenticated advisory read-only governed dispatch (25L)
+
+25L enables the first action path from one durable authenticated advisory
+proposal candidate, while preserving the separation between advisory metadata
+and live authority.
+
+`AuthenticatedAdvisoryProposalDispatchService` accepts only `proposal_id`,
+server-derived `AuthenticatedSession`, `binding_id`, and ephemeral
+`input_payload`. It canonicalizes the input and calls the 25K
+`AuthenticatedAdvisoryProposalConsumptionService.validate` inside the dispatch;
+a caller cannot supply or reuse a prior validation result as authority.
+
+Only candidates that remain exactly `read_only` + `internal_python` are
+eligible. Actor attribution is derived server-side as
+`agent:<validated agent_name>` and the runtime idempotency key is derived as
+`advisory:<proposal_id>:<binding_id>`. The key makes one proposal binding
+candidate one governed action identity: same-input retries replay, while
+different-input retries conflict before a second handler execution.
+
+The final action is delegated exclusively to
+`GovernedSkillExecutionService.execute`, which reloads current authority and
+Skill state, evaluates the existing low-risk autonomy policy, requires the
+trusted isolated handler contract, and re-runs `authorize_skill_execution`
+immediately before runtime. 25L does not call `SkillRuntimeService` directly.
+
+Mutating, external, and plugin autonomous dispatch remain blocked. Approval
+bridging, Work materialization, EventBus integration, public routes, schema
+changes, Alembic changes, and OpenAPI changes remain separate checkpoints.

@@ -30,3 +30,6 @@ class AdvisoryProposalConsumptionStaleError(
     AdvisoryProposalConflictError
 ):
     """Persisted advisory proposal no longer matches current safe state."""
+
+class AdvisoryProposalDispatchNotAllowedError(AdvisoryProposalError):
+    """Validated advisory candidate is not eligible for governed 25L dispatch."""
