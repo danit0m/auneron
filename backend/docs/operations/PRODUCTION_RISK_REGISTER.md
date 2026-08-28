@@ -315,3 +315,28 @@ still require separate Approval-sensitive bridges; plugin autonomy remains
 blocked; and Decision-to-Work materialization, EventBus production integration,
 public routes, distributed abuse control, and stronger external side-effect
 reconciliation remain outside 25L.
+
+### 25M — Authenticated advisory mutating Approval bridge
+
+25M reduces the risk of a mutating advisory recommendation bypassing explicit
+human Approval while preserving the proposal as non-authoritative provenance.
+
+Controls: both request and approved-dispatch phases re-run 25K current
+user/session, binding, Skill, RBAC and scope validation; the requester identity
+is server-derived as `agent:<agent_name>`; the Approval idempotency identity is
+`advisory:<proposal_id>:<binding_id>`; and persisted Approval correlation is
+checked against exact actor, SkillVersion, canonical input, high-risk policy,
+required permission, and account/user scope.
+
+The bridge never writes an Approval decision and cannot call
+`SkillRuntimeService` directly. Final mutation is delegated only to
+`GovernedSkillExecutionService`, where approved/unexpired state, current human
+decider permission, current authority, exact action fingerprint,
+ApprovalConsumption uniqueness, trusted handler state and runtime idempotency
+`approval:<approval_request_id>` are revalidated.
+
+Residual risk remains deferred: external/sensitive advisory execution is not
+enabled; plugin autonomy remains blocked; and Work materialization, Memory
+feedback, EventBus production wiring, public advisory action routes, schema
+changes and distributed external side-effect reconciliation remain separate
+checkpoints.

@@ -351,3 +351,32 @@ immediately before runtime. 25L does not call `SkillRuntimeService` directly.
 Mutating, external, and plugin autonomous dispatch remain blocked. Approval
 bridging, Work materialization, EventBus integration, public routes, schema
 changes, Alembic changes, and OpenAPI changes remain separate checkpoints.
+
+## Authenticated advisory mutating Approval bridge (25M)
+
+25M extends authenticated advisory action handling to `mutating` +
+`internal_python` candidates without converting advisory state into authority.
+
+`AuthenticatedAdvisoryProposalApprovalBridgeService` has two internal phases.
+`request_approval(...)` canonicalizes ephemeral input, re-runs the 25K
+`AuthenticatedAdvisoryProposalConsumptionService.validate`, derives the agent
+requester and `advisory:<proposal_id>:<binding_id>` idempotency identity
+server-side, and delegates exact ApprovalRequest creation to
+`ApprovalService.create_skill_execution_request`.
+
+The bridge never decides Approval. Human decision remains the existing
+authenticated `/approvals` boundary. `dispatch_approved(...)` canonicalizes
+the input and re-runs 25K validation again, reloads the opaque ApprovalRequest,
+requires exact actor/key/version/input/risk/permission/scope correlation, and
+then delegates only to `GovernedSkillExecutionService.execute` with
+`approval_request_id`.
+
+Final governed execution retains current Skill and scope authorization, current
+human decider authority, Approval expiry/status/fingerprint validation,
+one-time ApprovalConsumption semantics, trusted internal handler enforcement,
+and runtime idempotency `approval:<approval_request_id>`.
+
+25M does not change the public Approval API and adds no public route, production
+wiring, Work materialization, Memory integration, EventBus integration, schema,
+Alembic, or OpenAPI surface. Read-only execution remains 25L; external and
+plugin autonomous execution remain blocked/deferred.

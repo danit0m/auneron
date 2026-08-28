@@ -33,3 +33,12 @@ class AdvisoryProposalConsumptionStaleError(
 
 class AdvisoryProposalDispatchNotAllowedError(AdvisoryProposalError):
     """Validated advisory candidate is not eligible for governed 25L dispatch."""
+
+class AdvisoryProposalApprovalNotAllowedError(AdvisoryProposalError):
+    """Validated advisory candidate is not eligible for the 25M Approval bridge."""
+
+
+class AdvisoryProposalApprovalCorrelationError(
+    AdvisoryProposalConflictError
+):
+    """Persisted Approval identity diverges from the current advisory candidate."""
