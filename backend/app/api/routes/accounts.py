@@ -1,14 +1,29 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.agents.event_bus import event_bus
+from app.core.authentication import AuthenticatedSession
 from app.core.authentication import require_permission
 from app.database.database import get_db
 from app.models.account import Account
+from app.repositories.skill_repository import SkillRepository
 from app.schemas.account import (
     AccountCreate,
     AccountResponse,
     AccountUpdate,
+)
+from app.services.authenticated_advisory_envelope_assembly import (
+    AuthenticatedAdvisoryEnvelopeAssemblyService,
+)
+from app.services.authenticated_advisory_proposal_service import (
+    AuthenticatedAdvisoryProposalService,
+)
+from app.services.orchestrator_skill_binding_projection import (
+    OrchestratorSkillBindingProjectionService,
+)
+account_logger = logging.getLogger(
+    "auneron.account"
 )
 
 
@@ -112,10 +127,12 @@ def get_account(
     "/",
     response_model=AccountResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=manage_dependencies,
 )
 def create_account(
     payload: AccountCreate,
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("clients.manage")
+    ),
     db: Session = Depends(get_db),
 ):
     account = Account(
@@ -126,20 +143,45 @@ def create_account(
     db.commit()
     db.refresh(account)
 
+    advisory_payload = {
+        "id": account.id,
+        "cliente": account.cliente,
+        "email": account.email,
+        "whatsapp": account.whatsapp,
+        "valor": account.valor,
+        "vencimento": str(
+            account.vencimento
+        ),
+        "status": account.status,
+    }
     event_bus.publish(
         "cliente_criado",
-        {
-            "id": account.id,
-            "cliente": account.cliente,
-            "email": account.email,
-            "whatsapp": account.whatsapp,
-            "valor": account.valor,
-            "vencimento": str(
-                account.vencimento
-            ),
-            "status": account.status,
-        },
+        advisory_payload,
     )
+
+    try:
+        projection = OrchestratorSkillBindingProjectionService(
+            SkillRepository(db)
+        )
+        assembly = AuthenticatedAdvisoryEnvelopeAssemblyService(
+            projection
+        )
+        envelope = assembly.assemble(
+            authenticated=authenticated,
+            event_name="cliente_criado",
+            payload=advisory_payload,
+        )
+        AuthenticatedAdvisoryProposalService(db).create(
+            envelope=envelope,
+            idempotency_key=(
+                f"cliente_criado:{account.id}"
+            ),
+        )
+    except Exception:
+        account_logger.exception(
+            "Falha ao registrar proposta advisory autenticada para "
+            "cliente_criado (nao bloqueia a criacao da conta)."
+        )
 
     return account
 
