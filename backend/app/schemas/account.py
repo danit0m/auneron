@@ -60,8 +60,14 @@ class AccountBase(BaseModel):
     )
 
 
-class AccountCreate(AccountBase):
-    pass
+class AccountCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    cliente: str = Field(min_length=2, max_length=150)
+    email: EmailStr | None = None
+    whatsapp: str | None = Field(default=None, max_length=30)
+    valor: Money
+    vencimento: date
 
 
 class AccountUpdate(BaseModel):
@@ -84,7 +90,6 @@ class AccountUpdate(BaseModel):
 
     valor: Money | None = None
     vencimento: date | None = None
-    status: AccountStatus | None = None
 
 
 class AccountResponse(AccountBase):

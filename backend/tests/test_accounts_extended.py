@@ -1,8 +1,12 @@
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.account import Account
 
 
 def create_account(
     client: TestClient,
+    db_session: Session,
     *,
     cliente: str,
     valor: float,
@@ -15,20 +19,30 @@ def create_account(
             "cliente": cliente,
             "valor": valor,
             "vencimento": vencimento,
-            "status": status,
         },
     )
 
     assert response.status_code == 201
 
-    return response.json()
+    created = response.json()
+    if status != "aberto":
+        account = db_session.get(Account, created["id"])
+        assert account is not None
+        account.status = status
+        db_session.commit()
+        db_session.refresh(account)
+        created["status"] = account.status
+
+    return created
 
 
 def test_list_accounts_filters_and_pagination(
     client: TestClient,
+    db_session: Session,
 ) -> None:
     create_account(
         client,
+        db_session,
         cliente="Empresa Alpha Aberta",
         valor=1000.00,
         vencimento="2026-01-10",
@@ -36,6 +50,7 @@ def test_list_accounts_filters_and_pagination(
     )
     create_account(
         client,
+        db_session,
         cliente="Empresa Beta Atrasada",
         valor=2000.00,
         vencimento="2026-01-20",
@@ -43,6 +58,7 @@ def test_list_accounts_filters_and_pagination(
     )
     create_account(
         client,
+        db_session,
         cliente="Empresa Alpha Paga",
         valor=3000.00,
         vencimento="2026-01-30",
@@ -50,6 +66,7 @@ def test_list_accounts_filters_and_pagination(
     )
     create_account(
         client,
+        db_session,
         cliente="Empresa Gama Aberta",
         valor=4000.00,
         vencimento="2026-02-10",

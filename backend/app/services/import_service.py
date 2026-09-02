@@ -262,16 +262,13 @@ def import_clients(filepath: str, db: Session):
                     row.get("status") or ""
                 ).strip().lower()
 
-                if not status:
+                if status and status != "aberto":
                     raise ValueError(
-                        "O campo status está vazio."
+                        "Status inicial não permitido no piloto: "
+                        f"'{status}'. Use aberto ou deixe vazio."
                     )
 
-                if status not in STATUS_VALIDOS:
-                    raise ValueError(
-                        f"Status inválido: '{status}'. "
-                        "Use aberto, pago ou atrasado."
-                    )
+                status = "aberto"
 
                 existente = (
                     db.query(Account)
@@ -293,7 +290,7 @@ def import_clients(filepath: str, db: Session):
                     whatsapp=whatsapp,
                     valor=valor,
                     vencimento=vencimento,
-                    status=status,
+                    status="aberto",
                 )
 
                 db.add(conta)

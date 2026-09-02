@@ -53,22 +53,23 @@ def test_create_get_and_update_account(
 
     updated_account = update_response.json()
 
-    assert updated_account["status"] == "atrasado"
+    assert updated_account["status"] == "aberto"
     assert updated_account["valor"] == 13000.01
 
 
-def test_rejects_invalid_status(
+def test_create_ignores_client_supplied_status(
     client: TestClient,
 ) -> None:
     payload = valid_account_payload()
-    payload["status"] = "pendente"
+    payload["status"] = "atrasado"
 
     response = client.post(
         "/accounts/",
         json=payload,
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 201
+    assert response.json()["status"] == "aberto"
 
 
 def test_rejects_zero_value(

@@ -110,31 +110,26 @@ def _request(
     )
 
 
-def _governed_result(
+def _materialized_result(
     *,
     duplicate=False,
     output=None,
-    approval_request_id=APPROVAL_ID,
+    work_item_id=810,
+    work_skill_execution_id=811,
     approval_consumption_id=CONSUMPTION_ID,
+    invocation_id=INVOCATION_ID,
+    invocation_status="succeeded",
 ):
     if output is None:
         output = {"ok": True}
     return SimpleNamespace(
-        policy=SimpleNamespace(
-            disposition="approval_required",
-            requires_approval=True,
-            risk_level="high",
-        ),
-        invocation=SimpleNamespace(
-            invocation=SimpleNamespace(
-                id=INVOCATION_ID,
-                status="succeeded",
-            ),
-            output=output,
-            duplicate=duplicate,
-        ),
-        approval_request_id=approval_request_id,
+        work_item_id=work_item_id,
+        work_skill_execution_id=work_skill_execution_id,
         approval_consumption_id=approval_consumption_id,
+        invocation_id=invocation_id,
+        invocation_status=invocation_status,
+        duplicate=duplicate,
+        output=output,
     )
 
 
@@ -142,14 +137,14 @@ def _harness(
     *,
     validation=None,
     request=None,
-    governed_result=None,
+    materialized_result=None,
     account_id=None,
     subject_user_id=None,
 ):
     db = MagicMock()
     consumption = MagicMock()
     approval = MagicMock()
-    governed = MagicMock()
+    work_materialization = MagicMock()
 
     candidate = (
         validation
@@ -176,24 +171,24 @@ def _harness(
         )
     )
     approval.get_request.return_value = approval_request
-    governed.execute.return_value = (
-        governed_result
-        if governed_result is not None
-        else _governed_result()
+    work_materialization.materialize_and_execute.return_value = (
+        materialized_result
+        if materialized_result is not None
+        else _materialized_result()
     )
 
     service = AuthenticatedAdvisoryProposalApprovalBridgeService(
         db,
         consumption_service=consumption,
         approval_service=approval,
-        governed_service=governed,
+        work_materialization_service=work_materialization,
     )
 
     return SimpleNamespace(
         db=db,
         consumption=consumption,
         approval=approval,
-        governed=governed,
+        work_materialization=work_materialization,
         service=service,
         authenticated=object(),
         candidate=candidate,
@@ -460,7 +455,7 @@ def test_same_candidate_with_different_input_conflicts_without_second_approval_r
     with pytest.raises(ApprovalIdempotencyConflictError):
         _request_approval(h, input_payload={"amount": 11})
 
-    h.governed.execute.assert_not_called()
+    h.work_materialization.materialize_and_execute.assert_not_called()
 
 
 def test_request_phase_never_executes_governed_runtime_decides_approval_or_wires_other_domains() -> None:
@@ -468,7 +463,7 @@ def test_request_phase_never_executes_governed_runtime_decides_approval_or_wires
 
     _request_approval(h)
 
-    h.governed.execute.assert_not_called()
+    h.work_materialization.materialize_and_execute.assert_not_called()
     source = inspect.getsource(AuthenticatedAdvisoryProposalApprovalBridgeService.request_approval)
     assert ".decide(" not in source
     assert "Work" not in source
@@ -484,7 +479,7 @@ def test_dispatch_invalid_approval_request_id_fails_before_current_candidate_or_
 
     h.consumption.validate.assert_not_called()
     h.approval.get_request.assert_not_called()
-    h.governed.execute.assert_not_called()
+    h.work_materialization.materialize_and_execute.assert_not_called()
 
 
 def test_dispatch_revalidates_candidate_with_normalized_input_and_does_not_accept_request_phase_validation() -> None:
@@ -514,7 +509,7 @@ def test_dispatch_stale_candidate_or_current_authority_failure_stops_before_gove
         with pytest.raises(type(error)):
             _dispatch_approved(h)
 
-        h.governed.execute.assert_not_called()
+        h.work_materialization.materialize_and_execute.assert_not_called()
 
 
 def test_dispatch_read_only_external_or_plugin_candidate_is_rejected_before_governed_execution() -> None:
@@ -527,7 +522,7 @@ def test_dispatch_read_only_external_or_plugin_candidate_is_rejected_before_gove
         h = _harness(validation=candidate)
         with pytest.raises(AdvisoryProposalApprovalNotAllowedError):
             _dispatch_approved(h)
-        h.governed.execute.assert_not_called()
+        h.work_materialization.materialize_and_execute.assert_not_called()
 
 
 def test_dispatch_signature_does_not_accept_caller_actor_authority_idempotency_decision_context_or_consumption() -> None:
@@ -560,7 +555,7 @@ def test_dispatch_exact_matching_approval_request_reaches_governed_boundary() ->
     result = _dispatch_approved(h)
 
     assert result.approval_request_id == APPROVAL_ID
-    h.governed.execute.assert_called_once()
+    h.work_materialization.materialize_and_execute.assert_called_once()
 
 
 def test_dispatch_wrong_proposal_binding_idempotency_identity_is_rejected_before_governed_execution() -> None:
@@ -571,7 +566,7 @@ def test_dispatch_wrong_proposal_binding_idempotency_identity_is_rejected_before
     with pytest.raises(AdvisoryProposalApprovalCorrelationError):
         _dispatch_approved(h)
 
-    h.governed.execute.assert_not_called()
+    h.work_materialization.materialize_and_execute.assert_not_called()
 
 
 def test_dispatch_wrong_requester_identity_or_requester_user_id_is_rejected_before_governed_execution() -> None:
@@ -582,7 +577,7 @@ def test_dispatch_wrong_requester_identity_or_requester_user_id_is_rejected_befo
         h = _harness(request=req)
         with pytest.raises(AdvisoryProposalApprovalCorrelationError):
             _dispatch_approved(h)
-        h.governed.execute.assert_not_called()
+        h.work_materialization.materialize_and_execute.assert_not_called()
 
 
 def test_dispatch_wrong_version_input_digest_or_scope_is_rejected_before_governed_execution() -> None:
@@ -595,36 +590,31 @@ def test_dispatch_wrong_version_input_digest_or_scope_is_rejected_before_governe
         h = _harness(request=req)
         with pytest.raises(AdvisoryProposalApprovalCorrelationError):
             _dispatch_approved(h)
-        h.governed.execute.assert_not_called()
+        h.work_materialization.materialize_and_execute.assert_not_called()
 
 
 def test_pending_rejected_expired_or_otherwise_invalid_approval_cannot_reach_handler_through_governed_execution() -> None:
     for status in ("pending", "rejected", "expired"):
         h = _harness(request=_request(status=status))
-        h.governed.execute.side_effect = ApprovalRequiredError(status)
+        h.work_materialization.materialize_and_execute.side_effect = ApprovalRequiredError(status)
 
         with pytest.raises(ApprovalRequiredError):
             _dispatch_approved(h)
 
-        h.governed.execute.assert_called_once()
+        h.work_materialization.materialize_and_execute.assert_called_once()
 
 
-def test_governed_dispatch_receives_exact_version_actor_current_authority_input_approval_and_no_runtime_key_or_context() -> None:
+def test_work_materialization_dispatch_receives_exact_proposal_binding_authenticated_input_and_approval_identity() -> None:
     h = _harness()
 
     _dispatch_approved(h)
 
-    call = h.governed.execute.call_args
-    assert call.args == (VERSION_ID,)
-    kwargs = call.kwargs
-    assert kwargs["actor"].actor_type == "agent"
-    assert kwargs["actor"].actor_reference == f"agent:{AGENT_NAME}"
-    assert kwargs["actor"].actor_user_id is None
-    assert kwargs["authority_user_id"] == AUTHORITY_USER_ID
+    kwargs = h.work_materialization.materialize_and_execute.call_args.kwargs
+    assert kwargs["proposal_id"] == PROPOSAL_ID
+    assert kwargs["authenticated"] is h.authenticated
+    assert kwargs["binding_id"] == BINDING_ID
     assert kwargs["input_payload"] == INPUT
-    assert kwargs["idempotency_key"] is None
     assert kwargs["approval_request_id"] == APPROVAL_ID
-    assert kwargs["runtime_context"] is None
 
 
 def test_final_governed_boundary_retains_current_skill_scope_approval_human_authority_and_consumption_checks() -> None:
@@ -648,25 +638,24 @@ def test_final_governed_boundary_retains_current_skill_scope_approval_human_auth
 
 
 def test_same_approved_dispatch_retry_returns_same_invocation_without_second_handler_action() -> None:
-    class FakeGoverned:
+    class FakeMaterializer:
         def __init__(self):
             self.handler_runs = 0
             self.seen = {}
 
-        def execute(self, version_id, **kwargs):
+        def materialize_and_execute(self, **kwargs):
             key = kwargs["approval_request_id"]
             duplicate = key in self.seen
             if not duplicate:
                 self.handler_runs += 1
-                self.seen[key] = _governed_result()
-            result = self.seen[key]
+                self.seen[key] = _materialized_result()
             if not duplicate:
-                return result
-            return _governed_result(duplicate=True)
+                return self.seen[key]
+            return _materialized_result(duplicate=True)
 
     h = _harness()
-    fake = FakeGoverned()
-    h.service.governed_service = fake
+    fake = FakeMaterializer()
+    h.service.work_materialization_service = fake
 
     first = _dispatch_approved(h)
     second = _dispatch_approved(h)
@@ -685,7 +674,7 @@ def test_different_input_under_same_candidate_and_approval_is_rejected_before_se
     with pytest.raises(AdvisoryProposalApprovalCorrelationError):
         _dispatch_approved(h, input_payload={"amount": 11})
 
-    assert h.governed.execute.call_count == 1
+    assert h.work_materialization.materialize_and_execute.call_count == 1
 
 
 def test_approved_dispatch_result_is_frozen_with_exact_safe_allowlist() -> None:
@@ -732,7 +721,7 @@ def test_static_and_documentation_contract_forbids_bypass_wiring_schema_api_and_
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
     }
-    assert "self.governed_service.execute" in calls
+    assert "self.work_materialization_service.materialize_and_execute" in calls
     assert "self.approval_service.create_skill_execution_request" in calls
     assert "self.consumption_service.validate" in calls
 
@@ -750,11 +739,11 @@ def test_static_and_documentation_contract_forbids_bypass_wiring_schema_api_and_
         "ApprovalService.create_skill_execution_request",
         "advisory:<proposal_id>:<binding_id>",
         "existing authenticated /approvals API",
-        "GovernedSkillExecutionService.execute",
+        "AuthenticatedAdvisoryProposalWorkMaterializationService.materialize_and_execute",
         "approval:<approval_request_id>",
         "no direct SkillRuntimeService",
         "no external execution",
-        "no Work materialization",
+        "no generic/ad-hoc Work materialization",
         "no Memory integration",
         "no EventBus integration",
         "no public route",
@@ -763,3 +752,12 @@ def test_static_and_documentation_contract_forbids_bypass_wiring_schema_api_and_
         "no OpenAPI change",
     ):
         assert phrase in normalized
+
+
+def test_25o_bridge_routes_approved_dispatch_through_work_materializer() -> None:
+    from pathlib import Path
+    source = Path(
+        "app/services/authenticated_advisory_proposal_approval_bridge_service.py"
+    ).read_text(encoding="utf-8")
+    assert "AuthenticatedAdvisoryProposalWorkMaterializationService" in source
+    assert ".materialize_and_execute(" in source

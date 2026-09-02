@@ -43,18 +43,18 @@ def test_upload_valid_csv(
 
     assert payload["status"] == "sucesso"
     assert payload["arquivo"] == "clientes.csv"
-    assert summary["importados"] == 2
+    assert summary["importados"] == 1
     assert summary["duplicados"] == 0
-    assert summary["erros"] == 0
+    assert summary["erros"] == 1
     assert summary["valor_total"] == pytest.approx(
-        3734.56,
+        1234.56,
     )
 
     accounts_response = client.get(
         "/accounts/",
     )
 
-    assert len(accounts_response.json()) == 2
+    assert len(accounts_response.json()) == 1
 
 
 def test_upload_detects_duplicate_rows(
@@ -115,7 +115,7 @@ def test_upload_reports_invalid_rows(
     assert summary["erros"] == 1
     assert len(result["detalhes_erros"]) == 1
     assert result["detalhes_erros"][0]["linha"] == 3
-    assert "Status inválido" in (
+    assert "Status inicial não permitido no piloto" in (
         result["detalhes_erros"][0]["erro"]
     )
 
@@ -163,3 +163,11 @@ def test_upload_requires_file(
     )
 
     assert response.status_code == 422
+
+
+def test_25o_import_rejects_non_aberto_initial_status_source_contract() -> None:
+    from pathlib import Path
+    source = Path("app/services/import_service.py").read_text(encoding="utf-8")
+    assert 'if status and status != "aberto":' in source
+    assert 'status = "aberto"' in source
+    assert 'status="aberto"' in source

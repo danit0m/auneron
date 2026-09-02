@@ -380,3 +380,13 @@ and runtime idempotency `approval:<approval_request_id>`.
 wiring, Work materialization, Memory integration, EventBus integration, schema,
 Alembic, or OpenAPI surface. Read-only execution remains 25L; external and
 plugin autonomous execution remain blocked/deferred.
+
+## 25O Pilot Decision-to-Work Materialization
+
+The first governed mutable business action is `account.mark_overdue`.
+Its only production corridor is Proposal -> existing 25M Approval -> Work ->
+WorkSkillExecution -> validation-only authorization -> dedicated transactional
+business effect. Generic isolated SkillRuntime execution is blocked for this
+skill. The critical transaction records Account status, SkillInvocation,
+ApprovalConsumption, WorkSkillExecution and WorkEvent receipt atomically.
+No schema/Alembic migration is introduced.

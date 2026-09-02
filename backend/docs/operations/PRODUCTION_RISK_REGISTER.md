@@ -340,3 +340,5 @@ enabled; plugin autonomy remains blocked; and Work materialization, Memory
 feedback, EventBus production wiring, public advisory action routes, schema
 changes and distributed external side-effect reconciliation remain separate
 checkpoints.
+
+| 25O pilot mutable effect | dedicated transactional account.mark_overdue corridor + exact 25M Approval + Work receipt | pilot-only recovery; generic runtime/Work recovery cannot execute the effect | 25O |

@@ -1,8 +1,12 @@
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.account import Account
 
 
 def create_account(
     client: TestClient,
+    db_session: Session,
     *,
     cliente: str,
     valor: float,
@@ -15,18 +19,26 @@ def create_account(
             "cliente": cliente,
             "valor": valor,
             "vencimento": vencimento,
-            "status": status,
         },
     )
 
     assert response.status_code == 201
 
+    if status != "aberto":
+        created = response.json()
+        account = db_session.get(Account, created["id"])
+        assert account is not None
+        account.status = status
+        db_session.commit()
+
 
 def test_dashboard_calculations(
     client: TestClient,
+    db_session: Session,
 ) -> None:
     create_account(
         client,
+        db_session,
         cliente="Cliente Pago",
         valor=1000.00,
         vencimento="2026-03-01",
@@ -34,6 +46,7 @@ def test_dashboard_calculations(
     )
     create_account(
         client,
+        db_session,
         cliente="Cliente Aberto",
         valor=2000.00,
         vencimento="2026-02-01",
@@ -41,6 +54,7 @@ def test_dashboard_calculations(
     )
     create_account(
         client,
+        db_session,
         cliente="Cliente Atrasado",
         valor=3000.00,
         vencimento="2026-01-01",

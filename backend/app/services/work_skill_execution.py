@@ -401,6 +401,125 @@ class WorkSkillExecutionService:
             duplicate=False,
         )
 
+    def configure_with_existing_approval(
+        self,
+        work_item_id: int,
+        *,
+        version_id: int,
+        authority_user_id: int,
+        input_payload: Any,
+        approval_request_id: int,
+    ) -> WorkSkillExecutionResult:
+        normalized_work_id = _positive_id(work_item_id, field_name="work_item_id")
+        normalized_version_id = _positive_id(version_id, field_name="version_id")
+        normalized_authority_id = _positive_id(
+            authority_user_id, field_name="authority_user_id"
+        )
+        normalized_approval_id = _positive_id(
+            approval_request_id, field_name="approval_request_id"
+        )
+        normalized_input, input_digest = approval_input_identity(input_payload)
+        work_item = self.work_repository.lock_by_id(normalized_work_id)
+        if work_item is None:
+            raise WorkNotFoundError("Trabalho inexistente.")
+        if work_item.status != "ready":
+            raise WorkStateError("Somente Work ready aceita Approval 25M.")
+        authority, grant = self._authorize_current_action(
+            work_item=work_item,
+            version_id=normalized_version_id,
+            authority_user_id=normalized_authority_id,
+            input_payload=normalized_input,
+        )
+        if grant.version.execution_mode != "mutating":
+            raise WorkStateError("Approval 25M exige Skill mutating.")
+        request = self.approval_repository.get_request(normalized_approval_id)
+        if (
+            request is None
+            or request.status != "approved"
+            or request.skill_version_id != grant.version.id
+            or request.input_digest != input_digest
+            or request.target_account_id != work_item.account_id
+            or request.target_user_id != work_item.subject_user_id
+            or request.requester_actor_type != "agent"
+            or not request.requester_reference.startswith("agent:")
+        ):
+            raise WorkStateError("ApprovalRequest 25M diverge do Work/Skill/input.")
+        actor_reference = self._actor_reference(work_item.id)
+        dispatch_key = self._dispatch_key(work_item.id, normalized_version_id)
+        existing = self.execution_repository.get_by_work_item(work_item.id)
+        if existing is not None:
+            self._validate_existing_configuration(
+                existing=existing,
+                version_id=normalized_version_id,
+                authority_user_id=normalized_authority_id,
+                actor_reference=actor_reference,
+                dispatch_key=dispatch_key,
+                execution_mode="mutating",
+                input_digest=input_digest,
+            )
+            if existing.approval_request_id != normalized_approval_id:
+                raise WorkConflictError("Work vinculado a outra ApprovalRequest.")
+            if existing.status == "configured":
+                existing.status = "ready"
+                self.db.commit()
+                self.db.refresh(existing)
+            return self._result(
+                existing,
+                work_item=work_item,
+                outcome=self._outcome_for_status(existing.status),
+                duplicate=True,
+            )
+        execution = WorkSkillExecution(
+            work_item_id=work_item.id,
+            skill_version_id=grant.version.id,
+            approval_request_id=normalized_approval_id,
+            approval_consumption_id=None,
+            skill_invocation_id=None,
+            authority_user_id=authority.id,
+            authority_role=authority.role,
+            actor_type="system",
+            actor_reference=actor_reference,
+            dispatch_key=dispatch_key,
+            execution_mode="mutating",
+            input_digest=input_digest,
+            status="ready",
+            last_error_code=None,
+            dispatch_attempts=0,
+            started_at=None,
+            finished_at=None,
+        )
+        try:
+            self.execution_repository.add(execution)
+            self.db.commit()
+            self.db.refresh(execution)
+        except IntegrityError as error:
+            self.db.rollback()
+            existing = self.execution_repository.get_by_work_item(work_item.id)
+            if existing is None:
+                raise WorkConflictError(
+                    "Conflito ao persistir WorkSkillExecution 25O."
+                ) from error
+            self._validate_existing_configuration(
+                existing=existing,
+                version_id=normalized_version_id,
+                authority_user_id=normalized_authority_id,
+                actor_reference=actor_reference,
+                dispatch_key=dispatch_key,
+                execution_mode="mutating",
+                input_digest=input_digest,
+            )
+            if existing.approval_request_id != normalized_approval_id:
+                raise WorkConflictError(
+                    "Conflito concorrente de ApprovalRequest 25O."
+                ) from error
+            execution = existing
+        return self._result(
+            execution,
+            work_item=work_item,
+            outcome=self._outcome_for_status(execution.status),
+            duplicate=False,
+        )
+
     def dispatch(
         self,
         work_item_id: int,

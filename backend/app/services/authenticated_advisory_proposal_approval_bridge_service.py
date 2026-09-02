@@ -21,8 +21,9 @@ from app.services.approval_service import approval_input_identity
 from app.services.authenticated_advisory_proposal_consumption_service import (
     AuthenticatedAdvisoryProposalConsumptionService,
 )
-from app.services.governed_skill_execution import GovernedSkillExecutionService
-from app.services.skill_runtime import SkillInvocationActor
+from app.services.authenticated_advisory_proposal_work_materialization_service import (
+    AuthenticatedAdvisoryProposalWorkMaterializationService,
+)
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,9 @@ class AuthenticatedAdvisoryProposalApprovalBridgeService:
             AuthenticatedAdvisoryProposalConsumptionService | None
         ) = None,
         approval_service: ApprovalService | None = None,
-        governed_service: GovernedSkillExecutionService | None = None,
+        work_materialization_service: (
+            AuthenticatedAdvisoryProposalWorkMaterializationService | None
+        ) = None,
     ) -> None:
         self.db = db
         self.consumption_service = (
@@ -144,10 +147,10 @@ class AuthenticatedAdvisoryProposalApprovalBridgeService:
             if approval_service is not None
             else ApprovalService(db)
         )
-        self.governed_service = (
-            governed_service
-            if governed_service is not None
-            else GovernedSkillExecutionService(db)
+        self.work_materialization_service = (
+            work_materialization_service
+            if work_materialization_service is not None
+            else AuthenticatedAdvisoryProposalWorkMaterializationService(db)
         )
 
     def _validate_eligibility(
@@ -320,32 +323,13 @@ class AuthenticatedAdvisoryProposalApprovalBridgeService:
             input_digest=input_digest,
         )
 
-        actor = SkillInvocationActor(
-            actor_type="agent",
-            actor_reference=actor_reference,
-            actor_user_id=None,
-        )
-
-        governed = self.governed_service.execute(
-            candidate.skill_version_id,
-            actor=actor,
-            authority_user_id=candidate.authority_user_id,
+        materialized = self.work_materialization_service.materialize_and_execute(
+            proposal_id=candidate.proposal_id,
+            authenticated=authenticated,
+            binding_id=candidate.binding_id,
             input_payload=normalized_input,
-            idempotency_key=None,
             approval_request_id=request.id,
-            runtime_context=None,
         )
-
-        if (
-            governed.approval_request_id != request.id
-            or governed.approval_consumption_id is None
-        ):
-            raise AdvisoryProposalApprovalCorrelationError(
-                "Governed execution did not finalize the exact Approval."
-            )
-
-        invocation_result = governed.invocation
-        invocation = invocation_result.invocation
 
         return AuthenticatedAdvisoryProposalApprovedDispatchResult(
             proposal_id=candidate.proposal_id,
@@ -355,9 +339,9 @@ class AuthenticatedAdvisoryProposalApprovalBridgeService:
             agent_name=candidate.agent_name,
             actor_reference=actor_reference,
             approval_request_id=request.id,
-            approval_consumption_id=governed.approval_consumption_id,
-            invocation_id=invocation.id,
-            invocation_status=invocation.status,
-            duplicate=invocation_result.duplicate,
-            output=invocation_result.output,
+            approval_consumption_id=materialized.approval_consumption_id,
+            invocation_id=materialized.invocation_id,
+            invocation_status=materialized.invocation_status,
+            duplicate=materialized.duplicate,
+            output=materialized.output,
         )

@@ -47,6 +47,22 @@ NON_HUMAN_ACTOR_TYPES = frozenset({
 
 
 @dataclass(frozen=True)
+class GovernedApprovedActionValidation:
+    policy: AutonomyPolicyDecision
+    actor: SkillInvocationActor
+    authority: User
+    version: Any
+    skill: Any
+    capabilities: tuple[Any, ...]
+    request: ApprovalRequest
+    decision: ApprovalDecision
+    grant: Any
+    normalized_input: Any
+    input_digest: str
+    effective_now: datetime
+
+
+@dataclass(frozen=True)
 class GovernedSkillExecutionResult:
     policy: AutonomyPolicyDecision
     invocation: SkillInvocationResult
@@ -271,6 +287,11 @@ class GovernedSkillExecutionService:
                 version.id
             )
         )
+
+        if skill.skill_key == "account.mark_overdue":
+            raise ApprovalAuthorizationError(
+                "account.mark_overdue exige o corredor transacional 25O."
+            )
 
         registered = self._require_trusted_autonomy_handler(
             version=version,
@@ -573,6 +594,100 @@ class GovernedSkillExecutionService:
             invocation=invocation_result,
             approval_request_id=request.id,
             approval_consumption_id=finalized.id,
+        )
+
+    def validate_approved_action_only(
+        self,
+        version_id: int,
+        *,
+        actor: SkillInvocationActor,
+        authority_user_id: int,
+        input_payload: Any,
+        approval_request_id: int,
+        now: datetime | None = None,
+    ) -> GovernedApprovedActionValidation:
+        normalized_version_id = _positive_id(version_id, field_name="version_id")
+        normalized_actor = _normalize_actor(actor)
+        normalized_authority_id = _positive_id(
+            authority_user_id, field_name="authority_user_id"
+        )
+        request_id = _positive_id(
+            approval_request_id, field_name="approval_request_id"
+        )
+        effective_now = _normalize_now(now)
+        normalized_input, input_digest = approval_input_identity(input_payload)
+
+        authority = self.db.get(User, normalized_authority_id)
+        if authority is None or not authority.active:
+            raise ApprovalAuthorizationError(
+                "Usuário-principal inexistente ou inativo."
+            )
+        version = self.skill_repository.get_version(normalized_version_id)
+        if version is None or version.status != "published":
+            raise ApprovalNotFoundError(
+                "Versão de skill inexistente ou não publicada."
+            )
+        skill = self.skill_repository.get_skill(version.skill_id)
+        if skill is None or skill.status != "active":
+            raise ApprovalNotFoundError("Skill inexistente ou inativa.")
+        capabilities = tuple(self.skill_repository.list_capabilities(version.id))
+        policy = evaluate_skill_autonomy(
+            actor_type=normalized_actor.actor_type,
+            version=version,
+            capabilities=capabilities,
+        )
+        if policy.disposition == "blocked" or not policy.requires_approval:
+            raise ApprovalAuthorizationError(
+                "A ação piloto não possui política mutating aprovável."
+            )
+        request = self.approval_repository.lock_request(request_id)
+        if request is None:
+            raise ApprovalNotFoundError("Solicitação de aprovação não encontrada.")
+        decision = self.approval_repository.get_decision(request.id)
+        self._validate_approved_action(
+            request=request,
+            decision=decision,
+            actor=normalized_actor,
+            authority=authority,
+            version=version,
+            capabilities=capabilities,
+            policy=policy,
+            normalized_input=normalized_input,
+            input_digest=input_digest,
+            now=effective_now,
+        )
+        sensitive_verified = (
+            request.required_permission == "approval:decide_sensitive"
+            and decision is not None
+            and decision.sensitive_elevation_verified
+        )
+        grant = authorize_skill_execution(
+            db=self.db,
+            role=authority.role,
+            actor_user_id=authority.id,
+            session_elevated=sensitive_verified,
+            version_id=version.id,
+            input_payload=normalized_input,
+        )
+        if (
+            grant.account_id != request.target_account_id
+            or grant.subject_user_id != request.target_user_id
+        ):
+            raise ApprovalStateError("Escopo atual diverge da ação aprovada.")
+        assert decision is not None
+        return GovernedApprovedActionValidation(
+            policy=policy,
+            actor=normalized_actor,
+            authority=authority,
+            version=version,
+            skill=skill,
+            capabilities=capabilities,
+            request=request,
+            decision=decision,
+            grant=grant,
+            normalized_input=normalized_input,
+            input_digest=input_digest,
+            effective_now=effective_now,
         )
 
     def _validate_approved_action(

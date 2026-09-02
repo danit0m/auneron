@@ -49,17 +49,21 @@ re-runs `AuthenticatedAdvisoryProposalConsumptionService.validate` against the
 same canonical input before any execution. It reloads the ApprovalRequest and
 requires exact candidate correlation again.
 
-The final action is only `GovernedSkillExecutionService.execute` with the
-current revalidated SkillVersion, server-derived agent actor, current
-authority user id, canonical input, `idempotency_key=None`, the exact
-`approval_request_id`, and `runtime_context=None`.
+The final action is only
+`AuthenticatedAdvisoryProposalWorkMaterializationService.materialize_and_execute`
+with the current proposal/binding identity, the current authenticated
+session, canonical input, and the exact `approval_request_id`. The bridge
+injects this collaborator through its constructor and never constructs it
+implicitly outside that seam.
 
-The governed boundary remains responsible for the final lock and revalidation
-of the approved/unexpired request, exact actor/version/input fingerprint,
-current human decider permission, current Skill RBAC/scope authorization,
-trusted internal handler, one-time ApprovalConsumption reservation, and the
-runtime ledger. Runtime idempotency is `approval:<approval_request_id>` and is
-owned by governed execution.
+The materialization boundary remains responsible for the same 25M Approval
+reuse, exact actor/version/input fingerprint, current human decider
+permission, current Skill RBAC/scope authorization, trusted internal handler,
+one-time ApprovalConsumption reservation, and the runtime ledger — plus the
+25O Work receipt. No second Approval is created. Runtime idempotency is
+`approval:<approval_request_id>`, owned by the governed boundary the
+materializer revalidates through. Full 25O corridor detail is documented in
+`AUTHENTICATED_ADVISORY_PROPOSAL_WORK_MATERIALIZATION.md`.
 
 A same approved dispatch retry resolves the same invocation without a second
 handler action. Different input cannot consume the Approval for another
@@ -68,10 +72,13 @@ action.
 ## Explicit non-goals
 
 25M has no direct SkillRuntimeService invocation, no Approval decision
-mutation, no external execution, no Work materialization, no Memory
-integration, no EventBus integration, no public route, no production wiring,
-no schema change, no Alembic change, and no OpenAPI change.
+mutation, no external execution, no generic/ad-hoc Work materialization
+outside the frozen 25O corridor, no Memory integration, no EventBus
+integration, no public route, no production wiring, no schema change, no
+Alembic change, and no OpenAPI change.
 
-External/sensitive advisory execution, Decision-to-Work materialization,
-production EventBus wiring, public advisory action routes, and Memory feedback
-remain separate future checkpoints.
+External/sensitive advisory execution, production EventBus wiring, public
+advisory action routes, and Memory feedback remain separate future
+checkpoints. The only Work materialization this bridge performs is the
+narrow, dedicated `account.mark_overdue` corridor frozen by 25O; the bridge
+never routes any other candidate through Work.

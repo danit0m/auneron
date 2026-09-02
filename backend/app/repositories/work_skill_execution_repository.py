@@ -89,6 +89,40 @@ class WorkSkillExecutionRepository:
             ).scalars().all()
         )
 
+    def list_pilot_recovery_candidate_work_ids(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[int]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit < 1
+            or limit > 1000
+        ):
+            raise ValueError("limit inválido para Pilot recovery.")
+        statement = (
+            select(WorkItem)
+            .where(
+                WorkItem.status.in_({"backlog", "ready", "in_progress"}),
+                WorkItem.origin_type == "agent",
+            )
+            .order_by(WorkItem.updated_at, WorkItem.id)
+            .limit(limit * 4)
+        )
+        result = []
+        for item in self.db.execute(statement).scalars().all():
+            context = item.context_data if isinstance(item.context_data, dict) else {}
+            if (
+                context.get("protocol")
+                == "auneron.pilot.account_mark_overdue.v1"
+                and context.get("action_type") == "account.mark_overdue"
+            ):
+                result.append(int(item.id))
+                if len(result) >= limit:
+                    break
+        return result
+
     def list_recovery_candidate_work_ids(
         self,
         *,
