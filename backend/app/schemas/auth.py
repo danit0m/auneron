@@ -14,6 +14,7 @@ UserRole = Literal[
     "executive",
     "administrator",
     "developer",
+    "system",
 ]
 
 
