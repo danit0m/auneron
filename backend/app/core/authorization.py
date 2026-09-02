@@ -8,6 +8,7 @@ UserRole = Literal[
     "executive",
     "administrator",
     "developer",
+    "system",
 ]
 
 Permission = Literal[
@@ -47,6 +48,7 @@ Permission = Literal[
     "approval:read",
     "approval:decide",
     "approval:decide_sensitive",
+    "clients.detect_overdue",
 ]
 
 USER_ROLES: tuple[UserRole, ...] = (
@@ -56,6 +58,7 @@ USER_ROLES: tuple[UserRole, ...] = (
     "executive",
     "administrator",
     "developer",
+    "system",
 )
 
 ROLE_PERMISSIONS: dict[
@@ -211,6 +214,9 @@ ROLE_PERMISSIONS: dict[
         "approval:read",
         "approval:decide",
         "approval:decide_sensitive",
+    }),
+    "system": frozenset({
+        "clients.detect_overdue",
     }),
 }
 

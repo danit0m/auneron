@@ -38,7 +38,8 @@ class User(Base):
             "'manager', "
             "'executive', "
             "'administrator', "
-            "'developer'"
+            "'developer', "
+            "'system'"
             ")",
             name="ck_users_role_valid",
         ),

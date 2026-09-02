@@ -56,6 +56,59 @@ class DecisionRule(ABC):
         """
 
 
+class AccountOverdueDetectionRule(DecisionRule):
+    """
+    Regra dedicada para o evento "conta_vencida", produzido pela
+    varredura agendada de detecção real de vencimento (25Q.0-light).
+    Prioridade 0: precisa ser avaliada antes de UnsupportedEventRule
+    (prioridade 1), que intercepta qualquer evento diferente de
+    "cliente_criado".
+    """
+
+    name = "CONTA_VENCIDA_DETECTADA"
+    priority = 0
+
+    def matches(
+        self,
+        context: DecisionContext,
+    ) -> bool:
+        return context.event_name == "conta_vencida"
+
+    def build_decision(
+        self,
+        context: DecisionContext,
+    ) -> OrchestrationDecision:
+        return OrchestrationDecision(
+            decision_name=self.name,
+            selected_agents=(
+                "OverdueDetectionAgent",
+            ),
+            reason=(
+                "Conta identificada como vencida pela varredura "
+                "agendada, ainda sem decisão humana registrada."
+            ),
+            confidence=1.0,
+            signals=(
+                DecisionSignal(
+                    name="event_name",
+                    value=context.event_name,
+                    description=(
+                        "Evento de detecção real de vencimento."
+                    ),
+                ),
+                DecisionSignal(
+                    name="valor",
+                    value=money_to_json_number(
+                        context.valor
+                    ),
+                    description=(
+                        "Valor financeiro da conta vencida."
+                    ),
+                ),
+            ),
+        )
+
+
 class UnsupportedEventRule(DecisionRule):
     name = "EVENTO_NAO_SUPORTADO"
     priority = 1
@@ -544,6 +597,7 @@ DEFAULT_RULES: tuple[
     sorted(
         (
             UnsupportedEventRule(),
+            AccountOverdueDetectionRule(),
             CriticalOverdueRule(),
             StrategicOverdueRule(),
             OverdueClientRule(),

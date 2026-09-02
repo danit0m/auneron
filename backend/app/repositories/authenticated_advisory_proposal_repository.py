@@ -57,3 +57,31 @@ class AuthenticatedAdvisoryProposalRepository:
         return self.db.execute(
             statement
         ).scalar_one_or_none()
+
+    def find_by_idempotency_key(
+        self,
+        *,
+        idempotency_key: str,
+    ) -> AuthenticatedAdvisoryProposal | None:
+        """
+        Busca uma proposta existente pelo idempotency_key, ignorando
+        authority_user_id e auth_session_id.
+
+        Usada pela detecção real de vencimento (25Q.0-light): a
+        varredura agendada roda sob sessões de autenticação distintas
+        a cada execução (a AuthSession expira), então a deduplicação
+        por (authority_user_id, auth_session_id, idempotency_key) de
+        find_by_idempotency() não é suficiente entre execuções. Aqui
+        a chave é estável por conta ("conta_vencida:{account.id}"),
+        e uma única correspondência já basta para não duplicar a
+        proposta em execuções futuras.
+        """
+        statement = select(
+            AuthenticatedAdvisoryProposal
+        ).where(
+            AuthenticatedAdvisoryProposal.idempotency_key
+            == idempotency_key,
+        )
+        return self.db.execute(
+            statement
+        ).scalars().first()

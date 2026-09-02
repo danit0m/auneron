@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
@@ -7,6 +8,9 @@ from app.core.authentication import AuthenticatedSession
 from app.core.authentication import require_permission
 from app.database.database import get_db
 from app.models.account import Account
+from app.repositories.authenticated_advisory_proposal_repository import (
+    AuthenticatedAdvisoryProposalRepository,
+)
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.account import (
     AccountCreate,
@@ -250,3 +254,84 @@ def delete_account(
     return Response(
         status_code=status.HTTP_204_NO_CONTENT,
     )
+
+
+@router.post(
+    "/detect-overdue",
+)
+def detect_overdue_accounts(
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("clients.detect_overdue")
+    ),
+    db: Session = Depends(get_db),
+):
+    hoje = date.today()
+
+    overdue_accounts = (
+        db.query(Account)
+        .filter(
+            Account.status == "aberto",
+            Account.vencimento < hoje,
+        )
+        .all()
+    )
+
+    propostas_criadas = 0
+    ja_com_proposta = 0
+    falhas = 0
+
+    for account in overdue_accounts:
+        idempotency_key = f"conta_vencida:{account.id}"
+
+        existente = AuthenticatedAdvisoryProposalRepository(
+            db
+        ).find_by_idempotency_key(
+            idempotency_key=idempotency_key
+        )
+        if existente is not None:
+            ja_com_proposta += 1
+            continue
+
+        advisory_payload = {
+            "id": account.id,
+            "cliente": account.cliente,
+            "email": account.email,
+            "whatsapp": account.whatsapp,
+            "valor": account.valor,
+            "vencimento": str(
+                account.vencimento
+            ),
+            "status": account.status,
+        }
+
+        try:
+            projection = OrchestratorSkillBindingProjectionService(
+                SkillRepository(db)
+            )
+            assembly = AuthenticatedAdvisoryEnvelopeAssemblyService(
+                projection
+            )
+            envelope = assembly.assemble(
+                authenticated=authenticated,
+                event_name="conta_vencida",
+                payload=advisory_payload,
+            )
+            AuthenticatedAdvisoryProposalService(db).create(
+                envelope=envelope,
+                idempotency_key=idempotency_key,
+            )
+            propostas_criadas += 1
+        except Exception:
+            falhas += 1
+            account_logger.exception(
+                "Falha ao registrar proposta advisory autenticada para "
+                "conta_vencida (conta_id=%s).",
+                account.id,
+            )
+
+    return {
+        "contas_verificadas": len(overdue_accounts),
+        "propostas_criadas": propostas_criadas,
+        "ja_com_proposta": ja_com_proposta,
+        "falhas": falhas,
+    }
