@@ -195,3 +195,31 @@ class ApprovalRepository:
                 statement
             ).scalars().all()
         )
+
+    def list_approved_agent_requests_without_consumption(
+        self,
+        *,
+        limit: int,
+    ) -> list[ApprovalRequest]:
+        statement = (
+            select(ApprovalRequest)
+            .outerjoin(
+                ApprovalConsumption,
+                ApprovalConsumption.approval_request_id
+                == ApprovalRequest.id,
+            )
+            .where(
+                ApprovalRequest.status == "approved",
+                ApprovalRequest.requester_actor_type == "agent",
+                ApprovalConsumption.id.is_(None),
+            )
+            .order_by(
+                ApprovalRequest.id.asc()
+            )
+            .limit(limit)
+        )
+        return list(
+            self.db.execute(
+                statement
+            ).scalars().all()
+        )

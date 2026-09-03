@@ -26,6 +26,12 @@ from app.services.authenticated_advisory_proposal_service import (
 from app.services.orchestrator_skill_binding_projection import (
     OrchestratorSkillBindingProjectionService,
 )
+from app.models.authenticated_advisory_proposal import (
+    AuthenticatedAdvisoryProposal,
+)
+from app.services.authenticated_advisory_proposal_approval_bridge_service import (
+    AuthenticatedAdvisoryProposalApprovalBridgeService,
+)
 account_logger = logging.getLogger(
     "auneron.account"
 )
@@ -256,6 +262,31 @@ def delete_account(
     )
 
 
+def _pilot_mutating_binding_id(
+    proposal: AuthenticatedAdvisoryProposal,
+) -> int:
+    """
+    Le o snapshot imutavel da proposal e retorna o binding_id do
+    unico candidato mutating (a skill account.mark_overdue, no
+    piloto atual). Levanta ValueError se nao houver exatamente um
+    candidato -- nunca escolhe um binding "por acaso".
+    """
+    matches: list[int] = []
+
+    for agent in proposal.snapshot_payload.get("agents", []):
+        for binding in agent.get("bindings", []):
+            if binding.get("execution_mode") == "mutating":
+                matches.append(binding["binding_id"])
+
+    if len(matches) != 1:
+        raise ValueError(
+            "Esperava exatamente 1 binding mutating na proposal "
+            f"{proposal.id}, encontrado {len(matches)}."
+        )
+
+    return matches[0]
+
+
 @router.post(
     "/detect-overdue",
 )
@@ -279,6 +310,8 @@ def detect_overdue_accounts(
     propostas_criadas = 0
     ja_com_proposta = 0
     falhas = 0
+    aprovacoes_solicitadas = 0
+    aprovacoes_falharam = 0
 
     for account in overdue_accounts:
         idempotency_key = f"conta_vencida:{account.id}"
@@ -288,45 +321,66 @@ def detect_overdue_accounts(
         ).find_by_idempotency_key(
             idempotency_key=idempotency_key
         )
+
         if existente is not None:
             ja_com_proposta += 1
-            continue
+            proposal = existente
+        else:
+            advisory_payload = {
+                "id": account.id,
+                "cliente": account.cliente,
+                "email": account.email,
+                "whatsapp": account.whatsapp,
+                "valor": account.valor,
+                "vencimento": str(
+                    account.vencimento
+                ),
+                "status": account.status,
+            }
 
-        advisory_payload = {
-            "id": account.id,
-            "cliente": account.cliente,
-            "email": account.email,
-            "whatsapp": account.whatsapp,
-            "valor": account.valor,
-            "vencimento": str(
-                account.vencimento
-            ),
-            "status": account.status,
-        }
+            try:
+                projection = OrchestratorSkillBindingProjectionService(
+                    SkillRepository(db)
+                )
+                assembly = AuthenticatedAdvisoryEnvelopeAssemblyService(
+                    projection
+                )
+                envelope = assembly.assemble(
+                    authenticated=authenticated,
+                    event_name="conta_vencida",
+                    payload=advisory_payload,
+                )
+                creation = AuthenticatedAdvisoryProposalService(db).create(
+                    envelope=envelope,
+                    idempotency_key=idempotency_key,
+                )
+                proposal = creation.proposal
+                propostas_criadas += 1
+            except Exception:
+                falhas += 1
+                account_logger.exception(
+                    "Falha ao registrar proposta advisory autenticada para "
+                    "conta_vencida (conta_id=%s).",
+                    account.id,
+                )
+                continue
 
         try:
-            projection = OrchestratorSkillBindingProjectionService(
-                SkillRepository(db)
-            )
-            assembly = AuthenticatedAdvisoryEnvelopeAssemblyService(
-                projection
-            )
-            envelope = assembly.assemble(
+            binding_id = _pilot_mutating_binding_id(proposal)
+            AuthenticatedAdvisoryProposalApprovalBridgeService(db).request_approval(
+                proposal_id=proposal.id,
                 authenticated=authenticated,
-                event_name="conta_vencida",
-                payload=advisory_payload,
+                binding_id=binding_id,
+                input_payload={"account_id": account.id},
             )
-            AuthenticatedAdvisoryProposalService(db).create(
-                envelope=envelope,
-                idempotency_key=idempotency_key,
-            )
-            propostas_criadas += 1
+            aprovacoes_solicitadas += 1
         except Exception:
-            falhas += 1
+            aprovacoes_falharam += 1
             account_logger.exception(
-                "Falha ao registrar proposta advisory autenticada para "
-                "conta_vencida (conta_id=%s).",
+                "Falha ao solicitar aprovacao para conta_vencida "
+                "(conta_id=%s, proposal_id=%s).",
                 account.id,
+                proposal.id,
             )
 
     return {
@@ -334,4 +388,6 @@ def detect_overdue_accounts(
         "propostas_criadas": propostas_criadas,
         "ja_com_proposta": ja_com_proposta,
         "falhas": falhas,
+        "aprovacoes_solicitadas": aprovacoes_solicitadas,
+        "aprovacoes_falharam": aprovacoes_falharam,
     }

@@ -59,6 +59,10 @@ from app.core.pilot_mutation_maintenance import (
     pilot_mutation_maintenance_loop,
     run_pilot_mutation_recovery_async,
 )
+from app.core.authenticated_advisory_dispatch_maintenance import (
+    advisory_dispatch_maintenance_loop,
+    run_advisory_dispatch_recovery_async,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -106,6 +110,7 @@ async def lifespan(_: FastAPI):
         await run_work_skill_execution_recovery_async()
         await run_work_outcome_evaluation_recovery_async()
         await run_pilot_mutation_recovery_async()
+        await run_advisory_dispatch_recovery_async()
 
     maintenance_tasks = (
         asyncio.create_task(
@@ -122,6 +127,9 @@ async def lifespan(_: FastAPI):
         ),
         asyncio.create_task(
             pilot_mutation_maintenance_loop()
+        ),
+        asyncio.create_task(
+            advisory_dispatch_maintenance_loop()
         ),
     )
 

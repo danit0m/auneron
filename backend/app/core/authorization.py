@@ -217,6 +217,9 @@ ROLE_PERMISSIONS: dict[
     }),
     "system": frozenset({
         "clients.detect_overdue",
+        "skill:execute",
+        "skill:execute_mutating",
+        "clients.manage",
     }),
 }
 
