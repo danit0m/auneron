@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app.core.authorization import has_permission
 from app.core.config import settings
+from app.core.pilot_mutation_errors import PilotMutationAuthorizationError
 from app.database.database import SessionLocal
 from app.models.authenticated_advisory_proposal import AuthenticatedAdvisoryProposal
+from app.models.user import User
 from app.repositories.work_repository import WorkRepository
 from app.repositories.work_skill_execution_repository import WorkSkillExecutionRepository
 from app.services.account_mark_overdue_execution_service import AccountMarkOverdueExecutionService
@@ -65,15 +68,31 @@ def run_pilot_mutation_recovery(*, limit: int | None = None) -> int:
                         actor=WorkActor(actor_type="system", actor_reference=f"system:work:{item.id}", actor_user_id=None),
                         status="ready", idempotency_key=f"work:{item.id}:pilot:ready",
                     ).work_item
+                decision = work_exec.approval_repository.get_decision(
+                    approval_request_id
+                )
+                if decision is None or decision.decided_by_user_id is None:
+                    raise PilotMutationAuthorizationError(
+                        "Decisor da aprovacao nao pode ser revalidado."
+                    )
+                decider = db.get(User, decision.decided_by_user_id)
+                if (
+                    decider is None
+                    or not decider.active
+                    or not has_permission(decider.role, request.required_permission)
+                ):
+                    raise PilotMutationAuthorizationError(
+                        "Autoridade humana da aprovacao nao esta mais valida."
+                    )
                 if repo.get_by_work_item(item.id) is None:
                     work_exec.configure_with_existing_approval(
                         item.id, version_id=skill_version_id,
-                        authority_user_id=proposal.authority_user_id,
+                        authority_user_id=decider.id,
                         input_payload=payload, approval_request_id=approval_request_id,
                     )
                 effect.execute(
                     work_item_id=item.id, approval_request_id=approval_request_id,
-                    authority_user_id=proposal.authority_user_id,
+                    authority_user_id=decider.id,
                     actor_reference=request.requester_reference, input_payload=payload,
                 )
                 recovered += 1
