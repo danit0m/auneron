@@ -8,6 +8,7 @@ from app.core.authentication import AuthenticatedSession
 from app.core.authentication import utc_now
 from app.core.config import settings
 from app.database.database import SessionLocal
+from app.models.account import Account
 from app.models.auth_session import AuthSession
 from app.models.authenticated_advisory_proposal import (
     AuthenticatedAdvisoryProposal,
@@ -168,12 +169,26 @@ def run_advisory_dispatch_recovery(
                     session=auth_session,
                 )
 
+                account = db.get(
+                    Account,
+                    request.target_account_id,
+                )
+                if account is None:
+                    raise ValueError(
+                        f"Account {request.target_account_id} nao "
+                        f"encontrada (request_id={request.id})."
+                    )
+
                 bridge.dispatch_approved(
                     proposal_id=proposal_id,
                     authenticated=authenticated,
                     binding_id=binding_id,
                     input_payload={
                         "account_id": request.target_account_id,
+                        "expected_status": "aberto",
+                        "expected_due_date": str(
+                            account.vencimento
+                        ),
                     },
                     approval_request_id=request.id,
                 )

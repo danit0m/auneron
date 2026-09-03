@@ -371,7 +371,13 @@ def detect_overdue_accounts(
                 proposal_id=proposal.id,
                 authenticated=authenticated,
                 binding_id=binding_id,
-                input_payload={"account_id": account.id},
+                input_payload={
+                    "account_id": account.id,
+                    "expected_status": "aberto",
+                    "expected_due_date": str(
+                        account.vencimento
+                    ),
+                },
             )
             aprovacoes_solicitadas += 1
         except Exception:
