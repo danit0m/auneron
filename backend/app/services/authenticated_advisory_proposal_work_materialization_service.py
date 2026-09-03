@@ -5,7 +5,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.advisory_proposal_errors import AdvisoryProposalApprovalCorrelationError
+from app.core.authorization import has_permission
 from app.core.pilot_mutation_errors import PilotMutationAuthorizationError
+from app.models.user import User
 from app.repositories.approval_repository import ApprovalRepository
 from app.repositories.skill_repository import SkillRepository
 from app.services.account_mark_overdue_execution_service import AccountMarkOverdueExecutionService
@@ -75,14 +77,28 @@ class AuthenticatedAdvisoryProposalWorkMaterializationService:
                 actor=WorkActor(actor_type="system", actor_reference=f"system:work:{item.id}", actor_user_id=None),
                 status="ready", idempotency_key=f"work:{item.id}:pilot:ready",
             ).work_item
+        decision = self.approvals.get_decision(request.id)
+        if decision is None or decision.decided_by_user_id is None:
+            raise PilotMutationAuthorizationError(
+                "Decisor da aprovacao nao pode ser revalidado."
+            )
+        decider = self.db.get(User, decision.decided_by_user_id)
+        if (
+            decider is None
+            or not decider.active
+            or not has_permission(decider.role, request.required_permission)
+        ):
+            raise PilotMutationAuthorizationError(
+                "Autoridade humana da aprovacao nao esta mais valida."
+            )
         configured = self.work_execution.configure_with_existing_approval(
             item.id, version_id=candidate.skill_version_id,
-            authority_user_id=candidate.authority_user_id,
+            authority_user_id=decider.id,
             input_payload=normalized_input, approval_request_id=request.id,
         )
         result = self.effect.execute(
             work_item_id=item.id, approval_request_id=request.id,
-            authority_user_id=candidate.authority_user_id,
+            authority_user_id=decider.id,
             actor_reference=actor_reference, input_payload=normalized_input,
         )
         return AuthenticatedAdvisoryProposalWorkMaterializationResult(
