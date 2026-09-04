@@ -250,6 +250,19 @@ class Settings(BaseSettings):
         le=10080,
     )
 
+    client_behavior_min_occurrences_for_pattern: int = Field(
+        default=3,
+        validation_alias="CLIENT_BEHAVIOR_MIN_OCCURRENCES_FOR_PATTERN",
+        ge=1,
+        le=100,
+    )
+    client_behavior_confidence_threshold: float = Field(
+        default=0.85,
+        validation_alias="CLIENT_BEHAVIOR_CONFIDENCE_THRESHOLD",
+        gt=0.0,
+        le=1.0,
+    )
+
     log_level: Literal[
         "DEBUG",
         "INFO",
