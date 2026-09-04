@@ -33,6 +33,14 @@ from app.models.authenticated_advisory_proposal import (
 from app.services.authenticated_advisory_proposal_approval_bridge_service import (
     AuthenticatedAdvisoryProposalApprovalBridgeService,
 )
+from app.api.routes.approvals import _raise_approval_http_error
+from app.core.approval_errors import ApprovalError
+from app.core.approval_observability import log_approval_event
+from app.schemas.account import AccountMarkPaidExecuteRequest
+from app.services.account_mark_paid_execution_service import (
+    AccountMarkPaidExecutionService,
+)
+
 account_logger = logging.getLogger(
     "auneron.account"
 )
@@ -414,4 +422,62 @@ def detect_overdue_accounts(
         "falhas": falhas,
         "aprovacoes_solicitadas": aprovacoes_solicitadas,
         "aprovacoes_falharam": aprovacoes_falharam,
+    }
+
+
+@router.post(
+    "/{account_id}/execute-mark-paid",
+)
+def execute_account_mark_paid(
+    account_id: int,
+    payload: AccountMarkPaidExecuteRequest,
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("approval:decide")
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Executa a transicao governada de uma Account para 'pago'.
+
+    Pressupoe que a aprovacao ja foi solicitada via a rota generica
+    POST /approvals/skill-executions/{version_id} (requester humano) e
+    decidida via a rota generica POST /approvals/{request_id}/decision
+    (decisor humano diferente do requester, garantido pela separacao
+    de deveres ja existente em ApprovalService.decide()). Esta rota
+    apenas consome a aprovacao ja aprovada, via
+    AccountMarkPaidExecutionService (ADR 009 do design doc).
+    """
+    service = AccountMarkPaidExecutionService(db)
+
+    try:
+        result = service.execute(
+            account_id=account_id,
+            approval_request_id=payload.approval_request_id,
+            expected_status=payload.expected_status,
+            authority_user_id=authenticated.user.id,
+        )
+    except ApprovalError as error:
+        _raise_approval_http_error(
+            error,
+            operation="execute",
+            user_id=authenticated.user.id,
+            request_id=payload.approval_request_id,
+        )
+
+    log_approval_event(
+        "approval.skill_execution_consumed",
+        operation="execute",
+        user_id=authenticated.user.id,
+        approval_request_id=result.approval_request_id,
+        status=result.invocation_status,
+        duplicate=result.duplicate,
+    )
+
+    return {
+        "approval_request_id": result.approval_request_id,
+        "approval_consumption_id": result.approval_consumption_id,
+        "invocation_id": result.invocation_id,
+        "invocation_status": result.invocation_status,
+        "duplicate": result.duplicate,
+        "output": result.output,
     }

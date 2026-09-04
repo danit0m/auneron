@@ -100,3 +100,18 @@ class AccountResponse(AccountBase):
 
     id: int
     created_at: datetime
+
+
+AccountMarkPaidExpectedStatus = Literal[
+    "aberto",
+    "atrasado",
+]
+
+
+class AccountMarkPaidExecuteRequest(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    approval_request_id: int = Field(gt=0)
+    expected_status: AccountMarkPaidExpectedStatus
