@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import date
 from datetime import datetime
@@ -8,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.database.database import SessionLocal
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.repositories.memory_repository import MemoryRepository
@@ -16,6 +19,8 @@ from app.services.memory_service import MemoryService
 from app.services.memory_service import RememberResult
 from app.services.memory_service import SupersedeResult
 
+
+logger = logging.getLogger("auneron.client_behavior_memory")
 
 MEMORY_KEY = "client_behavior_payment_pattern"
 MAX_EVIDENCE_CYCLES = 20
@@ -314,9 +319,24 @@ def recalculate_all_client_behavior_patterns(
     skipped = 0
 
     for email in emails:
-        result = apply_client_behavior_memory_pattern(
-            db, memory_service, email
-        )
+        try:
+            result = apply_client_behavior_memory_pattern(
+                db, memory_service, email
+            )
+        except Exception as error:
+            db.rollback()
+            skipped += 1
+            logger.warning(
+                "client_behavior_memory_recalculation_failed",
+                extra={
+                    "event": (
+                        "client_behavior_memory."
+                        "recalculation_failed"
+                    ),
+                    "error_type": type(error).__name__,
+                },
+            )
+            continue
 
         if result is None:
             skipped += 1
@@ -334,3 +354,36 @@ def recalculate_all_client_behavior_patterns(
         superseded=superseded,
         skipped=skipped,
     )
+
+
+def run_client_behavior_memory_recalculation() -> (
+    ClientBehaviorMemoryRecalculationSummary
+):
+    """
+    Abre sua propria sessao de banco e executa um ciclo completo de
+    recalculo da Memoria de comportamento de pagamento (incremento
+    4b). Ponto de entrada sincrono usado pelo wrapper assincrono e
+    pela recuperacao de inicializacao, no mesmo padrao ja usado em
+    app/core/pilot_mutation_maintenance.py.
+    """
+    with SessionLocal() as db:
+        memory_service = MemoryService(db)
+        return recalculate_all_client_behavior_patterns(
+            db, memory_service
+        )
+
+
+async def run_client_behavior_memory_recalculation_async() -> (
+    ClientBehaviorMemoryRecalculationSummary
+):
+    return await asyncio.to_thread(
+        run_client_behavior_memory_recalculation
+    )
+
+
+async def client_behavior_memory_maintenance_loop() -> None:
+    while True:
+        await asyncio.sleep(
+            settings.client_behavior_recalculation_interval_seconds
+        )
+        await run_client_behavior_memory_recalculation_async()

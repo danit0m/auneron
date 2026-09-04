@@ -1,3 +1,4 @@
+import inspect
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
@@ -5,8 +6,10 @@ from datetime import timezone
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.orm import Session
 
+from app.core import client_behavior_memory_maintenance as maintenance_module
 from app.core.client_behavior_memory_maintenance import (
     apply_client_behavior_memory_pattern,
 )
@@ -19,6 +22,7 @@ from app.core.client_behavior_memory_maintenance import (
 from app.core.client_behavior_memory_maintenance import (
     recalculate_all_client_behavior_patterns,
 )
+from app.main import lifespan
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.memory import MemoryItem
@@ -491,3 +495,76 @@ def test_recalculate_all_processes_every_candidate(
     assert summary.created == 1
     assert summary.skipped == 1
     assert summary.superseded == 0
+
+
+def test_recalculate_all_isolates_failures_per_email(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ok_email = _unique_email()
+    _make_paid_cycles(db_session, email=ok_email, month=1, count=3)
+
+    failing_email = _unique_email()
+    _make_paid_cycles(db_session, email=failing_email, month=2, count=3)
+
+    db_session.commit()
+
+    real_apply = maintenance_module.apply_client_behavior_memory_pattern
+
+    def fake_apply(db, memory_service, email):
+        if email == failing_email:
+            raise RuntimeError("falha simulada")
+        return real_apply(db, memory_service, email)
+
+    monkeypatch.setattr(
+        maintenance_module,
+        "apply_client_behavior_memory_pattern",
+        fake_apply,
+    )
+
+    memory_service = MemoryService(db_session)
+
+    summary = maintenance_module.recalculate_all_client_behavior_patterns(
+        db_session,
+        memory_service,
+    )
+
+    assert summary.candidates == 2
+    assert summary.created == 1
+    assert summary.skipped == 1
+    assert summary.superseded == 0
+
+    # A conta que falhou nao deve ter deixado nenhuma memoria orfa.
+    assert (
+        db_session.query(MemoryItem)
+        .filter(
+            MemoryItem.source_reference
+            == f"client_behavior:{failing_email}"
+        )
+        .count()
+        == 0
+    )
+
+
+def test_recalculation_wrappers_and_lifespan_wiring_source_contract() -> None:
+    maintenance_source = inspect.getsource(maintenance_module)
+    lifespan_source = inspect.getsource(lifespan)
+
+    assert "def run_client_behavior_memory_recalculation(" in (
+        maintenance_source
+    )
+    assert "async def run_client_behavior_memory_recalculation_async(" in (
+        maintenance_source
+    )
+    assert "async def client_behavior_memory_maintenance_loop(" in (
+        maintenance_source
+    )
+    assert (
+        "settings.client_behavior_recalculation_interval_seconds"
+        in maintenance_source
+    )
+
+    assert (
+        "run_client_behavior_memory_recalculation_async" in lifespan_source
+    )
+    assert "client_behavior_memory_maintenance_loop" in lifespan_source

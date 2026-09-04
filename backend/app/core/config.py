@@ -262,6 +262,14 @@ class Settings(BaseSettings):
         gt=0.0,
         le=1.0,
     )
+    client_behavior_recalculation_interval_seconds: int = Field(
+        default=300,
+        validation_alias=(
+            "CLIENT_BEHAVIOR_RECALCULATION_INTERVAL_SECONDS"
+        ),
+        ge=60,
+        le=86400,
+    )
 
     log_level: Literal[
         "DEBUG",
