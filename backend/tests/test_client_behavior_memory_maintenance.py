@@ -8,14 +8,23 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.core.client_behavior_memory_maintenance import (
+    apply_client_behavior_memory_pattern,
+)
+from app.core.client_behavior_memory_maintenance import (
     compute_client_behavior_pattern,
 )
 from app.core.client_behavior_memory_maintenance import (
     list_client_behavior_recalculation_candidate_emails,
 )
+from app.core.client_behavior_memory_maintenance import (
+    recalculate_all_client_behavior_patterns,
+)
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.memory import MemoryItem
+from app.services.memory_service import MemoryService
+from app.services.memory_service import RememberResult
+from app.services.memory_service import SupersedeResult
 
 
 def _unique_email() -> str:
@@ -322,3 +331,163 @@ def test_list_candidate_emails_excludes_email_already_up_to_date(
     )
 
     assert email not in candidates
+
+
+def _make_paid_cycles(
+    db_session: Session,
+    *,
+    email: str,
+    month: int,
+    count: int,
+    atraso_dias: int = 2,
+) -> list[Account]:
+    accounts = []
+
+    for index in range(count):
+        vencimento = date(2026, month, 1 + index)
+        account = _make_account(
+            db_session,
+            email=email,
+            vencimento=vencimento,
+            status="pago",
+        )
+        _make_paid_event(
+            db_session,
+            account=account,
+            occurred_at=datetime(
+                vencimento.year,
+                vencimento.month,
+                vencimento.day,
+                tzinfo=timezone.utc,
+            ) + timedelta(days=atraso_dias),
+        )
+        accounts.append(account)
+
+    return accounts
+
+
+def test_apply_returns_none_below_min_occurrences(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    _make_paid_cycles(db_session, email=email, month=7, count=2)
+    db_session.commit()
+
+    memory_service = MemoryService(db_session)
+
+    result = apply_client_behavior_memory_pattern(
+        db_session,
+        memory_service,
+        email,
+    )
+
+    assert result is None
+    assert (
+        db_session.query(MemoryItem)
+        .filter(MemoryItem.source_reference == f"client_behavior:{email}")
+        .count()
+        == 0
+    )
+
+
+def test_apply_creates_memory_first_time(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    accounts = _make_paid_cycles(
+        db_session, email=email, month=8, count=3, atraso_dias=2,
+    )
+    db_session.commit()
+
+    memory_service = MemoryService(db_session)
+
+    result = apply_client_behavior_memory_pattern(
+        db_session,
+        memory_service,
+        email,
+    )
+
+    assert isinstance(result, RememberResult)
+    assert result.created is True
+    assert result.duplicate is False
+    assert result.memory.memory_type == "observation"
+    assert result.memory.scope_type == "account"
+    assert result.memory.account_id == accounts[0].id
+    assert result.memory.status == "active"
+    assert result.memory.source_reference == f"client_behavior:{email}"
+    assert result.memory.context_data["email"] == email
+    assert result.memory.context_data["ocorrencias_resolvidas"] == 3
+    assert len(result.evidence) == 3
+
+
+def test_apply_supersedes_on_recalculation(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    _make_paid_cycles(
+        db_session, email=email, month=9, count=3, atraso_dias=1,
+    )
+    db_session.commit()
+
+    memory_service = MemoryService(db_session)
+
+    first = apply_client_behavior_memory_pattern(
+        db_session,
+        memory_service,
+        email,
+    )
+    assert isinstance(first, RememberResult)
+
+    # Um quarto ciclo pago, com atraso maior -- muda a media.
+    _make_paid_cycles(
+        db_session, email=email, month=10, count=1, atraso_dias=9,
+    )
+    db_session.commit()
+
+    second = apply_client_behavior_memory_pattern(
+        db_session,
+        memory_service,
+        email,
+    )
+
+    assert isinstance(second, SupersedeResult)
+    assert second.previous.id == first.memory.id
+    assert second.previous.status == "superseded"
+    assert second.replacement.status == "active"
+    assert second.replacement.context_data["ocorrencias_resolvidas"] == 4
+    assert second.replacement.confidence != first.memory.confidence
+
+    active_memories = (
+        db_session.query(MemoryItem)
+        .filter(
+            MemoryItem.account_id == first.memory.account_id,
+            MemoryItem.memory_key == "client_behavior_payment_pattern",
+            MemoryItem.status == "active",
+        )
+        .count()
+    )
+    assert active_memories == 1
+
+
+def test_recalculate_all_processes_every_candidate(
+    db_session: Session,
+) -> None:
+    ready_email = _unique_email()
+    _make_paid_cycles(db_session, email=ready_email, month=11, count=3)
+
+    not_ready_email = _unique_email()
+    _make_paid_cycles(db_session, email=not_ready_email, month=12, count=1)
+
+    db_session.commit()
+
+    memory_service = MemoryService(db_session)
+
+    summary = recalculate_all_client_behavior_patterns(
+        db_session,
+        memory_service,
+    )
+
+    assert summary.candidates == 2
+    assert summary.created == 1
+    assert summary.skipped == 1
+    assert summary.superseded == 0

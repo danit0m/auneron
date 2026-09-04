@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from datetime import date
+from datetime import datetime
+from datetime import timezone
 
 from sqlalchemy import select
 from sqlalchemy import text
@@ -8,6 +10,15 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.repositories.memory_repository import MemoryRepository
+from app.services.memory_service import EvidenceInput
+from app.services.memory_service import MemoryService
+from app.services.memory_service import RememberResult
+from app.services.memory_service import SupersedeResult
+
+
+MEMORY_KEY = "client_behavior_payment_pattern"
+MAX_EVIDENCE_CYCLES = 20
 
 
 CANDIDATE_EMAILS_SQL = text(
@@ -146,4 +157,180 @@ def compute_client_behavior_pattern(
         taxa_pagamento=taxa_pagamento,
         confidence=confidence,
         cycles=tuple(cycles),
+    )
+
+
+def _pattern_title(email: str) -> str:
+    return f"Padrão de pagamento — {email}"
+
+
+def _pattern_content(pattern: ClientBehaviorPattern) -> str:
+    return (
+        f"Cliente {pattern.email} paga suas contas com atraso médio de "
+        f"{pattern.atraso_medio_dias:.1f} dia(s) (mínimo "
+        f"{pattern.atraso_min_dias}, máximo {pattern.atraso_max_dias}), "
+        f"com base em {pattern.ocorrencias_resolvidas} ciclo(s) pago(s). "
+        f"Taxa de pagamento observada: {pattern.taxa_pagamento:.0%}. "
+        f"Confiança do padrão: {pattern.confidence:.2f}."
+    )
+
+
+def _pattern_context_data(
+    pattern: ClientBehaviorPattern,
+) -> dict[str, object]:
+    return {
+        "email": pattern.email,
+        "oldest_account_id": pattern.oldest_account_id,
+        "ocorrencias_resolvidas": pattern.ocorrencias_resolvidas,
+        "atraso_medio_dias": pattern.atraso_medio_dias,
+        "atraso_min_dias": pattern.atraso_min_dias,
+        "atraso_max_dias": pattern.atraso_max_dias,
+        "taxa_pagamento": pattern.taxa_pagamento,
+        "confidence": pattern.confidence,
+    }
+
+
+def _pattern_evidence(
+    pattern: ClientBehaviorPattern,
+) -> tuple[EvidenceInput, ...]:
+    # MemoryService aceita no maximo 20 evidencias por chamada. Nao ha
+    # id do AccountEvent no ClientBehaviorCycle (dataclass congelado do
+    # incremento 4a), entao o source_reference e derivado de
+    # account_id + data resolvida, que identifica o evento de origem
+    # de forma equivalente.
+    recent_cycles = sorted(
+        pattern.cycles,
+        key=lambda cycle: cycle.resolved_at,
+        reverse=True,
+    )[:MAX_EVIDENCE_CYCLES]
+
+    return tuple(
+        EvidenceInput(
+            relation="supports",
+            source_type="database",
+            source_reference=(
+                f"account_event:account_id={cycle.account_id}:"
+                f"new_status=pago:occurred_at="
+                f"{cycle.resolved_at.isoformat()}"
+            ),
+            evidence_text=(
+                f"Conta {cycle.account_id}: vencimento "
+                f"{cycle.vencimento.isoformat()}, pago em "
+                f"{cycle.resolved_at.isoformat()} (atraso de "
+                f"{cycle.atraso_dias} dia(s))."
+            ),
+            observed_at=datetime(
+                cycle.resolved_at.year,
+                cycle.resolved_at.month,
+                cycle.resolved_at.day,
+                tzinfo=timezone.utc,
+            ),
+        )
+        for cycle in recent_cycles
+    )
+
+
+def apply_client_behavior_memory_pattern(
+    db: Session,
+    memory_service: MemoryService,
+    email: str,
+) -> RememberResult | SupersedeResult | None:
+    """
+    Aplica (cria ou supersede) a Memoria de comportamento de pagamento
+    de um cliente, a partir do padrao computado pelo incremento 4a.
+
+    Retorna None quando nao ha padrao (poucas ocorrencias resolvidas
+    -- ver compute_client_behavior_pattern), sem escrever nada.
+    """
+    pattern = compute_client_behavior_pattern(db, email)
+
+    if pattern is None:
+        return None
+
+    evidence = _pattern_evidence(pattern)
+    context_data = _pattern_context_data(pattern)
+
+    existing = MemoryRepository(db).find_active_by_key(
+        scope_type="account",
+        memory_key=MEMORY_KEY,
+        account_id=pattern.oldest_account_id,
+    )
+
+    if existing is None:
+        return memory_service.remember(
+            memory_type="observation",
+            title=_pattern_title(email),
+            content=_pattern_content(pattern),
+            scope_type="account",
+            account_id=pattern.oldest_account_id,
+            source_type="derived",
+            source_reference=f"client_behavior:{email}",
+            confidence=pattern.confidence,
+            memory_key=MEMORY_KEY,
+            context_data=context_data,
+            evidence=evidence,
+        )
+
+    return memory_service.supersede(
+        existing.id,
+        reason=(
+            "Recálculo do padrão de comportamento de pagamento "
+            f"após novo evento de pagamento (email: {email})."
+        ),
+        memory_type="observation",
+        title=_pattern_title(email),
+        content=_pattern_content(pattern),
+        source_type="derived",
+        source_reference=f"client_behavior:{email}",
+        confidence=pattern.confidence,
+        context_data=context_data,
+        evidence=evidence,
+    )
+
+
+@dataclass(frozen=True)
+class ClientBehaviorMemoryRecalculationSummary:
+    candidates: int
+    created: int
+    superseded: int
+    skipped: int
+
+
+def recalculate_all_client_behavior_patterns(
+    db: Session,
+    memory_service: MemoryService,
+) -> ClientBehaviorMemoryRecalculationSummary:
+    """
+    Percorre todos os candidatos a recalculo (incremento 4a) e aplica
+    a Memoria de comportamento de cada um (incremento 4b).
+
+    Nao possui wiring em main.py/scheduler -- isso fica para o
+    incremento 4c.
+    """
+    emails = list_client_behavior_recalculation_candidate_emails(db)
+
+    created = 0
+    superseded = 0
+    skipped = 0
+
+    for email in emails:
+        result = apply_client_behavior_memory_pattern(
+            db, memory_service, email
+        )
+
+        if result is None:
+            skipped += 1
+        elif isinstance(result, RememberResult):
+            if result.created:
+                created += 1
+            else:
+                skipped += 1
+        else:
+            superseded += 1
+
+    return ClientBehaviorMemoryRecalculationSummary(
+        candidates=len(emails),
+        created=created,
+        superseded=superseded,
+        skipped=skipped,
     )
