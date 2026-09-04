@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        secrets_dir="/run/secrets",
     )
 
     app_name: str = "Auneron AI"

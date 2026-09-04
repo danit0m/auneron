@@ -1,0 +1,230 @@
+# docker-compose.prod.yml
+#
+# Stack de PRODUCAO do Auneron. Nao e um overlay do docker-compose.yml de
+# desenvolvimento (evita ambiguidade de merge do Compose) -- e um arquivo
+# completo e independente, pensado pra rodar sozinho num servidor dedicado:
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Pre-requisitos antes do primeiro "up":
+#   1. Preencher os arquivos em ../secrets/ (ver secrets/*.example) com os
+#      valores reais. Nunca commitar esses arquivos.
+#   2. Editar ACME_EMAIL abaixo (ou exportar via variavel de ambiente) com
+#      um e-mail real -- e exigido pelo Let's Encrypt pra avisos de
+#      expiracao de certificado.
+#   3. Apontar o registro DNS tipo A do dominio pro IP publico deste
+#      servidor, e esperar propagar antes de subir (senao o desafio HTTP
+#      do Let's Encrypt falha).
+#
+# A senha dentro de secrets/database_url.txt PRECISA ser a mesma senha
+# bruta que esta em secrets/postgres_password.txt -- sao a mesma senha,
+# em dois formatos (URL completa vs. valor isolado que o Postgres le).
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: auneron-postgres-prod
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: auneron
+      POSTGRES_USER: auneron
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      TZ: America/Sao_Paulo
+
+    secrets:
+      - postgres_password
+
+    volumes:
+      - auneron_postgres_prod_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auneron -d auneron"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - db
+
+  migration:
+    image: auneron-backend:prod
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+
+    environment:
+      APP_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_APPLICATION_NAME: auneron-migration-prod
+
+    secrets:
+      - database_url
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: "no"
+
+    networks:
+      - db
+
+  backend:
+    image: auneron-backend:prod
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+
+    container_name: auneron-backend-prod
+    restart: unless-stopped
+
+    environment:
+      APP_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_APPLICATION_NAME: auneron-api-prod
+      CORS_ORIGINS: https://auneron.com.br,https://www.auneron.com.br
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-auneron_session}
+      AUTH_SESSION_TTL_MINUTES: ${AUTH_SESSION_TTL_MINUTES:-480}
+      AUTH_ELEVATION_TTL_MINUTES: ${AUTH_ELEVATION_TTL_MINUTES:-10}
+
+    secrets:
+      - database_url
+      - api_key
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - db
+      - app
+
+  frontend:
+    image: auneron-frontend:prod
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+
+    container_name: auneron-frontend-prod
+    restart: unless-stopped
+
+    # A imagem base (nginx:alpine) espera AUNERON_API_KEY como variavel de
+    # ambiente pronta pra fazer o envsubst do template. Como a chave vive
+    # num Docker secret (arquivo), lemos o arquivo aqui e exportamos a
+    # variavel soh nesse processo, antes de chamar o entrypoint original
+    # da imagem -- sem precisar tocar no Dockerfile ja testado.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export AUNERON_API_KEY="$$(cat /run/secrets/api_key)"
+        exec /docker-entrypoint.sh nginx -g 'daemon off;'
+
+    secrets:
+      - api_key
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+    networks:
+      - app
+      - web
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.auneron.rule=Host(`auneron.com.br`) || Host(`www.auneron.com.br`)"
+      - "traefik.http.routers.auneron.entrypoints=websecure"
+      - "traefik.http.routers.auneron.tls.certresolver=letsencrypt"
+      - "traefik.http.services.auneron.loadbalancer.server.port=80"
+
+  traefik:
+    image: traefik:v3.7
+    container_name: auneron-traefik
+    restart: unless-stopped
+
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=web"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # Redireciona todo trafego HTTP (80) pra HTTPS (443).
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?Defina ACME_EMAIL (e-mail real, exigido pelo Let's Encrypt)}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # Painel do Traefik desligado por padrao -- nao exponha em producao
+      # sem autenticacao configurada.
+      - "--api.dashboard=false"
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - auneron_letsencrypt:/letsencrypt
+
+    networks:
+      - web
+
+secrets:
+  postgres_password:
+    file: ../secrets/postgres_password.txt
+  database_url:
+    file: ../secrets/database_url.txt
+  api_key:
+    file: ../secrets/api_key.txt
+
+volumes:
+  auneron_postgres_prod_data:
+    name: auneron_postgres_prod_data
+  auneron_letsencrypt:
+    name: auneron_letsencrypt
+
+networks:
+  # "db": onde o Postgres vive. internal:true -- sem rota pra internet,
+  # nenhum jeito de expor esse banco por engano no futuro, mesmo que
+  # alguem adicione "ports:" nele sem querer.
+  db:
+    name: auneron_db_prod
+    driver: bridge
+    internal: true
+  # "app": backend <-> frontend. Bridge normal (nao internal), pra nao
+  # bloquear o backend de fazer chamadas de saida no futuro (ex.: envio
+  # de e-mail de notificacao ao cliente, webhooks) -- o Postgres continua
+  # isolado de qualquer forma, porque so ele esta na rede "db".
+  app:
+    name: auneron_app_prod
+    driver: bridge
+  web:
+    name: auneron_web_prod
+    driver: bridge

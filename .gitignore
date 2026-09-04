@@ -94,3 +94,10 @@ Desktop.ini
 *.swp
 *~
 backend/commit*_audit.txt
+
+# ======================
+# Segredos de producao (Docker secrets) -- valores reais nunca vao pro git
+# ======================
+secrets/*
+!secrets/.gitkeep
+!secrets/*.example
