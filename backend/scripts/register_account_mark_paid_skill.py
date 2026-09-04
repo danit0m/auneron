@@ -7,8 +7,9 @@ mesmo padrao ja usado para account.mark_overdue (tambem nunca foi
 seedado em migracao). Idempotente: se a skill_key ja existir, nao
 recria nada e so reporta o estado atual.
 
-Uso:
-    python scripts/register_account_mark_paid_skill.py
+Uso (a partir de backend/, igual ao padrao de scripts/create_user.py
+documentado em docs/AUTHENTICATION.md e docs/DEPLOYMENT.md):
+    python -m scripts.register_account_mark_paid_skill
 """
 
 from app.database.database import SessionLocal
