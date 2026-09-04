@@ -13,6 +13,7 @@ from app.core.pilot_mutation_errors import PilotMutationConflictError
 from app.core.pilot_mutation_errors import PilotMutationStateError
 from app.core.pilot_mutation_errors import PilotMutationValidationError
 from app.models.account import Account
+from app.models.account_event import AccountEvent
 from app.models.approval import ApprovalConsumption
 from app.models.skill import SkillInvocation
 from app.models.work import WorkEvent
@@ -203,6 +204,16 @@ class AccountMarkOverdueExecutionService:
             execution.dispatch_attempts = execution.dispatch_attempts + 1
             execution.started_at = execution.started_at or now
             execution.finished_at = now
+            self.db.add(AccountEvent(
+                account_id=account.id,
+                event_type="status_changed",
+                actor_type="user",
+                actor_reference=f"user:{validation.authority.id}",
+                actor_user_id=validation.authority.id,
+                previous_status="aberto",
+                new_status="atrasado",
+                idempotency_key=f"account_event:{receipt_key}",
+            ))
             self.works.add_event(WorkEvent(
                 work_item_id=work_item.id, event_type="system_note",
                 actor_type="agent", actor_reference=actor_reference, actor_user_id=None,

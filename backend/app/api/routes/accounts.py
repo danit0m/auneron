@@ -8,6 +8,7 @@ from app.core.authentication import AuthenticatedSession
 from app.core.authentication import require_permission
 from app.database.database import get_db
 from app.models.account import Account
+from app.models.account_event import AccountEvent
 from app.repositories.authenticated_advisory_proposal_repository import (
     AuthenticatedAdvisoryProposalRepository,
 )
@@ -199,11 +200,13 @@ def create_account(
 @router.put(
     "/{account_id}",
     response_model=AccountResponse,
-    dependencies=manage_dependencies,
 )
 def update_account(
     account_id: int,
     payload: AccountUpdate,
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("clients.manage")
+    ),
     db: Session = Depends(get_db),
 ):
     account = db.get(
@@ -221,11 +224,26 @@ def update_account(
         exclude_unset=True
     )
 
+    previous_status = account.status
+
     for campo, valor in dados.items():
         setattr(
             account,
             campo,
             valor,
+        )
+
+    if "status" in dados and dados["status"] != previous_status:
+        db.add(
+            AccountEvent(
+                account_id=account.id,
+                event_type="status_changed",
+                actor_type="user",
+                actor_reference=f"user:{authenticated.user.id}",
+                actor_user_id=authenticated.user.id,
+                previous_status=previous_status,
+                new_status=dados["status"],
+            )
         )
 
     db.commit()
