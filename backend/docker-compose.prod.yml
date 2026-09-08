@@ -54,6 +54,8 @@ services:
       context: ..
       dockerfile: backend/Dockerfile
 
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+
     environment:
       APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -61,6 +63,7 @@ services:
 
     secrets:
       - database_url
+      - api_key
 
     depends_on:
       postgres:
