@@ -60,6 +60,7 @@ services:
       APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_APPLICATION_NAME: auneron-migration-prod
+      CORS_ORIGINS: https://auneron.com.br,https://www.auneron.com.br
 
     secrets:
       - database_url
