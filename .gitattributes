@@ -1,0 +1,9 @@
+# Normaliza terminadores de linha para LF no repositorio, independente
+# do SO que fizer o checkout. Evita o ruido de "arquivo modificado" so
+# por diferenca de CRLF/LF entre a maquina local (Windows) e o servidor
+# de producao/CI (Linux).
+
+* text=auto eol=lf
+
+# Binarios explicitos - nunca normalizar.
+frontend/src/assets/hero.png binary
