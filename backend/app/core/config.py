@@ -272,6 +272,23 @@ class Settings(BaseSettings):
         le=86400,
     )
 
+    client_classification_atraso_threshold: float = Field(
+        default=0.50,
+        validation_alias="CLIENT_CLASSIFICATION_ATRASO_THRESHOLD",
+        gt=0.0,
+        le=1.0,
+    )
+    client_classification_recalculation_interval_seconds: int = (
+        Field(
+            default=300,
+            validation_alias=(
+                "CLIENT_CLASSIFICATION_RECALCULATION_INTERVAL_SECONDS"
+            ),
+            ge=60,
+            le=86400,
+        )
+    )
+
     log_level: Literal[
         "DEBUG",
         "INFO",
