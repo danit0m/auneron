@@ -17,6 +17,9 @@ import {
 import {
   useAuth,
 } from "../hooks/useAuth";
+import {
+  useTheme,
+} from "../hooks/useTheme";
 
 import "./Login.css";
 
@@ -67,6 +70,11 @@ export default function Login() {
     isLoading,
     signIn,
   } = useAuth();
+
+  const {
+    resolvedTheme,
+    setTheme,
+  } = useTheme();
 
   const state =
     location.state as
@@ -163,6 +171,48 @@ export default function Login() {
   return (
     <main className="login-screen">
       <section className="login-panel">
+        <div className="login-theme-toggle-row">
+          <div
+            className="login-theme-toggle"
+            role="group"
+            aria-label="Tema"
+          >
+            <button
+              type="button"
+              className={
+                resolvedTheme === "light"
+                  ? "active"
+                  : undefined
+              }
+              aria-pressed={
+                resolvedTheme === "light"
+              }
+              onClick={() =>
+                setTheme("light")
+              }
+            >
+              Claro
+            </button>
+
+            <button
+              type="button"
+              className={
+                resolvedTheme === "dark"
+                  ? "active"
+                  : undefined
+              }
+              aria-pressed={
+                resolvedTheme === "dark"
+              }
+              onClick={() =>
+                setTheme("dark")
+              }
+            >
+              Escuro
+            </button>
+          </div>
+        </div>
+
         <div className="login-brand">
           <div className="login-brand-icon">
             <WalletCards size={30} />
