@@ -485,6 +485,40 @@ tbody tr:hover {
   background: #fee5e5;
 }
 
+/* Fatia 2C -- classificacao comportamental do cliente (distinta do
+   status operacional da conta acima). Convencao local (nao usa
+   ui/Badge), decisao explicita para nao misturar as duas dimensoes. */
+.classification-badge {
+  display: inline-flex;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.classification-regular {
+  color: #047857;
+  background: #dff7ed;
+}
+
+.classification-recurring {
+  color: #b45309;
+  background: #fff1d6;
+}
+
+.classification-insufficient {
+  color: #64748b;
+  background: #eef1f5;
+}
+
+.classification-muted {
+  color: #b0b9c7;
+  font-size: 10px;
+}
+
 .alerts-list {
   padding: 8px 20px 16px;
 }

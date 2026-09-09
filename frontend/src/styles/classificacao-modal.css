@@ -1,0 +1,239 @@
+/* =====================================
+   CLASSIFICACAO MODAL
+   (Fatia 2C -- detalhe read-only da
+   classificacao comportamental do cliente)
+===================================== */
+
+.classificacao-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 28px;
+  background: rgb(15 23 42 / 58%);
+  backdrop-filter: blur(7px);
+  animation:
+    classificacao-overlay-enter
+    180ms ease-out;
+}
+
+.classificacao-modal {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 56px);
+  overflow: hidden auto;
+  border: 1px solid
+    rgb(226 232 240 / 90%);
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow:
+    0 30px 70px
+    rgb(15 23 42 / 28%);
+  animation:
+    classificacao-modal-enter
+    220ms ease-out;
+}
+
+.classificacao-modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  min-height: 86px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e8edf4;
+  background:
+    rgb(255 255 255 / 96%);
+  backdrop-filter: blur(12px);
+}
+
+.classificacao-modal-title-area {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.classificacao-modal-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  place-items: center;
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      135deg,
+      #e9efff,
+      #f0eaff
+    );
+  color: #315bc9;
+}
+
+.classificacao-modal-title-area h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 18px;
+  letter-spacing: -0.3px;
+}
+
+.classificacao-modal-title-area p {
+  margin: 5px 0 0;
+  color: #8490a3;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.classificacao-modal-close {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border: 1px solid #dce4ef;
+  border-radius: 11px;
+  background: #ffffff;
+  color: #778398;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.classificacao-modal-close:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  transform: translateY(-1px);
+}
+
+.classificacao-modal-body {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 24px;
+}
+
+.classificacao-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.classificacao-field span {
+  color: #8490a3;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.classificacao-field strong {
+  color: #253147;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.classificacao-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 17px 24px;
+  border-top: 1px solid #e8edf4;
+  background: #fafbfe;
+}
+
+@keyframes classificacao-overlay-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes classificacao-modal-enter {
+  from {
+    opacity: 0;
+    transform:
+      translateY(12px)
+      scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform:
+      translateY(0)
+      scale(1);
+  }
+}
+
+@media (max-width: 760px) {
+  .classificacao-modal-overlay {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .classificacao-modal {
+    max-height:
+      calc(100vh - 28px);
+    border-radius: 16px;
+  }
+
+  .classificacao-modal-header {
+    min-height: 76px;
+    padding: 16px;
+  }
+
+  .classificacao-modal-icon {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+    border-radius: 12px;
+  }
+
+  .classificacao-modal-title-area h2 {
+    font-size: 16px;
+  }
+
+  .classificacao-modal-title-area p {
+    font-size: 10px;
+  }
+
+  .classificacao-modal-close {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .classificacao-modal-body {
+    grid-template-columns: 1fr;
+    padding: 18px 16px;
+    gap: 15px;
+  }
+
+  .classificacao-modal-footer {
+    padding: 15px 16px;
+  }
+}
+
+@media (
+  prefers-reduced-motion:
+  reduce
+) {
+  .classificacao-modal-overlay,
+  .classificacao-modal {
+    animation: none;
+  }
+}

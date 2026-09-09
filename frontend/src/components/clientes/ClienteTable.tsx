@@ -8,11 +8,20 @@ import {
 } from "lucide-react";
 
 import type { Account } from "../../types/account";
+import type {
+  ClassificationUIState,
+  ClientClassificationLabel,
+} from "../../types/classification";
 
 interface ClienteTableProps {
   clientes: Account[];
+  classificacoes: Record<number, ClassificationUIState>;
   onEdit: (cliente: Account) => void;
   onDelete: (cliente: Account) => void;
+  onClassificacaoClick: (
+    accountId: number,
+    estado: ClassificationUIState,
+  ) => void;
 }
 
 function formatarMoeda(valor: number): string {
@@ -56,10 +65,75 @@ function obterIniciais(nome: string): string {
     .toUpperCase();
 }
 
+const ROTULOS_CLASSIFICACAO: Record<ClientClassificationLabel, string> = {
+  PAGAMENTO_REGULAR: "Pagamento regular",
+  ATRASO_RECORRENTE: "Atraso recorrente",
+  INSUFFICIENT_DATA: "Dados insuficientes",
+};
+
+const CLASSES_CLASSIFICACAO: Record<ClientClassificationLabel, string> = {
+  PAGAMENTO_REGULAR: "classification-badge classification-regular",
+  ATRASO_RECORRENTE: "classification-badge classification-recurring",
+  INSUFFICIENT_DATA: "classification-badge classification-insufficient",
+};
+
+// Fatia 2C -- renderiza a celula de classificacao respeitando o
+// contrato UX congelado: loading/request_failed/not_classified_yet
+// sao texto muted sem badge e sem clique; só um status="classified"
+// vira badge clicavel (abre o modal de detalhe).
+function renderizarClassificacao(
+  accountId: number,
+  estado: ClassificationUIState | undefined,
+  onClassificacaoClick: (
+    accountId: number,
+    estado: ClassificationUIState,
+  ) => void,
+) {
+  if (!estado || estado.kind === "loading") {
+    return (
+      <span className="classification-muted">Carregando...</span>
+    );
+  }
+
+  if (estado.kind === "request_failed") {
+    return (
+      <span className="classification-muted">Indisponível</span>
+    );
+  }
+
+  if (estado.data.status === "not_classified_yet") {
+    return (
+      <span className="classification-muted">
+        Ainda não classificado
+      </span>
+    );
+  }
+
+  const classificacao = estado.data.classification;
+
+  if (!classificacao) {
+    return (
+      <span className="classification-muted">Indisponível</span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={CLASSES_CLASSIFICACAO[classificacao.label]}
+      onClick={() => onClassificacaoClick(accountId, estado)}
+    >
+      {ROTULOS_CLASSIFICACAO[classificacao.label]}
+    </button>
+  );
+}
+
 export default function ClienteTable({
   clientes,
+  classificacoes,
   onEdit,
   onDelete,
+  onClassificacaoClick,
 }: ClienteTableProps) {
   if (clientes.length === 0) {
     return (
@@ -85,6 +159,7 @@ export default function ClienteTable({
             <th>Cliente</th>
             <th>Contato</th>
             <th>Status</th>
+            <th>Classificação</th>
             <th>Valor</th>
             <th>Vencimento</th>
             <th className="clientes-actions-heading">Ações</th>
@@ -137,6 +212,14 @@ export default function ClienteTable({
                 <span className={obterClasseStatus(cliente.status)}>
                   {cliente.status}
                 </span>
+              </td>
+
+              <td>
+                {renderizarClassificacao(
+                  cliente.id,
+                  classificacoes[cliente.id],
+                  onClassificacaoClick,
+                )}
               </td>
 
               <td>

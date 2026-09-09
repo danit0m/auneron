@@ -12,20 +12,31 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
 import api, {
   getApiErrorMessage,
 } from "../api/api";
+import ClienteClassificacaoModal from "../components/clientes/ClienteClassificacaoModal";
 import ClienteModal from "../components/clientes/ClienteModal";
 import ClienteTable from "../components/clientes/ClienteTable";
 import ConfirmDeleteModal from "../components/clientes/ConfirmDeleteModal";
 import { Header } from "../components/layout/Header";
+import {
+  groupAccountsForClassification,
+  isCurrentClassificationCycle,
+  pruneOrphanClassificationState,
+} from "../lib/classification-grouping";
 import type {
   Account,
   AccountCreate,
 } from "../types/account";
+import type {
+  AccountClassificationResponse,
+  ClassificationUIState,
+} from "../types/classification";
 
 function formatarMoeda(valor: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -56,6 +67,20 @@ export default function Clientes() {
     useState<Account | null>(null);
   const [excluindo, setExcluindo] = useState(false);
   const [erroExclusao, setErroExclusao] = useState("");
+
+  // Fatia 2C -- classificacao comportamental do cliente (read-only,
+  // Fatia 2B). Indexado por account_id para cobrir toda linha da
+  // tabela, inclusive contas com email=null.
+  const [classificacoes, setClassificacoes] = useState<
+    Record<number, ClassificationUIState>
+  >({});
+
+  const cicloClassificacaoRef = useRef(0);
+
+  const [modalClassificacaoAberto, setModalClassificacaoAberto] =
+    useState(false);
+  const [classificacaoSelecionada, setClassificacaoSelecionada] =
+    useState<AccountClassificationResponse | null>(null);
 
   const carregarClientes = useCallback(
     async (mostrarCarregamento = true) => {
@@ -111,6 +136,133 @@ export default function Clientes() {
       window.clearTimeout(timeoutId);
     };
   }, [carregarClientes]);
+
+  // Fatia 2C -- busca a classificacao de cada cliente, deduplicada por
+  // e-mail (1 request por e-mail unico; contas com email=null nunca
+  // sao agrupadas entre si). Read-only: nao recalcula, nao cria, nao
+  // altera nada -- so le o que a Fatia 2B ja expoe.
+  useEffect(() => {
+    const ciclo = cicloClassificacaoRef.current + 1;
+    cicloClassificacaoRef.current = ciclo;
+
+    // Reset intencional e sincrono do estado exibido para "loading" ao
+    // trocar a lista de clientes (padrao documentado pelo proprio React
+    // -- "resetting state when a prop changes"), para nunca mostrar a
+    // classificacao velha de um cliente enquanto o novo ciclo de busca
+    // esta em voo. A regra react-hooks/set-state-in-effect e uma
+    // recomendacao geral contra cascatas de render evitaveis, nao uma
+    // proibicao categorica -- aqui o reset e o proprio requisito do
+    // contrato UX (estado "loading" explicito), entao o disable e
+    // deliberado e escopado so a esta linha.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setClassificacoes((estadoAtual) => {
+      const semOrfaos = pruneOrphanClassificationState(
+        estadoAtual,
+        clientes.map((cliente) => cliente.id),
+      );
+
+      const carregando: Record<number, ClassificationUIState> = {
+        ...semOrfaos,
+      };
+
+      for (const cliente of clientes) {
+        carregando[cliente.id] = { kind: "loading" };
+      }
+
+      return carregando;
+    });
+
+    if (clientes.length === 0) {
+      return;
+    }
+
+    const grupos = groupAccountsForClassification(clientes);
+
+    void Promise.allSettled(
+      grupos.map(async (grupo) => {
+        try {
+          const response = await api.get<AccountClassificationResponse>(
+            `/accounts/${grupo.representativeAccountId}/classification`,
+          );
+
+          return {
+            grupo,
+            estado: {
+              kind: "resolved" as const,
+              data: response.data,
+            },
+          };
+        } catch (error) {
+          // 404, erro de rede ou 5xx -- tudo vira "Indisponível" no
+          // contrato congelado. Nunca é reinterpretado como
+          // not_classified_yet, que só existe quando o backend
+          // devolve 200 explicitamente com esse status.
+          console.error(
+            "Erro ao carregar classificação do cliente:",
+            error,
+          );
+
+          return {
+            grupo,
+            estado: { kind: "request_failed" as const },
+          };
+        }
+      }),
+    ).then((resultados) => {
+      if (
+        !isCurrentClassificationCycle(
+          ciclo,
+          cicloClassificacaoRef.current,
+        )
+      ) {
+        // Uma busca mais nova ja foi disparada -- descarta esta
+        // resposta obsoleta para nao sobrescrever o ciclo atual.
+        return;
+      }
+
+      setClassificacoes((estadoAtual) => {
+        const proximoEstado = { ...estadoAtual };
+
+        for (const resultado of resultados) {
+          if (resultado.status !== "fulfilled") {
+            continue;
+          }
+
+          const { grupo, estado } = resultado.value;
+
+          for (const accountId of grupo.accountIds) {
+            proximoEstado[accountId] = estado;
+          }
+        }
+
+        return proximoEstado;
+      });
+    });
+  }, [clientes]);
+
+  function abrirModalClassificacao(
+    _accountId: number,
+    estado: ClassificationUIState,
+  ) {
+    // Modal só abre para status="classified" -- inclui
+    // INSUFFICIENT_DATA (é classificacao real e persistida), mas
+    // nunca not_classified_yet/loading/request_failed, que nao tem
+    // evidencia para detalhar.
+    if (
+      estado.kind !== "resolved" ||
+      estado.data.status !== "classified"
+    ) {
+      return;
+    }
+
+    setClassificacaoSelecionada(estado.data);
+    setModalClassificacaoAberto(true);
+  }
+
+  function fecharModalClassificacao() {
+    setModalClassificacaoAberto(false);
+    setClassificacaoSelecionada(null);
+  }
 
   const clientesFiltrados = useMemo(() => {
     const pesquisaNormalizada = pesquisa
@@ -527,8 +679,10 @@ export default function Clientes() {
           ) : (
             <ClienteTable
               clientes={clientesFiltrados}
+              classificacoes={classificacoes}
               onEdit={editarCliente}
               onDelete={abrirConfirmacaoExclusao}
+              onClassificacaoClick={abrirModalClassificacao}
             />
           )}
         </section>
@@ -553,6 +707,14 @@ export default function Clientes() {
         onClose={fecharConfirmacaoExclusao}
         onConfirm={confirmarExclusao}
       />
+
+      {modalClassificacaoAberto && classificacaoSelecionada && (
+        <ClienteClassificacaoModal
+          aberto
+          classificacao={classificacaoSelecionada}
+          onClose={fecharModalClassificacao}
+        />
+      )}
     </div>
   );
 }
