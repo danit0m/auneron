@@ -115,3 +115,49 @@ class AccountMarkPaidExecuteRequest(BaseModel):
 
     approval_request_id: int = Field(gt=0)
     expected_status: AccountMarkPaidExpectedStatus
+
+
+# Fatia 2B -- leitura read-only da classificacao ja calculada e
+# persistida pela Fatia 2A (app/core/client_classification.py). Nao
+# recalcula, nao cria, nao altera -- so expoe o que ja existe.
+ClientClassificationLabel = Literal[
+    "PAGAMENTO_REGULAR",
+    "ATRASO_RECORRENTE",
+    "INSUFFICIENT_DATA",
+]
+
+
+ClientClassificationStatus = Literal[
+    "not_classified_yet",
+    "classified",
+]
+
+
+class ClientClassificationDetail(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    label: ClientClassificationLabel
+    reason: str | None = None
+    rule_version: str
+    classified_at: datetime
+    resolved_occurrences: int
+    late_occurrences: int | None = None
+    late_ratio: float | None = None
+    minimum_required_occurrences: int
+    late_ratio_threshold: float
+    analysis_scope: str
+    period_start: date | None = None
+    period_end: date | None = None
+
+
+class AccountClassificationResponse(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    account_id: int
+    email: EmailStr | None = None
+    status: ClientClassificationStatus
+    classification: ClientClassificationDetail | None = None

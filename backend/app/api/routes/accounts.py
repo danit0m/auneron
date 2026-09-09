@@ -6,17 +6,25 @@ from sqlalchemy.orm import Session
 from app.agents.event_bus import event_bus
 from app.core.authentication import AuthenticatedSession
 from app.core.authentication import require_permission
+from app.core.client_classification import _oldest_account_id
+from app.core.client_classification import (
+    MEMORY_KEY as CLIENT_CLASSIFICATION_MEMORY_KEY,
+)
+from app.core.config import settings
 from app.database.database import get_db
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.repositories.authenticated_advisory_proposal_repository import (
     AuthenticatedAdvisoryProposalRepository,
 )
+from app.repositories.memory_repository import MemoryRepository
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.account import (
+    AccountClassificationResponse,
     AccountCreate,
     AccountResponse,
     AccountUpdate,
+    ClientClassificationDetail,
 )
 from app.services.authenticated_advisory_envelope_assembly import (
     AuthenticatedAdvisoryEnvelopeAssemblyService,
@@ -481,3 +489,92 @@ def execute_account_mark_paid(
         "duplicate": result.duplicate,
         "output": result.output,
     }
+
+
+@router.get(
+    "/{account_id}/classification",
+    response_model=AccountClassificationResponse,
+    dependencies=read_dependencies,
+)
+def get_account_classification(
+    account_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Fatia 2B -- leitura read-only da classificacao ja calculada e
+    persistida pela Fatia 2A. Nao recalcula via HTTP, nao cria e nao
+    altera classificacao -- so expoe a memoria ativa
+    (memory_type='decision', memory_key=client_classification_v1) ja
+    existente para o e-mail desta conta.
+
+    status='not_classified_yet' cobre tanto "nunca houve ciclo
+    resolvido pra esse e-mail" quanto "conta sem e-mail cadastrado"
+    (Fatia 1/2A nunca classificam contas sem e-mail -- mesma regra
+    aqui). status='classified' cobre os tres labels, incluindo
+    INSUFFICIENT_DATA (e uma classificacao real e persistida, nao
+    'ainda nao processado').
+    """
+    account = db.get(
+        Account,
+        account_id,
+    )
+
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+
+    memory = None
+
+    if account.email is not None:
+        oldest_account_id = _oldest_account_id(
+            db,
+            account.email,
+        )
+
+        if oldest_account_id is not None:
+            memory = MemoryRepository(db).find_active_by_key(
+                scope_type="account",
+                memory_key=CLIENT_CLASSIFICATION_MEMORY_KEY,
+                account_id=oldest_account_id,
+            )
+
+    if memory is None:
+        return AccountClassificationResponse(
+            account_id=account.id,
+            email=account.email,
+            status="not_classified_yet",
+            classification=None,
+        )
+
+    context = memory.context_data or {}
+
+    return AccountClassificationResponse(
+        account_id=account.id,
+        email=account.email,
+        status="classified",
+        classification=ClientClassificationDetail(
+            label=context["label"],
+            reason=context.get("reason"),
+            rule_version=context["rule_version"],
+            classified_at=memory.created_at,
+            resolved_occurrences=context[
+                "ocorrencias_resolvidas"
+            ],
+            late_occurrences=context.get(
+                "ciclos_em_atraso"
+            ),
+            late_ratio=context.get("proporcao_atraso"),
+            minimum_required_occurrences=(
+                settings
+                .client_behavior_min_occurrences_for_pattern
+            ),
+            late_ratio_threshold=(
+                settings.client_classification_atraso_threshold
+            ),
+            analysis_scope=context["analysis_scope"],
+            period_start=context.get("period_start"),
+            period_end=context.get("period_end"),
+        ),
+    )
