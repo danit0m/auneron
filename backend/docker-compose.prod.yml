@@ -161,7 +161,7 @@ services:
 
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=web"
+      - "traefik.docker.network=auneron_web_prod"
       - "traefik.http.routers.auneron.rule=Host(`auneron.com.br`) || Host(`www.auneron.com.br`)"
       - "traefik.http.routers.auneron.entrypoints=websecure"
       - "traefik.http.routers.auneron.tls.certresolver=letsencrypt"
@@ -175,7 +175,7 @@ services:
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.network=web"
+      - "--providers.docker.network=auneron_web_prod"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       # Redireciona todo trafego HTTP (80) pra HTTPS (443).
@@ -188,9 +188,6 @@ services:
       # Painel do Traefik desligado por padrao -- nao exponha em producao
       # sem autenticacao configurada.
       - "--api.dashboard=false"
-      # --- DEBUG TEMPORARIO: investigando 504 intermitente pos-TLS. Reverter apos diagnostico. ---
-      - "--accesslog=true"
-      - "--log.level=DEBUG"
 
     ports:
       - "80:80"
