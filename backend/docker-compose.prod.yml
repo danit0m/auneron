@@ -188,6 +188,9 @@ services:
       # Painel do Traefik desligado por padrao -- nao exponha em producao
       # sem autenticacao configurada.
       - "--api.dashboard=false"
+      # --- DEBUG TEMPORARIO: investigando 504 intermitente pos-TLS. Reverter apos diagnostico. ---
+      - "--accesslog=true"
+      - "--log.level=DEBUG"
 
     ports:
       - "80:80"
