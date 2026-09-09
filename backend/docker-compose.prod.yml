@@ -53,6 +53,9 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+      tags:
+        - auneron-backend:prod
+        - auneron-backend:${GIT_SHA:-local}
 
     command: ["python", "-m", "alembic", "upgrade", "head"]
 
@@ -80,6 +83,9 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+      tags:
+        - auneron-backend:prod
+        - auneron-backend:${GIT_SHA:-local}
 
     container_name: auneron-backend-prod
     restart: unless-stopped
@@ -125,6 +131,9 @@ services:
     build:
       context: ..
       dockerfile: frontend/Dockerfile
+      tags:
+        - auneron-frontend:prod
+        - auneron-frontend:${GIT_SHA:-local}
 
     container_name: auneron-frontend-prod
     restart: unless-stopped
