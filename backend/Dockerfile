@@ -20,6 +20,8 @@ RUN python -m pip install --upgrade pip \
 
 COPY --chown=auneron:auneron backend/ ./
 
+RUN mkdir -p /app/uploads && chown auneron:auneron /app/uploads
+
 USER auneron
 
 EXPOSE 8000
