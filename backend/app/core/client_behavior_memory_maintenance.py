@@ -120,7 +120,9 @@ def compute_client_behavior_pattern(
         if latest_paid_event is None:
             continue
 
-        resolved_at = latest_paid_event.occurred_at.date()
+        resolved_at = latest_paid_event.occurred_at.astimezone(
+            timezone.utc
+        ).date()
         atraso_dias = (resolved_at - account.vencimento).days
 
         cycles.append(
