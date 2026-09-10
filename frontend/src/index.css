@@ -471,18 +471,18 @@ tbody tr:hover {
 }
 
 .status-paid {
-  color: #047857;
-  background: #dff7ed;
+  color: var(--color-success-700);
+  background: var(--color-success-100);
 }
 
 .status-open {
-  color: #b45309;
-  background: #fff1d6;
+  color: var(--color-warning-700);
+  background: var(--color-warning-100);
 }
 
 .status-late {
-  color: #c62828;
-  background: #fee5e5;
+  color: var(--color-danger-700);
+  background: var(--color-danger-100);
 }
 
 /* Fatia 2C -- classificacao comportamental do cliente (distinta do
@@ -500,22 +500,22 @@ tbody tr:hover {
 }
 
 .classification-regular {
-  color: #047857;
-  background: #dff7ed;
+  color: var(--color-success-700);
+  background: var(--color-success-100);
 }
 
 .classification-recurring {
-  color: #b45309;
-  background: #fff1d6;
+  color: var(--color-warning-700);
+  background: var(--color-warning-100);
 }
 
 .classification-insufficient {
-  color: #64748b;
-  background: #eef1f5;
+  color: var(--text-muted);
+  background: var(--background-subtle);
 }
 
 .classification-muted {
-  color: #b0b9c7;
+  color: var(--text-subtle);
   font-size: 10px;
 }
 
@@ -706,7 +706,7 @@ tbody tr:hover {
 .clientes-page-eyebrow {
   display: block;
   margin-bottom: 7px;
-  color: #2563eb;
+  color: var(--color-primary-600);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 1px;
@@ -715,14 +715,14 @@ tbody tr:hover {
 
 .clientes-page-heading h2 {
   margin: 0;
-  color: #172033;
+  color: var(--text-primary);
   font-size: 24px;
   letter-spacing: -0.5px;
 }
 
 .clientes-page-heading p {
   margin: 7px 0 0;
-  color: #718096;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -745,9 +745,9 @@ tbody tr:hover {
 
 .primary-button {
   border: 0;
-  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  background: linear-gradient(135deg, var(--color-primary-600), var(--color-brand-700));
   color: #ffffff;
-  box-shadow: 0 9px 20px rgb(37 99 235 / 22%);
+  box-shadow: var(--shadow-primary);
 }
 
 .primary-button:hover {
@@ -756,13 +756,13 @@ tbody tr:hover {
 }
 
 .secondary-button {
-  border: 1px solid #dce4ef;
-  background: #ffffff;
-  color: #526076;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  color: var(--text-secondary);
 }
 
 .secondary-button:hover:not(:disabled) {
-  background: #f7f9fc;
+  background: var(--surface-subtle);
 }
 
 .secondary-button:disabled {
@@ -782,10 +782,10 @@ tbody tr:hover {
   align-items: flex-start;
   gap: 13px;
   padding: 18px;
-  border: 1px solid #e7ecf3;
+  border: 1px solid var(--card-border);
   border-radius: 15px;
-  background: #ffffff;
-  box-shadow: 0 7px 20px rgb(15 23 42 / 4%);
+  background: var(--card-background);
+  box-shadow: var(--shadow-card);
   transition:
     transform 160ms ease,
     box-shadow 160ms ease;
@@ -793,7 +793,7 @@ tbody tr:hover {
 
 .clientes-summary-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 26px rgb(15 23 42 / 7%);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .clientes-summary-icon {
@@ -806,28 +806,28 @@ tbody tr:hover {
 }
 
 .clientes-summary-blue {
-  background: #eaf1ff;
-  color: #2563eb;
+  background: var(--color-primary-100);
+  color: var(--color-primary-600);
 }
 
 .clientes-summary-green {
-  background: #e4f8f0;
-  color: #059669;
+  background: var(--color-success-100);
+  color: var(--color-success-600);
 }
 
 .clientes-summary-orange {
-  background: #fff3dd;
-  color: #d97706;
+  background: var(--color-warning-100);
+  color: var(--color-warning-600);
 }
 
 .clientes-summary-red {
-  background: #fee8e8;
-  color: #dc2626;
+  background: var(--color-danger-100);
+  color: var(--color-danger-600);
 }
 
 .clientes-summary-purple {
-  background: #f1eafe;
-  color: #7c3aed;
+  background: var(--color-brand-100);
+  color: var(--color-brand-600);
 }
 
 .clientes-summary-card span,
@@ -837,14 +837,14 @@ tbody tr:hover {
 }
 
 .clientes-summary-card span {
-  color: #718096;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .clientes-summary-card strong {
   margin-top: 5px;
   overflow: hidden;
-  color: #172033;
+  color: var(--text-primary);
   font-size: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -852,11 +852,12 @@ tbody tr:hover {
 
 .clientes-summary-card small {
   margin-top: 4px;
-  color: #9aa6b7;
+  color: var(--text-subtle);
   font-size: 9px;
 }
 
 .clientes-panel {
+  min-width: 0;
   overflow: visible;
 }
 
@@ -866,7 +867,7 @@ tbody tr:hover {
   justify-content: space-between;
   gap: 18px;
   padding: 20px 22px;
-  border-bottom: 1px solid #edf1f5;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .clientes-search {
@@ -876,16 +877,16 @@ tbody tr:hover {
   align-items: center;
   gap: 10px;
   padding: 0 13px;
-  border: 1px solid #dfe6ef;
+  border: 1px solid var(--border-subtle);
   border-radius: 11px;
-  background: #f8fafc;
-  color: #94a3b8;
+  background: var(--input-background);
+  color: var(--text-subtle);
 }
 
 .clientes-search:focus-within {
-  border-color: #8baefb;
-  background: #ffffff;
-  box-shadow: 0 0 0 3px rgb(37 99 235 / 9%);
+  border-color: var(--border-focus);
+  background: var(--input-background);
+  box-shadow: var(--shadow-focus);
 }
 
 .clientes-search input {
@@ -893,7 +894,7 @@ tbody tr:hover {
   border: 0;
   outline: 0;
   background: transparent;
-  color: #172033;
+  color: var(--text-primary);
   font-size: 12px;
 }
 
@@ -906,11 +907,11 @@ tbody tr:hover {
 .clientes-status-filter {
   min-height: 42px;
   padding: 0 34px 0 13px;
-  border: 1px solid #dce4ef;
+  border: 1px solid var(--border-subtle);
   border-radius: 11px;
   outline: 0;
-  background: #ffffff;
-  color: #526076;
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -921,20 +922,20 @@ tbody tr:hover {
   justify-content: space-between;
   gap: 15px;
   padding: 10px 22px;
-  border-bottom: 1px solid #edf1f5;
-  color: #8793a5;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-subtle);
   font-size: 11px;
 }
 
 .clientes-results-info strong {
-  color: #354158;
+  color: var(--text-primary);
 }
 
 .clear-filter-button {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #2563eb;
+  color: var(--color-primary-600);
   font-size: 11px;
   font-weight: 700;
 }
@@ -970,8 +971,8 @@ tbody tr:hover {
   flex: 0 0 38px;
   place-items: center;
   border-radius: 11px;
-  background: linear-gradient(135deg, #eaf1ff, #ede9fe);
-  color: #315bc9;
+  background: linear-gradient(135deg, var(--color-primary-100), var(--color-brand-100));
+  color: var(--color-primary-700);
   font-size: 11px;
   font-weight: 850;
 }
@@ -994,7 +995,7 @@ tbody tr:hover {
 
 .cliente-name span {
   margin-top: 4px;
-  color: #a0aabc;
+  color: var(--text-subtle);
   font-size: 9px;
 }
 
@@ -1009,25 +1010,25 @@ tbody tr:hover {
   align-items: center;
   gap: 6px;
   overflow: hidden;
-  color: #69778b;
+  color: var(--text-muted);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .cliente-contact-empty {
-  color: #b0b9c7 !important;
+  color: var(--text-subtle) !important;
 }
 
 .cliente-value {
-  color: #253147;
+  color: var(--text-primary);
 }
 
 .cliente-date {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #657287;
+  color: var(--text-muted);
 }
 
 .clientes-actions-heading {
@@ -1046,7 +1047,7 @@ tbody tr:hover {
   height: 34px;
   place-items: center;
   border-radius: 9px;
-  background: #ffffff;
+  background: var(--surface);
   transition:
     background 150ms ease,
     color 150ms ease,
@@ -1058,21 +1059,21 @@ tbody tr:hover {
 }
 
 .cliente-edit-button {
-  border: 1px solid #cddcfb;
-  color: #2563eb;
+  border: 1px solid var(--color-primary-100);
+  color: var(--color-primary-600);
 }
 
 .cliente-edit-button:hover {
-  background: #edf3ff;
+  background: var(--color-primary-50);
 }
 
 .cliente-delete-button {
-  border: 1px solid #f4cccc;
-  color: #dc2626;
+  border: 1px solid var(--color-danger-100);
+  color: var(--color-danger-600);
 }
 
 .cliente-delete-button:hover {
-  background: #fff0f0;
+  background: var(--color-danger-50);
 }
 
 .clientes-empty-state {
@@ -1081,7 +1082,7 @@ tbody tr:hover {
   place-items: center;
   align-content: center;
   padding: 35px;
-  color: #7a8799;
+  color: var(--text-muted);
   text-align: center;
 }
 
@@ -1091,13 +1092,13 @@ tbody tr:hover {
   height: 62px;
   place-items: center;
   border-radius: 18px;
-  background: #edf3ff;
-  color: #2563eb;
+  background: var(--color-primary-50);
+  color: var(--color-primary-600);
 }
 
 .clientes-empty-state h3 {
   margin: 15px 0 5px;
-  color: #253147;
+  color: var(--text-primary);
 }
 
 .clientes-empty-state p {
@@ -1118,10 +1119,10 @@ tbody tr:hover {
   gap: 15px;
   margin: 20px;
   padding: 18px;
-  border: 1px solid #fecaca;
+  border: 1px solid var(--color-danger-100);
   border-radius: 12px;
-  background: #fff4f4;
-  color: #b91c1c;
+  background: var(--color-danger-50);
+  color: var(--color-danger-700);
 }
 
 .clientes-error-state div {
