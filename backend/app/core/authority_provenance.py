@@ -1,11 +1,38 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from sqlalchemy.orm import Session
+
 from app.core.authentication import AuthenticatedSession
+from app.core.authorization import has_permission
+from app.models.user import User
 
 
 AUTHORITY_PROVENANCE_SOURCE = "authenticated_http_session"
 AUTHORITY_PROVENANCE_REQUEST_ID_MAX_LENGTH = 128
+
+SYSTEM_PRINCIPAL_PROVENANCE_SOURCE = "system_principal"
+SYSTEM_PRINCIPAL_CANONICAL_EMAIL = "sistema.vencimentos@auneron.core"
+
+
+class SystemPrincipalError(Exception):
+    """Base error for the non-interactive system_principal provenance."""
+
+
+class SystemPrincipalUnavailableError(SystemPrincipalError):
+    """
+    The canonical system_principal identity does not exist yet in this
+    installation. Runtime never provisions it as a side effect -- this
+    is a fail-closed error, not a trigger to create the row here.
+    """
+
+
+class SystemPrincipalIntegrityError(SystemPrincipalError):
+    """
+    A User row exists at the canonical system_principal identity, but
+    does not match the expected shape (role, active, permission). This
+    never self-corrects silently.
+    """
 
 
 def _positive_id(
@@ -146,4 +173,86 @@ def authority_provenance_from_authenticated_session(
         authority_user_id=authority_user_id,
         auth_session_id=auth_session_id,
         request_id=request_id,
+    )
+
+
+@dataclass(frozen=True)
+class SystemPrincipalProvenance:
+    """
+    Immutable server-derived reference to the non-interactive system
+    principal. This is a sibling type of AuthorityProvenance, not a
+    generalization of it -- it never carries an auth_session_id, and
+    a consumer cannot construct one without going through
+    resolve_system_principal() below.
+
+    Like AuthorityProvenance, this value is provenance only. It grants
+    no authority, carries no role, permission set, scope, elevation
+    state, payload or execution intent. Any future consumer must
+    reload and reauthorize current authority.
+    """
+
+    authority_user_id: int
+    source: Literal[
+        "system_principal"
+    ] = SYSTEM_PRINCIPAL_PROVENANCE_SOURCE
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "authority_user_id",
+            _positive_id(
+                self.authority_user_id,
+                field_name="authority_user_id",
+            ),
+        )
+
+        if (
+            self.source
+            != SYSTEM_PRINCIPAL_PROVENANCE_SOURCE
+        ):
+            raise ValueError(
+                "source must be system_principal."
+            )
+
+
+def resolve_system_principal(
+    db: Session,
+) -> SystemPrincipalProvenance:
+    """
+    Resolve the canonical system_principal by identity (email), never
+    by a literal primary key. Fail-closed: this never creates or
+    repairs the row. Provisioning a missing/malformed system_principal
+    is a separate, explicit bootstrap/deploy step -- not a runtime
+    side effect of resolving it.
+    """
+    user = (
+        db.query(User)
+        .filter(
+            User.email
+            == SYSTEM_PRINCIPAL_CANONICAL_EMAIL
+        )
+        .one_or_none()
+    )
+
+    if user is None:
+        raise SystemPrincipalUnavailableError(
+            "Canonical system_principal "
+            f"'{SYSTEM_PRINCIPAL_CANONICAL_EMAIL}' does not exist."
+        )
+
+    if (
+        user.role != "system"
+        or not user.active
+        or not has_permission(
+            user.role,
+            "clients.detect_overdue",
+        )
+    ):
+        raise SystemPrincipalIntegrityError(
+            "system_principal identity does not match the expected "
+            "shape (role=system, active=true, clients.detect_overdue)."
+        )
+
+    return SystemPrincipalProvenance(
+        authority_user_id=user.id,
     )

@@ -1,5 +1,4 @@
 import logging
-from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
@@ -14,9 +13,6 @@ from app.core.config import settings
 from app.database.database import get_db
 from app.models.account import Account
 from app.models.account_event import AccountEvent
-from app.repositories.authenticated_advisory_proposal_repository import (
-    AuthenticatedAdvisoryProposalRepository,
-)
 from app.repositories.memory_repository import MemoryRepository
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.account import (
@@ -35,12 +31,7 @@ from app.services.authenticated_advisory_proposal_service import (
 from app.services.orchestrator_skill_binding_projection import (
     OrchestratorSkillBindingProjectionService,
 )
-from app.models.authenticated_advisory_proposal import (
-    AuthenticatedAdvisoryProposal,
-)
-from app.services.authenticated_advisory_proposal_approval_bridge_service import (
-    AuthenticatedAdvisoryProposalApprovalBridgeService,
-)
+from app.services.overdue_detection_service import OverdueDetectionService
 from app.api.routes.approvals import _raise_approval_http_error
 from app.core.approval_errors import ApprovalError
 from app.core.approval_observability import log_approval_event
@@ -296,31 +287,6 @@ def delete_account(
     )
 
 
-def _pilot_mutating_binding_id(
-    proposal: AuthenticatedAdvisoryProposal,
-) -> int:
-    """
-    Le o snapshot imutavel da proposal e retorna o binding_id do
-    unico candidato mutating (a skill account.mark_overdue, no
-    piloto atual). Levanta ValueError se nao houver exatamente um
-    candidato -- nunca escolhe um binding "por acaso".
-    """
-    matches: list[int] = []
-
-    for agent in proposal.snapshot_payload.get("agents", []):
-        for binding in agent.get("bindings", []):
-            if binding.get("execution_mode") == "mutating":
-                matches.append(binding["binding_id"])
-
-    if len(matches) != 1:
-        raise ValueError(
-            "Esperava exatamente 1 binding mutating na proposal "
-            f"{proposal.id}, encontrado {len(matches)}."
-        )
-
-    return matches[0]
-
-
 @router.post(
     "/detect-overdue",
 )
@@ -330,107 +296,20 @@ def detect_overdue_accounts(
     ),
     db: Session = Depends(get_db),
 ):
-    hoje = date.today()
+    """
+    Compatibility HTTP trigger for the F1 governed overdue scan.
 
-    overdue_accounts = (
-        db.query(Account)
-        .filter(
-            Account.status == "aberto",
-            Account.vencimento < hoje,
-        )
-        .all()
-    )
-
-    propostas_criadas = 0
-    ja_com_proposta = 0
-    falhas = 0
-    aprovacoes_solicitadas = 0
-    aprovacoes_falharam = 0
-
-    for account in overdue_accounts:
-        idempotency_key = f"conta_vencida:{account.id}"
-
-        existente = AuthenticatedAdvisoryProposalRepository(
-            db
-        ).find_by_idempotency_key(
-            idempotency_key=idempotency_key
-        )
-
-        if existente is not None:
-            ja_com_proposta += 1
-            proposal = existente
-        else:
-            advisory_payload = {
-                "id": account.id,
-                "cliente": account.cliente,
-                "email": account.email,
-                "whatsapp": account.whatsapp,
-                "valor": account.valor,
-                "vencimento": str(
-                    account.vencimento
-                ),
-                "status": account.status,
-            }
-
-            try:
-                projection = OrchestratorSkillBindingProjectionService(
-                    SkillRepository(db)
-                )
-                assembly = AuthenticatedAdvisoryEnvelopeAssemblyService(
-                    projection
-                )
-                envelope = assembly.assemble(
-                    authenticated=authenticated,
-                    event_name="conta_vencida",
-                    payload=advisory_payload,
-                )
-                creation = AuthenticatedAdvisoryProposalService(db).create(
-                    envelope=envelope,
-                    idempotency_key=idempotency_key,
-                )
-                proposal = creation.proposal
-                propostas_criadas += 1
-            except Exception:
-                falhas += 1
-                account_logger.exception(
-                    "Falha ao registrar proposta advisory autenticada para "
-                    "conta_vencida (conta_id=%s).",
-                    account.id,
-                )
-                continue
-
-        try:
-            binding_id = _pilot_mutating_binding_id(proposal)
-            AuthenticatedAdvisoryProposalApprovalBridgeService(db).request_approval(
-                proposal_id=proposal.id,
-                authenticated=authenticated,
-                binding_id=binding_id,
-                input_payload={
-                    "account_id": account.id,
-                    "expected_status": "aberto",
-                    "expected_due_date": str(
-                        account.vencimento
-                    ),
-                },
-            )
-            aprovacoes_solicitadas += 1
-        except Exception:
-            aprovacoes_falharam += 1
-            account_logger.exception(
-                "Falha ao solicitar aprovacao para conta_vencida "
-                "(conta_id=%s, proposal_id=%s).",
-                account.id,
-                proposal.id,
-            )
-
-    return {
-        "contas_verificadas": len(overdue_accounts),
-        "propostas_criadas": propostas_criadas,
-        "ja_com_proposta": ja_com_proposta,
-        "falhas": falhas,
-        "aprovacoes_solicitadas": aprovacoes_solicitadas,
-        "aprovacoes_falharam": aprovacoes_falharam,
-    }
+    The caller's own permission (clients.detect_overdue) only gates
+    who may trigger a scan manually -- the observation itself always
+    runs under the system_principal provenance, exactly like the
+    overdue_detection_maintenance_loop. This route does not build an
+    advisory chain under the caller's own AuthenticatedSession
+    anymore; it delegates to the same governed OverdueDetectionService
+    the background loop uses, so there is only one implementation of
+    the scan.
+    """
+    result = OverdueDetectionService(db).run_scan()
+    return result.as_dict()
 
 
 @router.post(

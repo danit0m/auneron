@@ -95,6 +95,7 @@ def _clean_database() -> None:
                     work_items,
                     memory_evidence,
                     memory_items,
+                    authenticated_advisory_proposals,
                     auth_sessions,
                     users,
                     knowledge,

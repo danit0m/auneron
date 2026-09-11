@@ -19,6 +19,8 @@ from app.core.advisory_proposal_errors import AdvisoryProposalValidationError
 from app.core.authentication import AuthenticatedSession
 from app.core.authentication import is_session_elevated
 from app.core.authentication import utc_now
+from app.core.authority_provenance import SystemPrincipalProvenance
+from app.core.authorization import has_permission
 from app.core.skill_authorization import authorize_skill_execution
 from app.core.skill_errors import SkillAuthorizationError
 from app.core.skill_errors import SkillNotFoundError
@@ -54,11 +56,68 @@ from app.services.authenticated_advisory_proposal_service import (
 from app.services.authenticated_advisory_proposal_service import (
     MAX_SNAPSHOT_BYTES,
 )
+from app.services.authenticated_advisory_proposal_service import (
+    SYSTEM_ADVISORY_PROPOSAL_PROTOCOL,
+)
+from app.services.authenticated_advisory_proposal_service import (
+    SYSTEM_ADVISORY_PROPOSAL_SOURCE,
+)
 
 
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _EXECUTION_MODES = {"read_only", "mutating", "external"}
 _RUNTIME_KINDS = {"internal_python", "plugin"}
+
+SYSTEM_PRINCIPAL_ALLOWED_EVENT = "conta_vencida"
+SYSTEM_PRINCIPAL_ALLOWED_SKILL_KEY = "account.mark_overdue"
+
+_EPISODE_ATTEMPT_KEY_PATTERN = re.compile(
+    r"^conta_vencida:"
+    r"(?P<account_id>[1-9][0-9]*):"
+    r"(?P<due_date>\d{4}-\d{2}-\d{2}):"
+    r"attempt:"
+    r"(?P<attempt>[1-9][0-9]*)$"
+)
+
+
+def _validate_episode_key_correlation(
+    *,
+    idempotency_key: str,
+    account_id: int,
+    input_payload: Any,
+) -> None:
+    """
+    The episode key is part of the episode's identity, not just an
+    idempotent label. This rejects a proposal whose key talks about a
+    different account/due_date than what the current candidate and
+    input actually describe.
+    """
+    match = _EPISODE_ATTEMPT_KEY_PATTERN.fullmatch(
+        idempotency_key
+    )
+    if match is None:
+        raise AdvisoryProposalConsumptionStaleError(
+            "system_principal proposal idempotency_key is not a valid "
+            "overdue episode key."
+        )
+    if int(match["account_id"]) != account_id:
+        raise AdvisoryProposalConsumptionStaleError(
+            "Episode key account_id diverges from the candidate scope."
+        )
+    if not isinstance(input_payload, dict):
+        raise AdvisoryProposalValidationError(
+            "system_principal input_payload must be an object."
+        )
+    if match["due_date"] != input_payload.get(
+        "expected_due_date"
+    ):
+        raise AdvisoryProposalConsumptionStaleError(
+            "Episode key due_date diverges from input_payload."
+        )
+    if input_payload.get("expected_status") != "aberto":
+        raise AdvisoryProposalValidationError(
+            "system_principal expected_status must be 'aberto'."
+        )
 
 
 @dataclass(frozen=True)
@@ -83,6 +142,35 @@ class AuthenticatedAdvisoryProposalConsumptionValidation:
     execution_mode: str
     runtime_kind: str
     account_id: int | None
+    subject_user_id: int | None
+
+
+@dataclass(frozen=True)
+class SystemAdvisoryProposalConsumptionValidation:
+    """
+    Ephemeral proof that one persisted system_principal advisory
+    binding candidate passed current validation.
+
+    Sibling of AuthenticatedAdvisoryProposalConsumptionValidation, not
+    a generalization of it -- there is no auth_session_id field here,
+    by construction, not as an optional/None value.
+
+    This value is not an authority token, cannot be reused as
+    authorization, and does not permit Skill execution, Work/Approval
+    mutation, or dispatch.
+    """
+
+    proposal_id: int
+    snapshot_digest: str
+    authority_user_id: int
+    agent_name: str
+    binding_id: int
+    skill_version_id: int
+    skill_id: int
+    binding_priority: int
+    execution_mode: str
+    runtime_kind: str
+    account_id: int
     subject_user_id: int | None
 
 
@@ -198,21 +286,17 @@ def _is_expired(
     return expires_at <= comparison_now
 
 
-def _snapshot_binding(
+def _snapshot_binding_common(
     proposal: AuthenticatedAdvisoryProposal,
     *,
     binding_id: int,
 ) -> _SnapshotBinding:
-    if (
-        proposal.authority_source
-        != AUTHENTICATED_ADVISORY_PROPOSAL_SOURCE
-        or proposal.protocol
-        != AUTHENTICATED_ADVISORY_PROPOSAL_PROTOCOL
-    ):
-        raise AdvisoryProposalConsumptionStaleError(
-            "Persisted advisory proposal protocol or source is stale."
-        )
-
+    """
+    Structural snapshot re-validation shared by the human and the
+    system_principal consumption paths. Provenance/source/protocol are
+    checked by the caller BEFORE this runs -- this function only knows
+    about the immutable snapshot shape, never about who owns it.
+    """
     payload = proposal.snapshot_payload
 
     if (
@@ -424,6 +508,50 @@ def _snapshot_binding(
         )
 
     return matches[0]
+
+
+def _snapshot_binding(
+    proposal: AuthenticatedAdvisoryProposal,
+    *,
+    binding_id: int,
+) -> _SnapshotBinding:
+    if (
+        proposal.authority_source
+        != AUTHENTICATED_ADVISORY_PROPOSAL_SOURCE
+        or proposal.protocol
+        != AUTHENTICATED_ADVISORY_PROPOSAL_PROTOCOL
+    ):
+        raise AdvisoryProposalConsumptionStaleError(
+            "Persisted advisory proposal protocol or source is stale."
+        )
+
+    return _snapshot_binding_common(
+        proposal,
+        binding_id=binding_id,
+    )
+
+
+def _snapshot_binding_system(
+    proposal: AuthenticatedAdvisoryProposal,
+    *,
+    binding_id: int,
+) -> _SnapshotBinding:
+    if (
+        proposal.authority_source
+        != SYSTEM_ADVISORY_PROPOSAL_SOURCE
+        or proposal.protocol
+        != SYSTEM_ADVISORY_PROPOSAL_PROTOCOL
+        or proposal.auth_session_id is not None
+    ):
+        raise AdvisoryProposalConsumptionStaleError(
+            "Persisted system advisory proposal protocol, source or "
+            "session is stale."
+        )
+
+    return _snapshot_binding_common(
+        proposal,
+        binding_id=binding_id,
+    )
 
 
 class AuthenticatedAdvisoryProposalConsumptionService:
@@ -691,6 +819,254 @@ class AuthenticatedAdvisoryProposalConsumptionService:
                 snapshot_digest=proposal.snapshot_digest,
                 authority_user_id=current_user.id,
                 auth_session_id=current_session.id,
+                agent_name=candidate.agent_name,
+                binding_id=candidate.binding_id,
+                skill_version_id=candidate.skill_version_id,
+                skill_id=candidate.skill_id,
+                binding_priority=candidate.binding_priority,
+                execution_mode=candidate.execution_mode,
+                runtime_kind=candidate.runtime_kind,
+                account_id=grant.account_id,
+                subject_user_id=grant.subject_user_id,
+            )
+
+    def validate_system_principal(
+        self,
+        *,
+        proposal_id: int,
+        principal: SystemPrincipalProvenance,
+        binding_id: int,
+        input_payload: Any,
+    ) -> SystemAdvisoryProposalConsumptionValidation:
+        """
+        Sibling of validate(), for the system_principal provenance.
+
+        Does not accept an AuthenticatedSession and does not reload an
+        AuthSession -- there is none. It reloads and revalidates the
+        system principal itself instead (exists, active, role=system,
+        still has clients.detect_overdue), then re-runs the same kind
+        of structural/skill/scope revalidation as the human path,
+        additionally fail-closed to event=conta_vencida /
+        skill=account.mark_overdue.
+        """
+        normalized_proposal_id = _positive_id(
+            proposal_id,
+            field_name="proposal_id",
+        )
+        normalized_binding_id = _positive_id(
+            binding_id,
+            field_name="binding_id",
+        )
+
+        if not isinstance(
+            principal,
+            SystemPrincipalProvenance,
+        ):
+            raise AdvisoryProposalValidationError(
+                "principal must be a SystemPrincipalProvenance."
+            )
+
+        caller_user_id = _authority_id(
+            principal.authority_user_id,
+            field_name="principal.authority_user_id",
+        )
+
+        with self.db.no_autoflush:
+            proposal = self.proposal_repository.get_by_id(
+                normalized_proposal_id
+            )
+
+            if proposal is None:
+                raise AdvisoryProposalNotFoundError(
+                    "Advisory proposal does not exist."
+                )
+
+            self.db.refresh(proposal)
+
+            if proposal.authority_user_id != caller_user_id:
+                raise AdvisoryProposalNotFoundError(
+                    "Advisory proposal does not exist."
+                )
+
+            current_principal = self.db.get(
+                User,
+                caller_user_id,
+                populate_existing=True,
+            )
+
+            if (
+                current_principal is None
+                or current_principal.id != caller_user_id
+                or not current_principal.active
+                or current_principal.role != "system"
+                or not has_permission(
+                    current_principal.role,
+                    "clients.detect_overdue",
+                )
+            ):
+                raise AdvisoryProposalConsumptionAuthorizationError(
+                    "Current system_principal is unavailable."
+                )
+
+            candidate = _snapshot_binding_system(
+                proposal,
+                binding_id=normalized_binding_id,
+            )
+
+            payload = proposal.snapshot_payload
+            if (
+                not isinstance(payload, dict)
+                or payload.get("decision_name")
+                != "CONTA_VENCIDA_DETECTADA"
+                or payload.get("selected_agents")
+                != ["OverdueDetectionAgent"]
+                or candidate.agent_name
+                != "OverdueDetectionAgent"
+            ):
+                raise AdvisoryProposalConsumptionStaleError(
+                    "system_principal overdue decision shape is stale."
+                )
+
+            mutating_count = 0
+            for raw_agent in payload.get("agents", []):
+                if not isinstance(raw_agent, dict):
+                    raise AdvisoryProposalConsumptionStaleError(
+                        "system_principal overdue agent shape is stale."
+                    )
+                for raw_binding in raw_agent.get("bindings", []):
+                    if (
+                        isinstance(raw_binding, dict)
+                        and raw_binding.get("execution_mode") == "mutating"
+                    ):
+                        mutating_count += 1
+            if mutating_count != 1:
+                raise AdvisoryProposalConsumptionStaleError(
+                    "system_principal overdue proposal must contain exactly "
+                    "one mutating binding."
+                )
+
+            binding = self.skill_repository.get_binding(
+                candidate.binding_id
+            )
+
+            if binding is None:
+                raise AdvisoryProposalConsumptionStaleError(
+                    "Current advisory binding is unavailable."
+                )
+
+            self.db.refresh(binding)
+
+            if (
+                not binding.enabled
+                or binding.agent_name != candidate.agent_name
+                or binding.skill_version_id
+                != candidate.skill_version_id
+                or binding.priority
+                != candidate.binding_priority
+            ):
+                raise AdvisoryProposalConsumptionStaleError(
+                    "Current advisory binding diverged from the proposal."
+                )
+
+            version = self.skill_repository.get_version(
+                candidate.skill_version_id
+            )
+
+            if version is None:
+                raise AdvisoryProposalConsumptionStaleError(
+                    "Current Skill version is unavailable."
+                )
+
+            self.db.refresh(version)
+
+            if (
+                version.status != "published"
+                or version.skill_id != candidate.skill_id
+                or version.execution_mode
+                != candidate.execution_mode
+                or version.runtime_kind
+                != candidate.runtime_kind
+                or version.execution_mode != "mutating"
+                or version.runtime_kind != "internal_python"
+            ):
+                raise AdvisoryProposalConsumptionStaleError(
+                    "Current Skill version diverged from the proposal."
+                )
+
+            skill = self.skill_repository.get_skill(
+                candidate.skill_id
+            )
+
+            if skill is None:
+                raise AdvisoryProposalConsumptionStaleError(
+                    "Current Skill is unavailable."
+                )
+
+            self.db.refresh(skill)
+
+            if (
+                skill.id != candidate.skill_id
+                or skill.status != "active"
+                or skill.skill_key
+                != SYSTEM_PRINCIPAL_ALLOWED_SKILL_KEY
+            ):
+                raise AdvisoryProposalConsumptionAuthorizationError(
+                    "system_principal may only consume "
+                    f"{SYSTEM_PRINCIPAL_ALLOWED_SKILL_KEY}."
+                )
+
+            try:
+                grant = authorize_skill_execution(
+                    db=self.db,
+                    role=current_principal.role,
+                    actor_user_id=current_principal.id,
+                    session_elevated=False,
+                    version_id=candidate.skill_version_id,
+                    input_payload=input_payload,
+                    repository=self.skill_repository,
+                )
+            except SkillScopeNotFoundError as error:
+                raise AdvisoryProposalNotFoundError(
+                    "Advisory proposal scope does not exist."
+                ) from error
+            except SkillValidationError as error:
+                raise AdvisoryProposalValidationError(
+                    "Advisory proposal input is invalid."
+                ) from error
+            except SkillAuthorizationError as error:
+                raise AdvisoryProposalConsumptionAuthorizationError(
+                    "Current authority cannot consume the advisory proposal."
+                ) from error
+            except (SkillNotFoundError, SkillStateError) as error:
+                raise AdvisoryProposalConsumptionStaleError(
+                    "Current Skill state no longer matches the proposal."
+                ) from error
+
+            if (
+                grant.version.id != candidate.skill_version_id
+                or grant.version.skill_id != candidate.skill_id
+                or grant.version.execution_mode
+                != candidate.execution_mode
+                or grant.version.runtime_kind
+                != candidate.runtime_kind
+                or grant.skill.id != candidate.skill_id
+                or grant.skill.status != "active"
+                or grant.account_id is None
+            ):
+                raise AdvisoryProposalConsumptionStaleError(
+                    "Reauthorized Skill grant diverged from the proposal."
+                )
+
+            _validate_episode_key_correlation(
+                idempotency_key=proposal.idempotency_key,
+                account_id=grant.account_id,
+                input_payload=input_payload,
+            )
+
+            return SystemAdvisoryProposalConsumptionValidation(
+                proposal_id=proposal.id,
+                snapshot_digest=proposal.snapshot_digest,
+                authority_user_id=current_principal.id,
                 agent_name=candidate.agent_name,
                 binding_id=candidate.binding_id,
                 skill_version_id=candidate.skill_version_id,

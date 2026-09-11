@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.advisory_proposal_errors import AdvisoryProposalApprovalCorrelationError
+from app.core.authority_provenance import SystemPrincipalProvenance
 from app.core.authorization import has_permission
 from app.core.pilot_mutation_errors import PilotMutationAuthorizationError
 from app.models.user import User
@@ -44,6 +45,51 @@ class AuthenticatedAdvisoryProposalWorkMaterializationService:
     def materialize_and_execute(self, *, proposal_id: int, authenticated, binding_id: int, input_payload: Any, approval_request_id: int) -> AuthenticatedAdvisoryProposalWorkMaterializationResult:
         normalized_input, input_digest = approval_input_identity(input_payload)
         candidate = self.consumption.validate(proposal_id=proposal_id, authenticated=authenticated, binding_id=binding_id, input_payload=normalized_input)
+        return self._materialize_and_execute_from_candidate(
+            candidate=candidate,
+            normalized_input=normalized_input,
+            input_digest=input_digest,
+            approval_request_id=approval_request_id,
+        )
+
+    def materialize_and_execute_system(
+        self,
+        *,
+        proposal_id: int,
+        principal: SystemPrincipalProvenance,
+        binding_id: int,
+        input_payload: Any,
+        approval_request_id: int,
+    ) -> AuthenticatedAdvisoryProposalWorkMaterializationResult:
+        """
+        Sibling of materialize_and_execute(), for the system_principal
+        provenance. Everything past candidate resolution -- including
+        reloading and revalidating the human decider, which remains
+        the sole authority of the effect -- is the exact same shared
+        implementation as the human path.
+        """
+        normalized_input, input_digest = approval_input_identity(input_payload)
+        candidate = self.consumption.validate_system_principal(
+            proposal_id=proposal_id,
+            principal=principal,
+            binding_id=binding_id,
+            input_payload=normalized_input,
+        )
+        return self._materialize_and_execute_from_candidate(
+            candidate=candidate,
+            normalized_input=normalized_input,
+            input_digest=input_digest,
+            approval_request_id=approval_request_id,
+        )
+
+    def _materialize_and_execute_from_candidate(
+        self,
+        *,
+        candidate,
+        normalized_input: Any,
+        input_digest: str,
+        approval_request_id: int,
+    ) -> AuthenticatedAdvisoryProposalWorkMaterializationResult:
         if candidate.execution_mode != "mutating" or candidate.runtime_kind != "internal_python" or candidate.account_id is None or candidate.subject_user_id is not None:
             raise PilotMutationAuthorizationError("Pilot candidate shape invalid.")
         skill = self.skills.get_skill(candidate.skill_id)

@@ -22,6 +22,7 @@ from app.models.authenticated_advisory_proposal import (
 from app.orchestrator.advisory_envelope import (
     AuthenticatedAdvisoryEnvelope,
 )
+from app.orchestrator.advisory_envelope import SystemAdvisoryEnvelope
 from app.repositories.authenticated_advisory_proposal_repository import (
     AuthenticatedAdvisoryProposalRepository,
 )
@@ -32,6 +33,9 @@ from app.services.orchestrator_skill_binding_projection import (
 
 AUTHENTICATED_ADVISORY_PROPOSAL_PROTOCOL = "authenticated_advisory_v1"
 AUTHENTICATED_ADVISORY_PROPOSAL_SOURCE = "authenticated_http_session"
+
+SYSTEM_ADVISORY_PROPOSAL_PROTOCOL = "system_advisory_v1"
+SYSTEM_ADVISORY_PROPOSAL_SOURCE = "system_principal"
 
 IDEMPOTENCY_KEY_PATTERN = re.compile(
     r"^[a-z0-9][a-z0-9._:-]{0,254}$"
@@ -47,6 +51,13 @@ MAX_BINDING_TEXT_LENGTH = 64
 
 @dataclass(frozen=True)
 class AuthenticatedAdvisoryProposalCreationResult:
+    proposal: AuthenticatedAdvisoryProposal
+    created: bool
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class SystemAdvisoryProposalCreationResult:
     proposal: AuthenticatedAdvisoryProposal
     created: bool
     duplicate: bool
@@ -125,25 +136,26 @@ def _canonical_json_bytes(
         ) from error
 
 
-def _snapshot_from_envelope(
-    envelope: AuthenticatedAdvisoryEnvelope,
+def _snapshot_from_decision_and_plan(
+    decision,
+    plan,
+    *,
+    protocol: str,
 ) -> tuple[dict[str, Any], str, int, int, int]:
-    if not isinstance(
-        envelope,
-        AuthenticatedAdvisoryEnvelope,
-    ):
-        raise AdvisoryProposalValidationError(
-            "envelope must be an AuthenticatedAdvisoryEnvelope."
-        )
-
+    """
+    Structural snapshot builder shared by both the human and the
+    system_principal proposal paths. This function knows nothing about
+    provenance/authority -- it only turns a (decision, plan) pair plus
+    a protocol string into the canonical immutable snapshot shape.
+    """
     decision_name = _bounded_text(
-        envelope.decision.decision_name,
+        decision.decision_name,
         field_name="decision_name",
         max_length=MAX_DECISION_NAME_LENGTH,
     )
 
     selected_agents = tuple(
-        envelope.decision.selected_agents
+        decision.selected_agents
     )
 
     if len(selected_agents) > MAX_AGENTS:
@@ -156,7 +168,7 @@ def _snapshot_from_envelope(
             "selected_agents contains duplicates."
         )
 
-    if len(envelope.plan.agents) != len(selected_agents):
+    if len(plan.agents) != len(selected_agents):
         raise AdvisoryProposalValidationError(
             "advisory plan agent count diverges from selected_agents."
         )
@@ -172,7 +184,7 @@ def _snapshot_from_envelope(
             max_length=MAX_AGENT_NAME_LENGTH,
         )
 
-        planned_agent = envelope.plan.agents[index]
+        planned_agent = plan.agents[index]
 
         if planned_agent.agent_name != agent_name:
             raise AdvisoryProposalValidationError(
@@ -265,7 +277,7 @@ def _snapshot_from_envelope(
     }
 
     canonical = _canonical_json_bytes([
-        AUTHENTICATED_ADVISORY_PROPOSAL_PROTOCOL,
+        protocol,
         payload,
     ])
 
@@ -282,6 +294,42 @@ def _snapshot_from_envelope(
         len(normalized_selected_agents),
         binding_count,
         snapshot_bytes,
+    )
+
+
+def _snapshot_from_envelope(
+    envelope: AuthenticatedAdvisoryEnvelope,
+) -> tuple[dict[str, Any], str, int, int, int]:
+    if not isinstance(
+        envelope,
+        AuthenticatedAdvisoryEnvelope,
+    ):
+        raise AdvisoryProposalValidationError(
+            "envelope must be an AuthenticatedAdvisoryEnvelope."
+        )
+
+    return _snapshot_from_decision_and_plan(
+        envelope.decision,
+        envelope.plan,
+        protocol=AUTHENTICATED_ADVISORY_PROPOSAL_PROTOCOL,
+    )
+
+
+def _snapshot_from_system_envelope(
+    envelope: SystemAdvisoryEnvelope,
+) -> tuple[dict[str, Any], str, int, int, int]:
+    if not isinstance(
+        envelope,
+        SystemAdvisoryEnvelope,
+    ):
+        raise AdvisoryProposalValidationError(
+            "envelope must be a SystemAdvisoryEnvelope."
+        )
+
+    return _snapshot_from_decision_and_plan(
+        envelope.decision,
+        envelope.plan,
+        protocol=SYSTEM_ADVISORY_PROPOSAL_PROTOCOL,
     )
 
 
@@ -319,6 +367,105 @@ def _validate_authority(
         authority.source,
         request_id,
     )
+
+
+def _validate_system_authority(
+    envelope: SystemAdvisoryEnvelope,
+) -> int:
+    authority = envelope.authority
+
+    authority_user_id = _positive_id(
+        authority.authority_user_id,
+        field_name="authority_user_id",
+    )
+
+    if authority.source != SYSTEM_ADVISORY_PROPOSAL_SOURCE:
+        raise AdvisoryProposalValidationError(
+            "authority source is invalid."
+        )
+
+    return authority_user_id
+
+
+def _validate_persisted_system_proposal(
+    proposal: AuthenticatedAdvisoryProposal,
+    *,
+    authority_user_id: int,
+    idempotency_key: str,
+    expected_digest: str,
+) -> None:
+    if (
+        proposal.authority_user_id != authority_user_id
+        or proposal.auth_session_id is not None
+        or proposal.idempotency_key != idempotency_key
+        or proposal.authority_source
+        != SYSTEM_ADVISORY_PROPOSAL_SOURCE
+        or proposal.protocol
+        != SYSTEM_ADVISORY_PROPOSAL_PROTOCOL
+    ):
+        raise AdvisoryProposalConflictError(
+            "persisted system advisory proposal identity is "
+            "inconsistent."
+        )
+
+    canonical = _canonical_json_bytes([
+        proposal.protocol,
+        proposal.snapshot_payload,
+    ])
+    persisted_digest = hashlib.sha256(
+        canonical
+    ).hexdigest()
+
+    agents = proposal.snapshot_payload.get(
+        "selected_agents"
+    ) if isinstance(
+        proposal.snapshot_payload,
+        dict,
+    ) else None
+    planned_agents = proposal.snapshot_payload.get(
+        "agents"
+    ) if isinstance(
+        proposal.snapshot_payload,
+        dict,
+    ) else None
+
+    if (
+        not isinstance(agents, list)
+        or not isinstance(planned_agents, list)
+    ):
+        raise AdvisoryProposalConflictError(
+            "persisted system advisory proposal snapshot is invalid."
+        )
+
+    binding_count = 0
+
+    for agent in planned_agents:
+        if not isinstance(agent, dict):
+            raise AdvisoryProposalConflictError(
+                "persisted system advisory proposal snapshot is invalid."
+            )
+        bindings = agent.get("bindings")
+        if not isinstance(bindings, list):
+            raise AdvisoryProposalConflictError(
+                "persisted system advisory proposal snapshot is invalid."
+            )
+        binding_count += len(bindings)
+
+    if (
+        proposal.snapshot_digest != persisted_digest
+        or proposal.agent_count != len(agents)
+        or proposal.binding_count != binding_count
+        or proposal.snapshot_bytes != len(canonical)
+    ):
+        raise AdvisoryProposalConflictError(
+            "persisted system advisory proposal failed immutable "
+            "validation."
+        )
+
+    if proposal.snapshot_digest != expected_digest:
+        raise AdvisoryProposalIdempotencyConflictError(
+            "idempotency_key was reused for different advisory content."
+        )
 
 
 def _validate_persisted_proposal(
@@ -528,6 +675,138 @@ class AuthenticatedAdvisoryProposalService:
         )
 
         return AuthenticatedAdvisoryProposalCreationResult(
+            proposal=proposal,
+            created=True,
+            duplicate=False,
+        )
+
+
+class SystemAdvisoryProposalService:
+    """
+    Durable immutable persistence boundary for the system_principal
+    advisory provenance.
+
+    Sibling of AuthenticatedAdvisoryProposalService, not a
+    generalization of it. Persisting a proposal here grants no
+    authority and creates no executable intent -- exactly like the
+    human path, it is just keyed to a different, narrower provenance.
+    """
+
+    def __init__(
+        self,
+        db: Session,
+        *,
+        repository: (
+            AuthenticatedAdvisoryProposalRepository | None
+        ) = None,
+    ) -> None:
+        self.db = db
+        self.repository = (
+            repository
+            if repository is not None
+            else AuthenticatedAdvisoryProposalRepository(db)
+        )
+
+    def create(
+        self,
+        *,
+        envelope: SystemAdvisoryEnvelope,
+        idempotency_key: str,
+    ) -> SystemAdvisoryProposalCreationResult:
+        normalized_key = _normalize_idempotency_key(
+            idempotency_key
+        )
+
+        authority_user_id = _validate_system_authority(
+            envelope
+        )
+
+        (
+            snapshot_payload,
+            snapshot_digest,
+            agent_count,
+            binding_count,
+            snapshot_bytes,
+        ) = _snapshot_from_system_envelope(envelope)
+
+        existing = self.repository.find_by_system_idempotency(
+            authority_user_id=authority_user_id,
+            idempotency_key=normalized_key,
+        )
+
+        if existing is not None:
+            _validate_persisted_system_proposal(
+                existing,
+                authority_user_id=authority_user_id,
+                idempotency_key=normalized_key,
+                expected_digest=snapshot_digest,
+            )
+            return SystemAdvisoryProposalCreationResult(
+                proposal=existing,
+                created=False,
+                duplicate=True,
+            )
+
+        proposal = AuthenticatedAdvisoryProposal(
+            authority_user_id=authority_user_id,
+            auth_session_id=None,
+            authority_source=SYSTEM_ADVISORY_PROPOSAL_SOURCE,
+            request_id=None,
+            idempotency_key=normalized_key,
+            protocol=SYSTEM_ADVISORY_PROPOSAL_PROTOCOL,
+            snapshot_payload=snapshot_payload,
+            snapshot_digest=snapshot_digest,
+            agent_count=agent_count,
+            binding_count=binding_count,
+            snapshot_bytes=snapshot_bytes,
+        )
+
+        try:
+            self.repository.add(
+                proposal
+            )
+            self.db.commit()
+            self.db.refresh(
+                proposal
+            )
+        except IntegrityError as error:
+            self.db.rollback()
+            concurrent = (
+                self.repository.find_by_system_idempotency(
+                    authority_user_id=authority_user_id,
+                    idempotency_key=normalized_key,
+                )
+            )
+
+            if concurrent is None:
+                raise AdvisoryProposalConflictError(
+                    "concurrent system advisory proposal persistence "
+                    "conflicted."
+                ) from error
+
+            _validate_persisted_system_proposal(
+                concurrent,
+                authority_user_id=authority_user_id,
+                idempotency_key=normalized_key,
+                expected_digest=snapshot_digest,
+            )
+            return SystemAdvisoryProposalCreationResult(
+                proposal=concurrent,
+                created=False,
+                duplicate=True,
+            )
+        except Exception:
+            self.db.rollback()
+            raise
+
+        _validate_persisted_system_proposal(
+            proposal,
+            authority_user_id=authority_user_id,
+            idempotency_key=normalized_key,
+            expected_digest=snapshot_digest,
+        )
+
+        return SystemAdvisoryProposalCreationResult(
             proposal=proposal,
             created=True,
             duplicate=False,

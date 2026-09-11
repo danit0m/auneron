@@ -6,6 +6,8 @@ import re
 
 from app.core.authentication import AuthenticatedSession
 from app.core.authentication import utc_now
+from app.core.authority_provenance import SystemPrincipalProvenance
+from app.core.authority_provenance import SYSTEM_PRINCIPAL_PROVENANCE_SOURCE
 from app.core.config import settings
 from app.database.database import SessionLocal
 from app.models.account import Account
@@ -64,17 +66,14 @@ def run_advisory_dispatch_recovery(
     limit: int | None = None,
 ) -> int:
     """
-    Varre ApprovalRequest aprovados, originados da ponte advisory
-    (25M), que ainda nao tem ApprovalConsumption -- ou seja, aprovados
-    mas nunca despachados -- e chama dispatch_approved() para cada
-    um, usando a AuthSession original que criou a proposal.
+    Recover approved advisory ApprovalRequests that still have no
+    ApprovalConsumption.
 
-    Se essa sessao original ja estiver revogada ou expirada, o
-    despacho e permanentemente impossivel para aquele pedido; isso e
-    registrado em nivel ERROR com um evento proprio
-    (advisory.dispatch.permanently_orphaned), para ficar visivel em
-    qualquer leitura de log. Nao ha canal de alerta real ainda --
-    Principio 3 do documento de governanca continua em aberto.
+    Human/session-bound proposals preserve the existing AuthSession
+    revalidation. system_principal proposals use the dedicated
+    no-AuthSession corridor. Pagination uses a transient cursor inside
+    this call only, so one permanent legacy orphan cannot monopolize
+    the first row when the configured batch size is 1.
     """
     effective_limit = (
         settings.work_skill_recovery_batch_size
@@ -90,119 +89,150 @@ def run_advisory_dispatch_recovery(
         raise ValueError("Invalid advisory dispatch recovery limit.")
 
     dispatched = 0
+    after_id = 0
 
     with SessionLocal() as db:
         approval_repository = ApprovalRepository(db)
         bridge = AuthenticatedAdvisoryProposalApprovalBridgeService(db)
 
-        candidates = (
-            approval_repository
-            .list_approved_agent_requests_without_consumption(
-                limit=effective_limit
+        while dispatched < effective_limit:
+            candidates = (
+                approval_repository
+                .list_approved_agent_requests_without_consumption(
+                    limit=effective_limit,
+                    after_id=after_id,
+                )
             )
-        )
 
-        for request in candidates:
-            try:
-                proposal_id, binding_id = _parse_advisory_identity(
-                    request.idempotency_key
-                )
+            if not candidates:
+                break
 
-                if request.target_account_id is None:
-                    raise ValueError(
-                        "ApprovalRequest advisory sem target_account_id "
-                        f"(request_id={request.id})."
+            for request in candidates:
+                after_id = request.id
+
+                try:
+                    proposal_id, binding_id = _parse_advisory_identity(
+                        request.idempotency_key
                     )
 
-                proposal = db.get(
-                    AuthenticatedAdvisoryProposal,
-                    proposal_id,
-                )
-                if proposal is None:
-                    raise ValueError(
-                        f"Proposal {proposal_id} nao encontrada "
-                        f"(request_id={request.id})."
+                    if request.target_account_id is None:
+                        raise ValueError(
+                            "ApprovalRequest advisory sem target_account_id "
+                            f"(request_id={request.id})."
+                        )
+
+                    proposal = db.get(
+                        AuthenticatedAdvisoryProposal,
+                        proposal_id,
                     )
+                    if proposal is None:
+                        raise ValueError(
+                            f"Proposal {proposal_id} nao encontrada "
+                            f"(request_id={request.id})."
+                        )
 
-                auth_session = db.get(
-                    AuthSession,
-                    proposal.auth_session_id,
-                )
-                if auth_session is None:
-                    _log_orphaned(
-                        request_id=request.id,
-                        proposal_id=proposal_id,
-                        binding_id=binding_id,
-                        reason="original_session_missing",
+                    account = db.get(
+                        Account,
+                        request.target_account_id,
                     )
-                    continue
+                    if account is None:
+                        raise ValueError(
+                            f"Account {request.target_account_id} nao "
+                            f"encontrada (request_id={request.id})."
+                        )
 
-                if (
-                    auth_session.revoked_at is not None
-                    or auth_session.expires_at <= utc_now()
-                ):
-                    _log_orphaned(
-                        request_id=request.id,
-                        proposal_id=proposal_id,
-                        binding_id=binding_id,
-                        reason=(
-                            "original_session_revoked_or_expired"
-                        ),
-                    )
-                    continue
-
-                user = db.get(
-                    User,
-                    proposal.authority_user_id,
-                )
-                if user is None or not user.active:
-                    _log_orphaned(
-                        request_id=request.id,
-                        proposal_id=proposal_id,
-                        binding_id=binding_id,
-                        reason="original_user_unavailable",
-                    )
-                    continue
-
-                authenticated = AuthenticatedSession(
-                    user=user,
-                    session=auth_session,
-                )
-
-                account = db.get(
-                    Account,
-                    request.target_account_id,
-                )
-                if account is None:
-                    raise ValueError(
-                        f"Account {request.target_account_id} nao "
-                        f"encontrada (request_id={request.id})."
-                    )
-
-                bridge.dispatch_approved(
-                    proposal_id=proposal_id,
-                    authenticated=authenticated,
-                    binding_id=binding_id,
-                    input_payload={
+                    input_payload = {
                         "account_id": request.target_account_id,
                         "expected_status": "aberto",
-                        "expected_due_date": str(
-                            account.vencimento
-                        ),
-                    },
-                    approval_request_id=request.id,
-                )
-                dispatched += 1
-            except Exception as error:
-                db.rollback()
-                logger.warning(
-                    "advisory_dispatch_recovery_failed",
-                    extra={
-                        "event": "advisory.dispatch.recovery_failed",
-                        "approval_request_id": request.id,
-                        "error_type": type(error).__name__,
-                    },
-                )
+                        "expected_due_date": str(account.vencimento),
+                    }
+
+                    if (
+                        proposal.authority_source
+                        == SYSTEM_PRINCIPAL_PROVENANCE_SOURCE
+                    ):
+                        if proposal.auth_session_id is not None:
+                            raise ValueError(
+                                "system_principal proposal unexpectedly "
+                                "contains auth_session_id."
+                            )
+
+                        principal = SystemPrincipalProvenance(
+                            authority_user_id=proposal.authority_user_id,
+                        )
+                        bridge.dispatch_approved_system(
+                            proposal_id=proposal_id,
+                            principal=principal,
+                            binding_id=binding_id,
+                            input_payload=input_payload,
+                            approval_request_id=request.id,
+                        )
+                    else:
+                        auth_session = db.get(
+                            AuthSession,
+                            proposal.auth_session_id,
+                        )
+                        if auth_session is None:
+                            _log_orphaned(
+                                request_id=request.id,
+                                proposal_id=proposal_id,
+                                binding_id=binding_id,
+                                reason="original_session_missing",
+                            )
+                            continue
+
+                        if (
+                            auth_session.revoked_at is not None
+                            or auth_session.expires_at <= utc_now()
+                        ):
+                            _log_orphaned(
+                                request_id=request.id,
+                                proposal_id=proposal_id,
+                                binding_id=binding_id,
+                                reason=(
+                                    "original_session_revoked_or_expired"
+                                ),
+                            )
+                            continue
+
+                        user = db.get(
+                            User,
+                            proposal.authority_user_id,
+                        )
+                        if user is None or not user.active:
+                            _log_orphaned(
+                                request_id=request.id,
+                                proposal_id=proposal_id,
+                                binding_id=binding_id,
+                                reason="original_user_unavailable",
+                            )
+                            continue
+
+                        authenticated = AuthenticatedSession(
+                            user=user,
+                            session=auth_session,
+                        )
+                        bridge.dispatch_approved(
+                            proposal_id=proposal_id,
+                            authenticated=authenticated,
+                            binding_id=binding_id,
+                            input_payload=input_payload,
+                            approval_request_id=request.id,
+                        )
+
+                    dispatched += 1
+                    if dispatched >= effective_limit:
+                        break
+                except Exception as error:
+                    db.rollback()
+                    logger.warning(
+                        "advisory_dispatch_recovery_failed",
+                        extra={
+                            "event": "advisory.dispatch.recovery_failed",
+                            "approval_request_id": request.id,
+                            "error_type": type(error).__name__,
+                        },
+                    )
 
     return dispatched
 

@@ -2,11 +2,13 @@ from sqlalchemy import BigInteger
 from sqlalchemy import CheckConstraint
 from sqlalchemy import Column
 from sqlalchemy import DateTime
+from sqlalchemy import Index
 from sqlalchemy import Integer
 from sqlalchemy import JSON
 from sqlalchemy import String
 from sqlalchemy import UniqueConstraint
 from sqlalchemy import func
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database.database import Base
@@ -27,16 +29,17 @@ class AuthenticatedAdvisoryProposal(Base):
             name="ck_authenticated_advisory_proposals_user_positive",
         ),
         CheckConstraint(
-            "auth_session_id > 0",
-            name="ck_authenticated_advisory_proposals_session_positive",
-        ),
-        CheckConstraint(
-            "authority_source = 'authenticated_http_session'",
-            name="ck_authenticated_advisory_proposals_source",
-        ),
-        CheckConstraint(
-            "protocol = 'authenticated_advisory_v1'",
-            name="ck_authenticated_advisory_proposals_protocol",
+            "("
+            "  authority_source = 'authenticated_http_session'"
+            "  AND protocol = 'authenticated_advisory_v1'"
+            "  AND auth_session_id IS NOT NULL"
+            "  AND auth_session_id > 0"
+            ") OR ("
+            "  authority_source = 'system_principal'"
+            "  AND protocol = 'system_advisory_v1'"
+            "  AND auth_session_id IS NULL"
+            ")",
+            name="ck_authenticated_advisory_proposals_provenance",
         ),
         CheckConstraint(
             "char_length(btrim(idempotency_key)) >= 1 "
@@ -70,6 +73,15 @@ class AuthenticatedAdvisoryProposal(Base):
                 "authority_session_key"
             ),
         ),
+        Index(
+            "uq_authenticated_advisory_proposals_system_principal_key",
+            "authority_user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text(
+                "authority_source = 'system_principal'"
+            ),
+        ),
     )
 
     id = Column(
@@ -84,7 +96,7 @@ class AuthenticatedAdvisoryProposal(Base):
 
     auth_session_id = Column(
         Integer,
-        nullable=False,
+        nullable=True,
     )
 
     authority_source = Column(

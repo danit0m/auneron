@@ -200,7 +200,14 @@ class ApprovalRepository:
         self,
         *,
         limit: int,
+        after_id: int = 0,
     ) -> list[ApprovalRequest]:
+        """
+        after_id is a transient, caller-owned pagination cursor -- it
+        is never persisted by this repository. Passing after_id=0
+        (the default) starts from the beginning, exactly as before
+        this parameter existed.
+        """
         statement = (
             select(ApprovalRequest)
             .outerjoin(
@@ -212,6 +219,7 @@ class ApprovalRepository:
                 ApprovalRequest.status == "approved",
                 ApprovalRequest.requester_actor_type == "agent",
                 ApprovalConsumption.id.is_(None),
+                ApprovalRequest.id > after_id,
             )
             .order_by(
                 ApprovalRequest.id.asc()

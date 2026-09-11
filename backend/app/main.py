@@ -63,6 +63,10 @@ from app.core.authenticated_advisory_dispatch_maintenance import (
     advisory_dispatch_maintenance_loop,
     run_advisory_dispatch_recovery_async,
 )
+from app.core.overdue_detection_maintenance import (
+    overdue_detection_maintenance_loop,
+    run_overdue_detection_async,
+)
 from app.core.client_behavior_memory_maintenance import (
     client_behavior_memory_maintenance_loop,
     run_client_behavior_memory_recalculation_async,
@@ -118,6 +122,7 @@ async def lifespan(_: FastAPI):
         await run_work_skill_execution_recovery_async()
         await run_work_outcome_evaluation_recovery_async()
         await run_pilot_mutation_recovery_async()
+        await run_overdue_detection_async()
         await run_advisory_dispatch_recovery_async()
         await run_client_behavior_memory_recalculation_async()
         await run_client_classification_recalculation_async()
@@ -140,6 +145,9 @@ async def lifespan(_: FastAPI):
         ),
         asyncio.create_task(
             advisory_dispatch_maintenance_loop()
+        ),
+        asyncio.create_task(
+            overdue_detection_maintenance_loop()
         ),
         asyncio.create_task(
             client_behavior_memory_maintenance_loop()

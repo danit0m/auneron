@@ -14,6 +14,7 @@ from app.core.advisory_proposal_errors import (
 from app.core.advisory_proposal_errors import AdvisoryProposalValidationError
 from app.core.approval_errors import ApprovalValidationError
 from app.core.authentication import AuthenticatedSession
+from app.core.authority_provenance import SystemPrincipalProvenance
 from app.models.approval import ApprovalRequest
 from app.services.approval_service import ApprovalRequester
 from app.services.approval_service import ApprovalService
@@ -329,6 +330,175 @@ class AuthenticatedAdvisoryProposalApprovalBridgeService:
             binding_id=candidate.binding_id,
             input_payload=normalized_input,
             approval_request_id=request.id,
+        )
+
+        return AuthenticatedAdvisoryProposalApprovedDispatchResult(
+            proposal_id=candidate.proposal_id,
+            binding_id=candidate.binding_id,
+            skill_version_id=candidate.skill_version_id,
+            skill_id=candidate.skill_id,
+            agent_name=candidate.agent_name,
+            actor_reference=actor_reference,
+            approval_request_id=request.id,
+            approval_consumption_id=materialized.approval_consumption_id,
+            invocation_id=materialized.invocation_id,
+            invocation_status=materialized.invocation_status,
+            duplicate=materialized.duplicate,
+            output=materialized.output,
+        )
+
+    def request_approval_system(
+        self,
+        *,
+        proposal_id: int,
+        principal: SystemPrincipalProvenance,
+        binding_id: int,
+        input_payload: Any,
+    ) -> AuthenticatedAdvisoryProposalApprovalRequestResult:
+        """
+        Sibling of request_approval(), for the system_principal
+        provenance. The Approval requester stays actor_type="agent"
+        regardless -- the requester identity is the agent that owns
+        the binding, not the principal/session that triggered the
+        scan. This keeps the existing downstream filter
+        (requester_actor_type == "agent") correct unchanged.
+        """
+        normalized_input, input_digest = _normalize_input(
+            input_payload
+        )
+
+        candidate = self.consumption_service.validate_system_principal(
+            proposal_id=proposal_id,
+            principal=principal,
+            binding_id=binding_id,
+            input_payload=normalized_input,
+        )
+
+        self._validate_eligibility(
+            candidate
+        )
+
+        actor_reference = _actor_reference(
+            candidate.agent_name
+        )
+        requester = ApprovalRequester(
+            actor_type="agent",
+            actor_reference=actor_reference,
+            actor_user_id=None,
+        )
+        idempotency_key = _approval_key(
+            proposal_id=candidate.proposal_id,
+            binding_id=candidate.binding_id,
+        )
+
+        created = (
+            self.approval_service
+            .create_skill_execution_request(
+                version_id=candidate.skill_version_id,
+                requester=requester,
+                input_payload=normalized_input,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+        request = created.request
+
+        self._correlate_request(
+            request=request,
+            candidate=candidate,
+            actor_reference=actor_reference,
+            idempotency_key=idempotency_key,
+            input_digest=input_digest,
+        )
+
+        if request.status in {
+            "rejected",
+            "expired",
+            "cancelled",
+        }:
+            raise AdvisoryProposalApprovalCorrelationError(
+                "Terminal ApprovalRequest cannot be recycled for this "
+                "advisory candidate; a new attempt is required."
+            )
+
+        return AuthenticatedAdvisoryProposalApprovalRequestResult(
+            proposal_id=candidate.proposal_id,
+            binding_id=candidate.binding_id,
+            skill_version_id=candidate.skill_version_id,
+            skill_id=candidate.skill_id,
+            agent_name=candidate.agent_name,
+            actor_reference=actor_reference,
+            approval_request_id=request.id,
+            approval_status=request.status,
+            risk_level=request.risk_level,
+            duplicate=created.duplicate,
+        )
+
+    def dispatch_approved_system(
+        self,
+        *,
+        proposal_id: int,
+        principal: SystemPrincipalProvenance,
+        binding_id: int,
+        input_payload: Any,
+        approval_request_id: int,
+    ) -> AuthenticatedAdvisoryProposalApprovedDispatchResult:
+        """
+        Sibling of dispatch_approved(), for the system_principal
+        provenance. The final authority of the effect is still the
+        human decider (decided_by_user_id) revalidated inside
+        materialize_and_execute_system() -- this method never
+        introduces a new authority, only a different provenance for
+        who originated the proposal/request.
+        """
+        normalized_approval_id = _positive_id(
+            approval_request_id,
+            field_name="approval_request_id",
+        )
+        normalized_input, input_digest = _normalize_input(
+            input_payload
+        )
+
+        candidate = self.consumption_service.validate_system_principal(
+            proposal_id=proposal_id,
+            principal=principal,
+            binding_id=binding_id,
+            input_payload=normalized_input,
+        )
+
+        self._validate_eligibility(
+            candidate
+        )
+
+        actor_reference = _actor_reference(
+            candidate.agent_name
+        )
+        idempotency_key = _approval_key(
+            proposal_id=candidate.proposal_id,
+            binding_id=candidate.binding_id,
+        )
+
+        request = self.approval_service.get_request(
+            normalized_approval_id
+        )
+
+        self._correlate_request(
+            request=request,
+            candidate=candidate,
+            actor_reference=actor_reference,
+            idempotency_key=idempotency_key,
+            input_digest=input_digest,
+        )
+
+        materialized = (
+            self.work_materialization_service
+            .materialize_and_execute_system(
+                proposal_id=candidate.proposal_id,
+                principal=principal,
+                binding_id=candidate.binding_id,
+                input_payload=normalized_input,
+                approval_request_id=request.id,
+            )
         )
 
         return AuthenticatedAdvisoryProposalApprovedDispatchResult(

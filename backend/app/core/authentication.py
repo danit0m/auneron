@@ -126,6 +126,15 @@ def hash_session_token(token: str) -> str:
     ).hexdigest()
 
 
+class NonInteractivePrincipalError(Exception):
+    """
+    role=system is a non-interactive principal. It cannot authenticate
+    with a password, cannot receive an AuthSession, and an AuthSession
+    belonging to it (legacy or otherwise) is never a valid mechanism
+    for the app to treat it as a logged-in user.
+    """
+
+
 @dataclass(frozen=True)
 class AuthenticatedSession:
     user: User
@@ -165,6 +174,7 @@ def authenticate_user(
         user is None
         or not password_valid
         or not user.active
+        or user.role == "system"
     ):
         return None
 
@@ -175,6 +185,11 @@ def create_session(
     db: Session,
     user: User,
 ) -> tuple[str, AuthSession]:
+    if user.role == "system":
+        raise NonInteractivePrincipalError(
+            "role=system cannot receive an AuthSession."
+        )
+
     now = utc_now()
     raw_token = token_urlsafe(32)
 
@@ -310,7 +325,11 @@ def require_user_session(
         auth_session.user_id,
     )
 
-    if user is None or not user.active:
+    if (
+        user is None
+        or not user.active
+        or user.role == "system"
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=(

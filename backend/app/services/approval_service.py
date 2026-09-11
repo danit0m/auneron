@@ -685,6 +685,62 @@ class ApprovalService:
             normalized_request_id
         )
 
+    def expire_pending_request_if_due(
+        self,
+        request_id: int,
+        *,
+        now: datetime | None = None,
+    ) -> ApprovalRequest:
+        """
+        Idempotent, locked transition of a stale pending request to
+        expired. Calling this twice on an already-expired request is
+        a no-op that just returns it -- it never re-fires the
+        transition. This is the only sanctioned way for the overdue
+        episode/attempt state machine to observe and materialize a
+        request that expired without ever being decided; nothing else
+        is allowed to write ApprovalRequest.status directly.
+        """
+        normalized_request_id = _positive_id(
+            request_id,
+            field_name="request_id",
+        )
+
+        effective_now = (
+            now
+            if now is not None
+            else utc_now()
+        )
+        if effective_now.tzinfo is None:
+            raise ApprovalValidationError(
+                "now deve possuir timezone."
+            )
+
+        request = self.repository.lock_request(
+            normalized_request_id
+        )
+
+        if request is None:
+            raise ApprovalNotFoundError(
+                "Solicitação de aprovação não encontrada."
+            )
+
+        if (
+            request.status == "pending"
+            and request.expires_at <= effective_now
+        ):
+            request.status = "expired"
+            request.resolved_at = effective_now
+            try:
+                self.db.commit()
+                self.db.refresh(
+                    request
+                )
+            except Exception:
+                self.db.rollback()
+                raise
+
+        return request
+
 
     def list_requests(
         self,
