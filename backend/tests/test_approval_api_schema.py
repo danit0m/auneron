@@ -80,6 +80,7 @@ def test_public_request_response_exposes_no_digest_or_idempotency() -> None:
         "request_id",
         "action_type",
         "skill_version_id",
+        "skill_key",
         "requester_actor_type",
         "requester_user_id",
         "risk_level",

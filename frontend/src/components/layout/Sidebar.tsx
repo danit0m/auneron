@@ -1,6 +1,7 @@
 import {
   BarChart3,
   BrainCircuit,
+  ClipboardCheck,
   FileUp,
   LayoutDashboard,
   LockKeyhole,
@@ -79,6 +80,12 @@ const intelligenceItems: MenuItem[] = [
     path: "/brain",
     icon: BrainCircuit,
     permission: "brain.view",
+  },
+  {
+    label: "Aprovações",
+    path: "/approvals",
+    icon: ClipboardCheck,
+    permission: "approval:read",
   },
 ];
 

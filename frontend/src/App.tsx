@@ -12,6 +12,7 @@ import {
   ProtectedRoute,
 } from "./routes/ProtectedRoute";
 import AgentOperations from "./pages/AgentOperations";
+import Approvals from "./pages/Approvals";
 import Brain from "./pages/Brain";
 import Clientes from "./pages/Clientes";
 import { Dashboard } from "./pages/Dashboard";
@@ -72,6 +73,15 @@ function App() {
             element={
               <ProtectedRoute permission="brain.view">
                 <Brain />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/approvals"
+            element={
+              <ProtectedRoute permission="approval:read">
+                <Approvals />
               </ProtectedRoute>
             }
           />

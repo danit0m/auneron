@@ -14,7 +14,9 @@ export type Permission =
   | "executive.view"
   | "brain.view"
   | "administration.ai-operations"
-  | "developer.ui-showcase";
+  | "developer.ui-showcase"
+  | "approval:read"
+  | "approval:decide";
 
 export interface AuthUser {
   id: number;

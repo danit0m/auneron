@@ -15,7 +15,6 @@ import {
 import type {
   Account,
   AccountCreate,
-  AccountStatus,
 } from "../../types/account";
 
 import "../../styles/cliente-modal.css";
@@ -37,7 +36,6 @@ interface ClienteFormulario {
   whatsapp: string;
   valor: number;
   vencimento: string;
-  status: AccountStatus;
 }
 
 type CampoFormulario =
@@ -49,7 +47,6 @@ const FORMULARIO_INICIAL: ClienteFormulario = {
   whatsapp: "",
   valor: 0,
   vencimento: "",
-  status: "aberto",
 };
 
 function criarFormulario(
@@ -67,9 +64,6 @@ function criarFormulario(
     whatsapp: cliente.whatsapp ?? "",
     valor: Number(cliente.valor),
     vencimento: cliente.vencimento ?? "",
-    status: normalizarStatus(
-      cliente.status,
-    ),
   };
 }
 
@@ -208,17 +202,6 @@ export default function ClienteModal({
         "Informe a data de vencimento.";
     }
 
-    if (
-      ![
-        "aberto",
-        "pago",
-        "atrasado",
-      ].includes(formulario.status)
-    ) {
-      novosErros.status =
-        "Selecione um status válido.";
-    }
-
     setErrosCampos(novosErros);
 
     return (
@@ -262,9 +245,6 @@ export default function ClienteModal({
 
       vencimento:
         formulario.vencimento,
-
-      status:
-        formulario.status,
     };
 
     await onSubmit(dados);
@@ -516,51 +496,6 @@ export default function ClienteModal({
                 </small>
               )}
             </div>
-
-            <div className="cliente-form-field cliente-form-full">
-              <label htmlFor="status">
-                Status financeiro
-                <strong>*</strong>
-              </label>
-
-              <select
-                id="status"
-                value={
-                  formulario.status
-                }
-                disabled={salvando}
-                className={
-                  errosCampos.status
-                    ? "cliente-input-error"
-                    : ""
-                }
-                onChange={(event) =>
-                  atualizarCampo(
-                    "status",
-                    event.target
-                      .value as AccountStatus,
-                  )
-                }
-              >
-                <option value="aberto">
-                  Em aberto
-                </option>
-
-                <option value="pago">
-                  Pago
-                </option>
-
-                <option value="atrasado">
-                  Atrasado
-                </option>
-              </select>
-
-              {errosCampos.status && (
-                <small>
-                  {errosCampos.status}
-                </small>
-              )}
-            </div>
           </div>
 
           <footer className="cliente-modal-footer">
@@ -602,20 +537,4 @@ export default function ClienteModal({
       </section>
     </div>
   );
-}
-
-function normalizarStatus(
-  status: string,
-): AccountStatus {
-  const statusNormalizado =
-    status.trim().toLowerCase();
-
-  if (
-    statusNormalizado === "pago" ||
-    statusNormalizado === "atrasado"
-  ) {
-    return statusNormalizado;
-  }
-
-  return "aberto";
 }

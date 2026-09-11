@@ -1,0 +1,116 @@
+.approvals-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.approvals-panel {
+  min-width: 0;
+}
+
+.approvals-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.approvals-toolbar select {
+  min-height: 42px;
+  padding: 0 34px 0 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 11px;
+  outline: 0;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.approvals-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 60px 20px;
+  color: var(--text-subtle);
+  text-align: center;
+}
+
+.approvals-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 0 0 16px 16px;
+}
+
+.approvals-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+.approvals-table th {
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-subtle);
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.approvals-table td {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.approvals-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.approvals-approve-button,
+.approvals-reject-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.approvals-approve-button {
+  border-color: var(--color-success-300);
+  background: var(--color-success-50);
+  color: var(--color-success-700);
+}
+
+.approvals-approve-button:hover:not(:disabled) {
+  background: var(--color-success-100);
+}
+
+.approvals-reject-button {
+  border-color: var(--color-danger-100);
+  background: var(--color-danger-50);
+  color: var(--color-danger-600);
+}
+
+.approvals-reject-button:hover:not(:disabled) {
+  background: var(--color-danger-100);
+}
+
+.approvals-approve-button:disabled,
+.approvals-reject-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.approvals-decided-label {
+  color: var(--text-subtle);
+}

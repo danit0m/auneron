@@ -219,8 +219,86 @@ def test_manager_can_list_and_read_non_sensitive_request(
         item["request_id"]
         for item in listing.json()["items"]
     ] == [request_id]
+    assert [
+        item["skill_key"]
+        for item in listing.json()["items"]
+    ] == ["approval24b.read"]
     assert details.status_code == 200
     assert details.json()["decision"] is None
+    assert (
+        details.json()["request"][
+            "skill_key"
+        ]
+        == "approval24b.read"
+    )
+
+
+def test_list_resolves_skill_key_per_item_not_uniformly(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """
+    F1UI-I2/I3: skill_key must come from a real per-request server
+    resolution (batched join), never a single value copy-pasted
+    across every row in a list response.
+    """
+    _set_role(
+        db_session,
+        "analyst",
+    )
+    version_a = _published_version(
+        db_session,
+        skill_key="approval24b.batch-a",
+    )
+    version_b = _published_version(
+        db_session,
+        skill_key="approval24b.batch-b",
+    )
+    created_a = _request_approval(
+        client,
+        version_a.id,
+        key="approval-batch-a-1",
+    )
+    created_b = _request_approval(
+        client,
+        version_b.id,
+        key="approval-batch-b-1",
+    )
+    request_id_a = created_a.json()[
+        "request"
+    ]["request_id"]
+    request_id_b = created_b.json()[
+        "request"
+    ]["request_id"]
+
+    _set_role(
+        db_session,
+        "manager",
+    )
+
+    listing = client.get("/approvals")
+
+    assert listing.status_code == 200
+    skill_keys_by_request_id = {
+        item["request_id"]: item[
+            "skill_key"
+        ]
+        for item in listing.json()[
+            "items"
+        ]
+    }
+    assert (
+        skill_keys_by_request_id[
+            request_id_a
+        ]
+        == "approval24b.batch-a"
+    )
+    assert (
+        skill_keys_by_request_id[
+            request_id_b
+        ]
+        == "approval24b.batch-b"
+    )
 
 
 def test_low_risk_request_can_be_decided_without_elevation(

@@ -20,7 +20,6 @@ export interface AccountCreate {
   whatsapp: string | null;
   valor: number;
   vencimento: string;
-  status: AccountStatus;
 }
 
 export interface AccountUpdate {
@@ -29,5 +28,4 @@ export interface AccountUpdate {
   whatsapp?: string | null;
   valor?: number;
   vencimento?: string;
-  status?: AccountStatus;
 }

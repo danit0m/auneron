@@ -38,6 +38,7 @@ from app.core.skill_errors import SkillNotFoundError
 from app.core.skill_errors import SkillStateError
 from app.core.skill_errors import SkillValidationError
 from app.database.database import get_db
+from app.repositories.skill_repository import SkillRepository
 from app.schemas.approval import ApprovalCreateRequest
 from app.schemas.approval import ApprovalCreationResponse
 from app.schemas.approval import ApprovalDecisionRequest
@@ -271,11 +272,44 @@ def _authorize_skill_proposal(
         )
 
 
+def _resolve_skill_keys(
+    db: Session,
+    requests,
+) -> dict[int, str]:
+    """
+    Resolves skill_version_id -> skill_key for every request in one
+    batched query, never one query per item. Fails closed: a
+    version_id that does not resolve to a Skill is a server-side
+    catalog inconsistency, not a client-facing approval state -- it
+    is never silently papered over here.
+    """
+    version_ids = {
+        request.skill_version_id
+        for request in requests
+    }
+    resolved = SkillRepository(
+        db
+    ).resolve_skill_keys_by_version_ids(
+        version_ids
+    )
+    missing = version_ids - resolved.keys()
+    if missing:
+        raise RuntimeError(
+            "Could not resolve skill_key for "
+            f"skill_version_id(s) {sorted(missing)!r} -- "
+            "catalog inconsistency."
+        )
+    return resolved
+
+
 def _request_response(
     request,
+    *,
+    skill_key: str,
 ) -> ApprovalRequestResponse:
     return ApprovalRequestResponse.from_request(
-        request
+        request,
+        skill_key=skill_key,
     )
 
 
@@ -388,9 +422,16 @@ def create_skill_execution_approval(
         ),
     )
 
+    skill_keys = _resolve_skill_keys(
+        db, [result.request]
+    )
+
     return ApprovalCreationResponse(
         request=_request_response(
-            result.request
+            result.request,
+            skill_key=skill_keys[
+                result.request.skill_version_id
+            ],
         ),
         created=not result.duplicate,
         duplicate=result.duplicate,
@@ -462,6 +503,10 @@ def list_approval_requests(
 
     page = requests[:limit]
 
+    skill_keys = _resolve_skill_keys(
+        service.db, page
+    )
+
     log_approval_event(
         "approval.requests_listed",
         operation="list",
@@ -471,7 +516,12 @@ def list_approval_requests(
 
     return ApprovalListResponse(
         items=[
-            _request_response(request)
+            _request_response(
+                request,
+                skill_key=skill_keys[
+                    request.skill_version_id
+                ],
+            )
             for request in page
         ],
         next_cursor=(
@@ -529,9 +579,16 @@ def get_approval_request(
         ),
     )
 
+    skill_keys = _resolve_skill_keys(
+        service.db, [request]
+    )
+
     return ApprovalDetailsResponse(
         request=_request_response(
-            request
+            request,
+            skill_key=skill_keys[
+                request.skill_version_id
+            ],
         ),
         decision=(
             _decision_response(decision)
@@ -614,9 +671,16 @@ def decide_approval_request(
         ),
     )
 
+    skill_keys = _resolve_skill_keys(
+        service.db, [result.request]
+    )
+
     return ApprovalDecisionResultResponse(
         request=_request_response(
-            result.request
+            result.request,
+            skill_key=skill_keys[
+                result.request.skill_version_id
+            ],
         ),
         decision=_decision_response(
             result.decision

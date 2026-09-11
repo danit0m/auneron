@@ -22,6 +22,55 @@ class SkillRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    def resolve_skill_keys_by_version_ids(
+        self,
+        version_ids,
+    ) -> dict[int, str]:
+        """
+        Batch-resolves skill_version_id -> SkillDefinition.skill_key
+        in a single join, so a caller listing N ApprovalRequests never
+        issues N+1 queries. Used to give a client the action's stable
+        semantic identity without ever exposing/requiring it to infer
+        that identity from a skill_version_id, agent_name or any other
+        internal id.
+
+        version_ids with no resolvable Skill (should not happen given
+        the ON DELETE RESTRICT chain skills <- skill_versions) are
+        simply absent from the returned mapping -- the caller decides
+        whether that is fail-closed.
+        """
+        normalized_ids = {
+            version_id
+            for version_id in version_ids
+            if isinstance(version_id, int)
+            and not isinstance(version_id, bool)
+            and version_id > 0
+        }
+
+        if not normalized_ids:
+            return {}
+
+        statement = (
+            select(
+                SkillVersion.id,
+                SkillDefinition.skill_key,
+            )
+            .join(
+                SkillDefinition,
+                SkillDefinition.id == SkillVersion.skill_id,
+            )
+            .where(
+                SkillVersion.id.in_(normalized_ids)
+            )
+        )
+
+        return {
+            version_id: skill_key
+            for version_id, skill_key in self.db.execute(
+                statement
+            ).all()
+        }
+
     def add_skill(
         self,
         skill: SkillDefinition,

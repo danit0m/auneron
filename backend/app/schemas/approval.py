@@ -63,6 +63,7 @@ class ApprovalRequestResponse(
         "skill_execution"
     ]
     skill_version_id: int
+    skill_key: str
     requester_actor_type: Literal[
         "user",
         "agent",
@@ -82,6 +83,8 @@ class ApprovalRequestResponse(
     def from_request(
         cls,
         request: ApprovalRequest,
+        *,
+        skill_key: str,
     ) -> "ApprovalRequestResponse":
         return cls(
             request_id=request.id,
@@ -89,6 +92,7 @@ class ApprovalRequestResponse(
             skill_version_id=(
                 request.skill_version_id
             ),
+            skill_key=skill_key,
             requester_actor_type=(
                 request.requester_actor_type
             ),

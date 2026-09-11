@@ -18,6 +18,8 @@ const analystPermissions = [
 const managerPermissions = [
   ...analystPermissions,
   "executive.view",
+  "approval:read",
+  "approval:decide",
 ] as const satisfies readonly Permission[];
 
 const executivePermissions = [

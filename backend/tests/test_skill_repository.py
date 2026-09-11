@@ -232,3 +232,65 @@ def test_repository_deletes_draft_version(
     repository.delete_version(version)
 
     assert repository.get_version(version.id) is None
+
+
+def test_resolve_skill_keys_by_version_ids_batches_correctly(
+    db_session: Session,
+) -> None:
+    repository = SkillRepository(db_session)
+
+    skill_a = add_skill(
+        repository, skill_key="approval25n.skill-a",
+    )
+    skill_b = add_skill(
+        repository, skill_key="approval25n.skill-b",
+    )
+    version_a = add_version(
+        repository, skill_a.id, digest_character="a",
+    )
+    version_b = add_version(
+        repository, skill_b.id, digest_character="b",
+    )
+
+    resolved = repository.resolve_skill_keys_by_version_ids(
+        [version_a.id, version_b.id]
+    )
+
+    assert resolved == {
+        version_a.id: "approval25n.skill-a",
+        version_b.id: "approval25n.skill-b",
+    }
+
+
+def test_resolve_skill_keys_by_version_ids_empty_input(
+    db_session: Session,
+) -> None:
+    repository = SkillRepository(db_session)
+
+    assert (
+        repository.resolve_skill_keys_by_version_ids([])
+        == {}
+    )
+
+
+def test_resolve_skill_keys_by_version_ids_omits_unresolvable_ids(
+    db_session: Session,
+) -> None:
+    """
+    F1UI-I2: a version_id that does not resolve to a real Skill is
+    simply absent from the mapping -- the repository never invents a
+    placeholder skill_key. The caller (approvals route) is responsible
+    for failing closed when a requested id is missing.
+    """
+    repository = SkillRepository(db_session)
+    skill = add_skill(repository)
+    version = add_version(repository, skill.id)
+
+    resolved = repository.resolve_skill_keys_by_version_ids(
+        [version.id, 999_999_999]
+    )
+
+    assert resolved == {
+        version.id: skill.skill_key,
+    }
+    assert 999_999_999 not in resolved
