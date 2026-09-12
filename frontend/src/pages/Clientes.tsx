@@ -494,7 +494,12 @@ export default function Clientes() {
         </div>
 
         <div className="clientes-summary-grid">
-          <article className="clientes-summary-card">
+          <button
+            type="button"
+            className="clientes-summary-card clientes-summary-card--interactive"
+            aria-pressed={statusFiltro === "todos"}
+            onClick={() => setStatusFiltro("todos")}
+          >
             <div className="clientes-summary-icon clientes-summary-blue">
               <Users size={21} />
             </div>
@@ -504,9 +509,14 @@ export default function Clientes() {
               <strong>{resumo.total}</strong>
               <small>Cadastros ativos</small>
             </div>
-          </article>
+          </button>
 
-          <article className="clientes-summary-card">
+          <button
+            type="button"
+            className="clientes-summary-card clientes-summary-card--interactive"
+            aria-pressed={statusFiltro === "pago"}
+            onClick={() => setStatusFiltro("pago")}
+          >
             <div className="clientes-summary-icon clientes-summary-green">
               <CheckCircle2 size={21} />
             </div>
@@ -516,9 +526,14 @@ export default function Clientes() {
               <strong>{resumo.pagos}</strong>
               <small>Clientes em dia</small>
             </div>
-          </article>
+          </button>
 
-          <article className="clientes-summary-card">
+          <button
+            type="button"
+            className="clientes-summary-card clientes-summary-card--interactive"
+            aria-pressed={statusFiltro === "aberto"}
+            onClick={() => setStatusFiltro("aberto")}
+          >
             <div className="clientes-summary-icon clientes-summary-orange">
               <Clock3 size={21} />
             </div>
@@ -528,9 +543,14 @@ export default function Clientes() {
               <strong>{resumo.abertos}</strong>
               <small>Aguardando pagamento</small>
             </div>
-          </article>
+          </button>
 
-          <article className="clientes-summary-card">
+          <button
+            type="button"
+            className="clientes-summary-card clientes-summary-card--interactive"
+            aria-pressed={statusFiltro === "atrasado"}
+            onClick={() => setStatusFiltro("atrasado")}
+          >
             <div className="clientes-summary-icon clientes-summary-red">
               <AlertTriangle size={21} />
             </div>
@@ -540,7 +560,7 @@ export default function Clientes() {
               <strong>{resumo.atrasados}</strong>
               <small>Exigem atenção</small>
             </div>
-          </article>
+          </button>
 
           <article className="clientes-summary-card">
             <div className="clientes-summary-icon clientes-summary-purple">
