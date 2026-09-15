@@ -19,9 +19,13 @@ import {
   NavLink,
 } from "react-router-dom";
 import {
+  useEffect,
   useState,
 } from "react";
 
+import {
+  fetchApprovalsPendingCount,
+} from "../../api/api";
 import {
   privilegedPermissions,
   roleLabels,
@@ -33,12 +37,19 @@ import type {
   Permission,
 } from "../../types/auth";
 
+// Human Attention Indicator (light): conservative polling interval --
+// not real-time, just enough that a passive badge doesn't go stale
+// for an entire shift. Never a request loop.
+const PENDING_APPROVALS_POLL_INTERVAL_MS =
+  60_000;
+
 interface MenuItem {
   label: string;
   path: string;
   icon: LucideIcon;
   permission: Permission;
   end?: boolean;
+  badge?: number;
 }
 
 interface MenuSectionProps {
@@ -168,6 +179,35 @@ function MenuSection({
 
             <span>{item.label}</span>
 
+            {typeof item.badge ===
+              "number" &&
+              item.badge > 0 && (
+                <span
+                  aria-label={
+                    `${item.badge} aprovações pendentes`
+                  }
+                  style={{
+                    marginLeft: "auto",
+                    minWidth: 18,
+                    height: 18,
+                    padding: "0 5px",
+                    display: "grid",
+                    placeItems: "center",
+                    borderRadius: 999,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    lineHeight: 1,
+                    color: "#ffffff",
+                    background:
+                      "var(--accent-danger, #dc2626)",
+                  }}
+                >
+                  {item.badge > 99
+                    ? "99+"
+                    : item.badge}
+                </span>
+              )}
+
             {privileged && (
               <LockKeyhole
                 size={14}
@@ -186,12 +226,77 @@ export function Sidebar() {
   const {
     user,
     signOut,
+    hasPermission,
   } = useAuth();
 
   const [
     signingOut,
     setSigningOut,
   ] = useState(false);
+
+  const [
+    pendingApprovalsCount,
+    setPendingApprovalsCount,
+  ] = useState<number | null>(null);
+
+  const canSeeApprovals = hasPermission(
+    "approval:read",
+  );
+
+  useEffect(() => {
+    if (!canSeeApprovals) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPendingCount() {
+      try {
+        const count =
+          await fetchApprovalsPendingCount();
+
+        if (!cancelled) {
+          setPendingApprovalsCount(
+            count,
+          );
+        }
+      } catch (error) {
+        // Fail-soft by design: an unavailable counter must never
+        // block Sidebar navigation. It just stays unbadged.
+        console.error(
+          "Erro ao carregar contagem de aprovações pendentes:",
+          error,
+        );
+      }
+    }
+
+    void loadPendingCount();
+
+    const intervalId = window.setInterval(
+      () => {
+        void loadPendingCount();
+      },
+      PENDING_APPROVALS_POLL_INTERVAL_MS,
+    );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [canSeeApprovals]);
+
+  const intelligenceItemsWithBadges =
+    intelligenceItems.map((item) =>
+      item.path === "/approvals"
+        ? {
+            ...item,
+            badge: canSeeApprovals
+              ? pendingApprovalsCount ??
+                undefined
+              : undefined,
+          }
+        : item,
+    );
 
   async function handleSignOut() {
     if (signingOut) {
@@ -231,7 +336,9 @@ export function Sidebar() {
 
         <MenuSection
           title="INTELIGÊNCIA"
-          items={intelligenceItems}
+          items={
+            intelligenceItemsWithBadges
+          }
         />
 
         <MenuSection

@@ -1,5 +1,9 @@
 import axios from "axios";
 
+import type {
+  ApprovalPendingCountResponse,
+} from "../types/approval";
+
 export const REQUEST_ID_HEADER =
   "X-Request-ID";
 
@@ -123,5 +127,19 @@ api.interceptors.request.use(
     return config;
   },
 );
+
+/**
+ * Human Attention Indicator (light): count only, never the full
+ * ApprovalListResponse -- this is meant to be polled from the Sidebar,
+ * so it must never fetch full request payloads just to count them.
+ */
+export async function fetchApprovalsPendingCount(): Promise<number> {
+  const response =
+    await api.get<ApprovalPendingCountResponse>(
+      "/approvals/pending-count",
+    );
+
+  return response.data.count;
+}
 
 export default api;

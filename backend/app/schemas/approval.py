@@ -175,3 +175,9 @@ class ApprovalDecisionResultResponse(
 ):
     request: ApprovalRequestResponse
     decision: ApprovalDecisionResponse
+
+
+class ApprovalPendingCountResponse(
+    ApprovalAPISchema
+):
+    count: int

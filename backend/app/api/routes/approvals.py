@@ -46,6 +46,7 @@ from app.schemas.approval import ApprovalDecisionResponse
 from app.schemas.approval import ApprovalDecisionResultResponse
 from app.schemas.approval import ApprovalDetailsResponse
 from app.schemas.approval import ApprovalListResponse
+from app.schemas.approval import ApprovalPendingCountResponse
 from app.schemas.approval import ApprovalRequestResponse
 from app.schemas.approval import ApprovalRiskLevel
 from app.schemas.approval import ApprovalStatus
@@ -529,6 +530,35 @@ def list_approval_requests(
             if len(requests) > limit
             else None
         ),
+    )
+
+
+@router.get(
+    "/pending-count",
+    response_model=ApprovalPendingCountResponse,
+)
+def get_approvals_pending_count(
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("approval:read")
+    ),
+    service: ApprovalService = Depends(
+        get_approval_service
+    ),
+) -> ApprovalPendingCountResponse:
+    required_permissions = (
+        visible_required_permissions(
+            authenticated.user.role
+        )
+    )
+
+    count = service.count_pending_requests(
+        required_permissions=(
+            required_permissions
+        ),
+    )
+
+    return ApprovalPendingCountResponse(
+        count=count
     )
 
 

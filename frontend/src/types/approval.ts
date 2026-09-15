@@ -65,6 +65,10 @@ export interface ApprovalDecisionResultResponse {
   decision: ApprovalDecisionResponse;
 }
 
+export interface ApprovalPendingCountResponse {
+  count: number;
+}
+
 /**
  * skill_key is a server-derived identity (see ApprovalRequestResponse.
  * skill_key) -- this is presentation only, never used to infer identity.

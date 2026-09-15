@@ -1,3 +1,8 @@
+from datetime import datetime
+from datetime import timezone
+
+from sqlalchemy import func
+from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -140,25 +145,45 @@ class ApprovalRepository:
             statement
         ).scalar_one_or_none()
 
-    def list_requests(
+    def _apply_request_filters(
         self,
+        statement,
         *,
-        statuses: tuple[str, ...] | None = None,
-        risk_levels: tuple[str, ...] | None = None,
-        required_permissions: tuple[str, ...] | None = None,
-        after_id: int | None = None,
-        limit: int = 51,
-    ) -> list[ApprovalRequest]:
-        statement = select(
-            ApprovalRequest
-        )
+        statuses: tuple[str, ...] | None,
+        risk_levels: tuple[str, ...] | None,
+        required_permissions: tuple[str, ...] | None,
+        now: datetime,
+    ):
+        """
+        Shared WHERE construction for list_requests and count_requests --
+        the two must never drift into independent interpretations of
+        "visible"/"actionable" (Human Attention Indicator contract).
 
+        expires_at > now is applied unconditionally to rows whose
+        persisted status is "pending" -- never to the query as a whole.
+        A row with any other status always satisfies
+        `status != "pending"` and is therefore never affected by this
+        clause, regardless of which statuses were requested. This is
+        what keeps a mixed filter (e.g. pending + approved) from
+        stripping already-resolved historical rows just because
+        "pending" was also requested, and keeps status=approved/
+        rejected/expired/cancelled queries byte-for-byte unchanged.
+        """
         if statuses is not None:
             statement = statement.where(
                 ApprovalRequest.status.in_(
                     statuses
                 )
             )
+
+        statement = statement.where(
+            or_(
+                ApprovalRequest.status
+                != "pending",
+                ApprovalRequest.expires_at
+                > now,
+            )
+        )
 
         if risk_levels is not None:
             statement = statement.where(
@@ -168,13 +193,43 @@ class ApprovalRepository:
             )
 
         if required_permissions is not None:
-            if not required_permissions:
-                return []
             statement = statement.where(
                 ApprovalRequest.required_permission.in_(
                     required_permissions
                 )
             )
+
+        return statement
+
+    def list_requests(
+        self,
+        *,
+        statuses: tuple[str, ...] | None = None,
+        risk_levels: tuple[str, ...] | None = None,
+        required_permissions: tuple[str, ...] | None = None,
+        after_id: int | None = None,
+        limit: int = 51,
+        now: datetime | None = None,
+    ) -> list[ApprovalRequest]:
+        if (
+            required_permissions is not None
+            and not required_permissions
+        ):
+            return []
+
+        effective_now = (
+            now
+            if now is not None
+            else datetime.now(timezone.utc)
+        )
+
+        statement = self._apply_request_filters(
+            select(ApprovalRequest),
+            statuses=statuses,
+            risk_levels=risk_levels,
+            required_permissions=required_permissions,
+            now=effective_now,
+        )
 
         if after_id is not None:
             statement = statement.where(
@@ -195,6 +250,47 @@ class ApprovalRepository:
                 statement
             ).scalars().all()
         )
+
+    def count_requests(
+        self,
+        *,
+        statuses: tuple[str, ...] | None = None,
+        risk_levels: tuple[str, ...] | None = None,
+        required_permissions: tuple[str, ...] | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        """
+        Real SELECT COUNT in the database -- never len(list_requests(...)).
+        Sharing list_requests's cursor/limit would silently truncate the
+        count once pending requests exceed a page size.
+        """
+        if (
+            required_permissions is not None
+            and not required_permissions
+        ):
+            return 0
+
+        effective_now = (
+            now
+            if now is not None
+            else datetime.now(timezone.utc)
+        )
+
+        statement = self._apply_request_filters(
+            select(
+                func.count(
+                    ApprovalRequest.id
+                )
+            ),
+            statuses=statuses,
+            risk_levels=risk_levels,
+            required_permissions=required_permissions,
+            now=effective_now,
+        )
+
+        return self.db.execute(
+            statement
+        ).scalar_one()
 
     def list_approved_agent_requests_without_consumption(
         self,

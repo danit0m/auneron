@@ -98,7 +98,7 @@ def test_public_request_response_exposes_no_digest_or_idempotency() -> None:
     assert "requester_reference" not in fields
 
 
-def test_approval_api_exposes_exact_four_operations() -> None:
+def test_approval_api_exposes_exact_five_operations() -> None:
     schema = app.openapi()
     paths = schema.get(
         "paths",
@@ -132,6 +132,10 @@ def test_approval_api_exposes_exact_four_operations() -> None:
         (
             "GET",
             "/approvals",
+        ),
+        (
+            "GET",
+            "/approvals/pending-count",
         ),
         (
             "GET",

@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func
@@ -590,6 +591,184 @@ def test_database_outage_is_sanitized(
     ] == "approval_unavailable"
     assert "database-password" not in response.text
     assert "SELECT secret" not in response.text
+
+
+def test_pending_count_endpoint_requires_approval_read_permission(
+    unauthenticated_client: TestClient,
+    service_client: TestClient,
+) -> None:
+    no_api_key = unauthenticated_client.get(
+        "/approvals/pending-count"
+    )
+    no_session = service_client.get(
+        "/approvals/pending-count"
+    )
+
+    assert no_api_key.status_code == 401
+    assert no_session.status_code == 401
+
+
+def test_pending_count_matches_list_for_same_authenticated_role(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _set_role(
+        db_session,
+        "analyst",
+    )
+    version = _published_version(
+        db_session,
+        skill_key="approval24b.pending-count-parity",
+    )
+    _request_approval(
+        client,
+        version.id,
+        key="approval-pending-count-parity-1",
+    )
+
+    _set_role(
+        db_session,
+        "manager",
+    )
+
+    pending_count = client.get(
+        "/approvals/pending-count"
+    )
+    listing = client.get(
+        "/approvals",
+        params={
+            "status": "pending",
+        },
+    )
+
+    assert pending_count.status_code == 200
+    assert listing.status_code == 200
+    assert (
+        pending_count.json()["count"]
+        == len(listing.json()["items"])
+        == 1
+    )
+
+
+def test_pending_count_excludes_expired_pending_request(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _set_role(
+        db_session,
+        "analyst",
+    )
+    version = _published_version(
+        db_session,
+        skill_key="approval24b.pending-count-expired",
+    )
+    created = _request_approval(
+        client,
+        version.id,
+        key="approval-pending-count-expired-1",
+    )
+    request_id = created.json()[
+        "request"
+    ]["request_id"]
+
+    request = db_session.get(
+        ApprovalRequest,
+        request_id,
+    )
+    request.expires_at = (
+        request.created_at
+        + timedelta(milliseconds=1)
+    )
+    db_session.commit()
+
+    _set_role(
+        db_session,
+        "manager",
+    )
+
+    pending_count = client.get(
+        "/approvals/pending-count"
+    )
+    listing = client.get(
+        "/approvals",
+        params={
+            "status": "pending",
+        },
+    )
+
+    assert pending_count.status_code == 200
+    assert pending_count.json()["count"] == 0
+    assert listing.status_code == 200
+    assert listing.json()["items"] == []
+
+
+def test_pending_count_scoped_by_role_visibility(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    version = _published_version(
+        db_session,
+        skill_key="approval24b.pending-count-sensitive",
+        execution_mode="external",
+    )
+    service = ApprovalService(
+        db_session
+    )
+    service.create_skill_execution_request(
+        version_id=version.id,
+        requester=ApprovalRequester(
+            actor_type="system",
+            actor_reference="system:approval-test",
+        ),
+        input_payload={
+            "value": 1,
+        },
+        idempotency_key="approval-pending-count-sensitive-1",
+    )
+
+    _set_role(
+        db_session,
+        "manager",
+    )
+    manager_count = client.get(
+        "/approvals/pending-count"
+    )
+
+    _set_role(
+        db_session,
+        "executive",
+    )
+    executive_count = client.get(
+        "/approvals/pending-count"
+    )
+
+    assert manager_count.status_code == 200
+    assert manager_count.json()["count"] == 0
+    assert executive_count.status_code == 200
+    assert executive_count.json()["count"] == 1
+
+
+def test_pending_count_response_shape(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _set_role(
+        db_session,
+        "manager",
+    )
+
+    response = client.get(
+        "/approvals/pending-count"
+    )
+
+    assert response.status_code == 200
+    assert set(
+        response.json().keys()
+    ) == {"count"}
+    assert isinstance(
+        response.json()["count"],
+        int,
+    )
 
 
 def test_approval_observability_drops_sensitive_fields(

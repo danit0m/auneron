@@ -836,6 +836,24 @@ class ApprovalService:
             after_id=normalized_after_id,
             limit=limit,
         )
+
+    def count_pending_requests(
+        self,
+        *,
+        required_permissions: tuple[str, ...],
+    ) -> int:
+        """
+        Actionable-pending count for the Human Attention Indicator.
+        required_permissions is always server-derived
+        (visible_required_permissions(role)), never client input, so it
+        is not re-validated the way list_requests validates externally
+        supplied query parameters.
+        """
+        return self.repository.count_requests(
+            statuses=("pending",),
+            required_permissions=required_permissions,
+        )
+
     def _normalize_requester(
         self,
         requester: ApprovalRequester,
