@@ -94,6 +94,7 @@ from app.api.routes.executive import router as executive_router
 from app.api.routes.health import router as health_router
 from app.api.routes.memory import router as memory_router
 from app.api.routes.orchestrator import router as orchestrator_router
+from app.api.routes.outcome import router as outcome_router
 from app.api.routes.skills import router as skills_router
 from app.api.routes.work import router as work_router
 
@@ -396,6 +397,15 @@ app.include_router(
 # Nenhuma rota desta camada executa Skills.
 app.include_router(
     approvals_router,
+    dependencies=service_dependencies,
+)
+
+# Outcome Intelligence expõe somente projeção read-only sobre dados já
+# existentes (Knowledge, Approval, Work, AccountEvent). Não muta nada,
+# não decide nada. A API key permanece no router; approval:read é
+# aplicado no endpoint.
+app.include_router(
+    outcome_router,
     dependencies=service_dependencies,
 )
 
