@@ -90,6 +90,9 @@ from app.api.routes.accounts import router as accounts_router
 from app.api.routes.approvals import router as approvals_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.brain import router as brain_router
+from app.api.routes.customer_context import (
+    router as customer_context_router,
+)
 from app.api.routes.executive import router as executive_router
 from app.api.routes.health import router as health_router
 from app.api.routes.memory import router as memory_router
@@ -406,6 +409,18 @@ app.include_router(
 # aplicado no endpoint.
 app.include_router(
     outcome_router,
+    dependencies=service_dependencies,
+)
+
+# Customer Intelligence 360 compõe Account/AccountEvent/Knowledge/
+# Memory e Outcome (via get_outcome_episode, nunca por alteração dos
+# arquivos de Outcome) numa projeção read-only agrupada por email
+# (heurística, não identidade -- ver customer_context.py). A API key
+# permanece no router; approval:read é aplicado no endpoint, mesma
+# permissão do Outcome, para não expor dado gateado por Approval por
+# uma porta lateral.
+app.include_router(
+    customer_context_router,
     dependencies=service_dependencies,
 )
 
