@@ -289,6 +289,18 @@ class Settings(BaseSettings):
         )
     )
 
+    business_timezone: str = Field(
+        default="America/Sao_Paulo",
+        validation_alias="BUSINESS_TIMEZONE",
+    )
+
+    receivables_monitor_interval_seconds: int = Field(
+        default=300,
+        validation_alias="RECEIVABLES_MONITOR_INTERVAL_SECONDS",
+        ge=60,
+        le=86400,
+    )
+
     log_level: Literal[
         "DEBUG",
         "INFO",

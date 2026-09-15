@@ -103,6 +103,18 @@ class Knowledge(Base):
         index=True,
     )
 
+    correlation_key = Column(
+        String(255),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    resolved_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

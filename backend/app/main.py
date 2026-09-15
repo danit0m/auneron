@@ -75,6 +75,10 @@ from app.core.client_classification import (
     client_classification_maintenance_loop,
     run_client_classification_recalculation_async,
 )
+from app.core.receivables_monitor_maintenance import (
+    receivables_monitor_maintenance_loop,
+    run_receivables_monitor_async,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -126,6 +130,7 @@ async def lifespan(_: FastAPI):
         await run_advisory_dispatch_recovery_async()
         await run_client_behavior_memory_recalculation_async()
         await run_client_classification_recalculation_async()
+        await run_receivables_monitor_async()
 
     maintenance_tasks = (
         asyncio.create_task(
@@ -154,6 +159,9 @@ async def lifespan(_: FastAPI):
         ),
         asyncio.create_task(
             client_classification_maintenance_loop()
+        ),
+        asyncio.create_task(
+            receivables_monitor_maintenance_loop()
         ),
     )
 

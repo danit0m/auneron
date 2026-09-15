@@ -74,19 +74,19 @@ def test_dashboard_calculations(
         "faturamento_total": 6000.00,
         "recebido": 1000.00,
         "pendente": 5000.00,
-        "atrasado": 3000.00,
+        "atrasado": 5000.00,
     }
 
     assert payload["indicadores"] == {
         "taxa_recebimento": "16.67%",
         "ticket_medio": 2000.00,
-        "clientes_atrasados": 1,
+        "clientes_atrasados": 2,
     }
 
     assert payload["status_clientes"] == {
         "pago": 1,
         "aberto": 1,
-        "atrasado": 1,
+        "atrasado": 2,
     }
 
     assert [
@@ -98,11 +98,13 @@ def test_dashboard_calculations(
         "Cliente Pago",
     ]
 
-    assert len(payload["alertas"]) == 1
-    assert (
-        payload["alertas"][0]["cliente"]
-        == "Cliente Atrasado"
-    )
+    assert len(payload["alertas"]) == 2
+    assert {
+        item["cliente"] for item in payload["alertas"]
+    } == {
+        "Cliente Aberto",
+        "Cliente Atrasado",
+    }
 
     assert [
         item["cliente"]

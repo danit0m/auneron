@@ -1,8 +1,12 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.core.receivable_lifecycle import business_today
+from app.core.receivable_lifecycle import evaluate_receivable_lifecycle
 from app.database.database import get_db
 from app.models.account import Account
 
@@ -34,10 +38,24 @@ def dashboard(db: Session = Depends(get_db)):
         .scalar() or 0
     )
 
-    atrasado = (
-        db.query(func.sum(Account.valor))
-        .filter(func.lower(Account.status) == "atrasado")
-        .scalar() or 0
+    # F3 -- situacao operacional (canonica) substitui os hardcodes de
+    # status == "atrasado" abaixo. Ver app/core/receivable_lifecycle.py.
+    hoje = business_today()
+
+    contas_atrasadas = [
+        conta
+        for conta in db.query(Account).all()
+        if evaluate_receivable_lifecycle(
+            financial_status=conta.status,
+            vencimento=conta.vencimento,
+            today=hoje,
+        ).state
+        in ("overdue", "overdue_alert")
+    ]
+
+    atrasado = sum(
+        (conta.valor for conta in contas_atrasadas),
+        Decimal("0"),
     )
 
     taxa_recebimento = (
@@ -50,11 +68,7 @@ def dashboard(db: Session = Depends(get_db)):
         if total_clientes else 0
     )
 
-    clientes_atrasados = (
-        db.query(Account)
-        .filter(func.lower(Account.status) == "atrasado")
-        .count()
-    )
+    clientes_atrasados = len(contas_atrasadas)
 
     pagos = (
         db.query(Account)
@@ -68,11 +82,7 @@ def dashboard(db: Session = Depends(get_db)):
         .count()
     )
 
-    atrasados = (
-        db.query(Account)
-        .filter(func.lower(Account.status) == "atrasado")
-        .count()
-    )
+    atrasados = len(contas_atrasadas)
 
     maiores_clientes = (
         db.query(Account)
@@ -107,12 +117,7 @@ def dashboard(db: Session = Depends(get_db)):
         for c in lista_vencimentos
     ]
 
-    lista_alertas = (
-        db.query(Account)
-        .filter(func.lower(Account.status) == "atrasado")
-        .limit(5)
-        .all()
-    )
+    lista_alertas = contas_atrasadas[:5]
 
     alertas = [
         {

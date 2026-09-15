@@ -8,9 +8,13 @@ from pydantic import (
     EmailStr,
     Field,
     PlainSerializer,
+    model_validator,
 )
 
 from app.core.money import money_to_json_number
+from app.core.receivable_lifecycle import ReceivableLifecycleState
+from app.core.receivable_lifecycle import business_today
+from app.core.receivable_lifecycle import evaluate_receivable_lifecycle
 
 
 AccountStatus = Literal[
@@ -92,6 +96,17 @@ class AccountUpdate(BaseModel):
     vencimento: date | None = None
 
 
+class ReceivableLifecycle(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    state: ReceivableLifecycleState
+    days_to_due: int
+    days_overdue: int
+    as_of: date
+
+
 class AccountResponse(AccountBase):
     model_config = ConfigDict(
         from_attributes=True,
@@ -100,6 +115,29 @@ class AccountResponse(AccountBase):
 
     id: int
     created_at: datetime
+
+    # F3 -- projecao advisory/read-only calculada a cada resposta, nunca
+    # aceita como entrada (AccountCreate/AccountUpdate nao possuem este
+    # campo). Sempre recalculada pelo model_validator abaixo, mesmo se
+    # o objeto de origem tiver um atributo com este nome.
+    receivable_lifecycle: ReceivableLifecycle | None = None
+
+    @model_validator(mode="after")
+    def _compute_receivable_lifecycle(self) -> "AccountResponse":
+        lifecycle = evaluate_receivable_lifecycle(
+            financial_status=self.status,
+            vencimento=self.vencimento,
+            today=business_today(),
+        )
+
+        self.receivable_lifecycle = ReceivableLifecycle(
+            state=lifecycle.state,
+            days_to_due=lifecycle.days_to_due,
+            days_overdue=lifecycle.days_overdue,
+            as_of=lifecycle.as_of,
+        )
+
+        return self
 
 
 AccountMarkPaidExpectedStatus = Literal[
