@@ -87,6 +87,9 @@ from app.database.database import (
 from app.api.routes.upload import router as upload_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.accounts import router as accounts_router
+from app.api.routes.action_space_evaluator import (
+    router as action_space_evaluator_router,
+)
 from app.api.routes.approvals import router as approvals_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.brain import router as brain_router
@@ -459,6 +462,17 @@ app.include_router(
 
 app.include_router(
     mark_paid_recommendation_router,
+    dependencies=service_dependencies,
+)
+
+# Action Space Evaluator compõe, por leitura, as três capabilities já
+# fechadas (mark_overdue/mark_paid/escalate_to_human) em uma única
+# projeção por financial_episode -- eligible_actions()/no_action, sem
+# ranking. Nenhum dos três contratos fonte é alterado. A API key
+# permanece no router; approval:read é aplicado no endpoint, mesma
+# permissão da família inteira de recomendação.
+app.include_router(
+    action_space_evaluator_router,
     dependencies=service_dependencies,
 )
 
