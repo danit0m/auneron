@@ -25,8 +25,14 @@ backend/*.csv
 backend/commit*_audit.txt
 
 **/*.dump
+**/*.db
 **/*.sqlite
 **/*.sqlite3
+
+# Historical one-time SQLite -> PostgreSQL migration utility; not
+# production runtime (Pilot Action Space PR-3, Legacy SQLite
+# Migration Isolation V1).
+backend/scripts/migrate_sqlite_to_postgres.py
 
 .DS_Store
 Thumbs.db

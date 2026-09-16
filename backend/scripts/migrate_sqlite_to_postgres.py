@@ -14,6 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from sqlalchemy import func, select, text
 
+from app.core.config import settings
 from app.core.money import to_money
 from app.database.database import engine
 from app.models.account import Account
@@ -410,6 +411,12 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    if settings.environment == "production":
+        raise SystemExit(
+            "ABORTADO: a migração legada SQLite -> PostgreSQL "
+            "não pode ser executada em production."
+        )
 
     print("=" * 60)
     print("AUNERON — MIGRAÇÃO SQLITE PARA POSTGRESQL")
