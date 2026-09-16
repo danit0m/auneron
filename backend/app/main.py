@@ -98,6 +98,12 @@ from app.api.routes.health import router as health_router
 from app.api.routes.human_escalation import (
     router as human_escalation_router,
 )
+from app.api.routes.mark_overdue_recommendation import (
+    router as mark_overdue_recommendation_router,
+)
+from app.api.routes.mark_paid_recommendation import (
+    router as mark_paid_recommendation_router,
+)
 from app.api.routes.memory import router as memory_router
 from app.api.routes.orchestrator import router as orchestrator_router
 from app.api.routes.outcome import router as outcome_router
@@ -436,6 +442,23 @@ app.include_router(
 # não expor a mesma superfície sensível por uma porta lateral.
 app.include_router(
     human_escalation_router,
+    dependencies=service_dependencies,
+)
+
+# Governed Financial Action Eligibility (Pilot Action Space V1.C) expõe
+# apenas a elegibilidade read-only de account.mark_overdue e
+# account.mark_paid -- structurally_available/system_recommendable/
+# requires_external_fact, nunca eligible_actions()/no_action (isso
+# pertence ao futuro Action Space Evaluator). A API key permanece no
+# router; approval:read é aplicado no endpoint, mesma permissão de
+# Outcome/Customer 360/Human Escalation.
+app.include_router(
+    mark_overdue_recommendation_router,
+    dependencies=service_dependencies,
+)
+
+app.include_router(
+    mark_paid_recommendation_router,
     dependencies=service_dependencies,
 )
 
