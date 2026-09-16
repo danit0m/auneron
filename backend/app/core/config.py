@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -287,6 +288,33 @@ class Settings(BaseSettings):
             ge=60,
             le=86400,
         )
+    )
+
+    nba_calibration_version: str = Field(
+        default="initial_calibration_reference_v1",
+        validation_alias="NBA_CALIBRATION_VERSION",
+    )
+    nba_critical_overdue_reference_days: int = Field(
+        default=45,
+        validation_alias="NBA_CRITICAL_OVERDUE_REFERENCE_DAYS",
+        ge=1,
+        le=3650,
+    )
+    nba_early_high_exposure_reference_day: int = Field(
+        default=5,
+        validation_alias="NBA_EARLY_HIGH_EXPOSURE_REFERENCE_DAY",
+        ge=0,
+        le=3650,
+    )
+    nba_absolute_high_value_reference: Decimal = Field(
+        default=Decimal("15000.00"),
+        validation_alias="NBA_ABSOLUTE_HIGH_VALUE_REFERENCE",
+        gt=Decimal("0"),
+    )
+    nba_operational_cost_floor_reference: Decimal = Field(
+        default=Decimal("500.00"),
+        validation_alias="NBA_OPERATIONAL_COST_FLOOR_REFERENCE",
+        ge=Decimal("0"),
     )
 
     business_timezone: str = Field(

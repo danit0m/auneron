@@ -108,6 +108,7 @@ from app.api.routes.mark_paid_recommendation import (
     router as mark_paid_recommendation_router,
 )
 from app.api.routes.memory import router as memory_router
+from app.api.routes.nba_policy import router as nba_policy_router
 from app.api.routes.orchestrator import router as orchestrator_router
 from app.api.routes.outcome import router as outcome_router
 from app.api.routes.skills import router as skills_router
@@ -473,6 +474,19 @@ app.include_router(
 # permissão da família inteira de recomendação.
 app.include_router(
     action_space_evaluator_router,
+    dependencies=service_dependencies,
+)
+
+# Next Best Action (NBA V1) compõe, por leitura, o Action Space
+# Evaluator (autoridade exclusiva sobre elegibilidade) com fatos
+# read-only adicionais (lifecycle, Account.valor, Customer 360) para
+# aplicar uma política determinística e versionada (nba_policy_v1) que
+# escolhe zero, uma ou múltiplas ações já recomendáveis. Nunca recalcula
+# elegibilidade, nunca ranqueia, nunca executa. A API key permanece no
+# router; approval:read é aplicado no endpoint, mesma permissão da
+# família inteira de recomendação.
+app.include_router(
+    nba_policy_router,
     dependencies=service_dependencies,
 )
 
