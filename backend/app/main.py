@@ -95,6 +95,9 @@ from app.api.routes.customer_context import (
 )
 from app.api.routes.executive import router as executive_router
 from app.api.routes.health import router as health_router
+from app.api.routes.human_escalation import (
+    router as human_escalation_router,
+)
 from app.api.routes.memory import router as memory_router
 from app.api.routes.orchestrator import router as orchestrator_router
 from app.api.routes.outcome import router as outcome_router
@@ -421,6 +424,18 @@ app.include_router(
 # uma porta lateral.
 app.include_router(
     customer_context_router,
+    dependencies=service_dependencies,
+)
+
+# Human Escalation Recommendation (Pilot Action Space V1.B) expõe
+# apenas elegibilidade read-only de escalate_to_human para um
+# financial_episode -- nunca cria WorkItem. Compõe Customer 360 e
+# Outcome (via suas funções públicas, sem alteração dos 14 arquivos
+# daquelas fatias). A API key permanece no router; approval:read é
+# aplicado no endpoint, mesma permissão de Outcome/Customer 360, para
+# não expor a mesma superfície sensível por uma porta lateral.
+app.include_router(
+    human_escalation_router,
     dependencies=service_dependencies,
 )
 
