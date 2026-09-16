@@ -109,4 +109,13 @@ async def run_pilot_mutation_recovery_async() -> int:
 async def pilot_mutation_maintenance_loop() -> None:
     while True:
         await asyncio.sleep(settings.work_skill_recovery_interval_seconds)
-        await run_pilot_mutation_recovery_async()
+        try:
+            await run_pilot_mutation_recovery_async()
+        except Exception as error:
+            logger.exception(
+                "pilot_mutation_maintenance_failed",
+                extra={
+                    "event": "pilot.mutation.maintenance_failed",
+                    "error_type": type(error).__name__,
+                },
+            )

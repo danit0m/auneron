@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Callable
 
@@ -7,6 +8,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.work_outcome_evaluation_observability import (
     log_work_outcome_evaluation_event,
+)
+
+maintenance_loop_logger = logging.getLogger(
+    "auneron.work_outcome_evaluation_maintenance"
 )
 from app.database.database import SessionLocal
 from app.repositories.work_outcome_evaluation_repository import (
@@ -148,4 +153,15 @@ async def work_outcome_evaluation_maintenance_loop() -> None:
         await asyncio.sleep(
             settings.work_skill_recovery_interval_seconds
         )
-        await run_work_outcome_evaluation_recovery_async()
+        try:
+            await run_work_outcome_evaluation_recovery_async()
+        except Exception as error:
+            maintenance_loop_logger.exception(
+                "work_outcome_evaluation_maintenance_failed",
+                extra={
+                    "event": (
+                        "work.outcome_evaluation.maintenance_failed"
+                    ),
+                    "error_type": type(error).__name__,
+                },
+            )

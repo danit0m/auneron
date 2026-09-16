@@ -388,4 +388,15 @@ async def client_behavior_memory_maintenance_loop() -> None:
         await asyncio.sleep(
             settings.client_behavior_recalculation_interval_seconds
         )
-        await run_client_behavior_memory_recalculation_async()
+        try:
+            await run_client_behavior_memory_recalculation_async()
+        except Exception as error:
+            logger.exception(
+                "client_behavior_memory_maintenance_failed",
+                extra={
+                    "event": (
+                        "client_behavior_memory.maintenance_failed"
+                    ),
+                    "error_type": type(error).__name__,
+                },
+            )

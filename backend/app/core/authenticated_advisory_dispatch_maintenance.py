@@ -248,4 +248,13 @@ async def advisory_dispatch_maintenance_loop() -> None:
         await asyncio.sleep(
             settings.work_skill_recovery_interval_seconds
         )
-        await run_advisory_dispatch_recovery_async()
+        try:
+            await run_advisory_dispatch_recovery_async()
+        except Exception as error:
+            logger.exception(
+                "advisory_dispatch_maintenance_failed",
+                extra={
+                    "event": "advisory.dispatch.maintenance_failed",
+                    "error_type": type(error).__name__,
+                },
+            )

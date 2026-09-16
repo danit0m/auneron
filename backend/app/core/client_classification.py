@@ -528,4 +528,15 @@ async def client_classification_maintenance_loop() -> None:
             settings
             .client_classification_recalculation_interval_seconds
         )
-        await run_client_classification_recalculation_async()
+        try:
+            await run_client_classification_recalculation_async()
+        except Exception as error:
+            logger.exception(
+                "client_classification_maintenance_failed",
+                extra={
+                    "event": (
+                        "client_classification.maintenance_failed"
+                    ),
+                    "error_type": type(error).__name__,
+                },
+            )
