@@ -16,6 +16,9 @@ from app.core.approval_http import (
 from app.core.approval_http import (
     application_validation_exception_handler as approval_validation_exception_handler,
 )
+from app.core.authentication import (
+    check_production_developer_roles_async,
+)
 from app.core.authentication import require_permission
 from app.core.config import settings
 from app.core.http_security import (
@@ -148,6 +151,7 @@ async def lifespan(_: FastAPI):
         await run_client_behavior_memory_recalculation_async()
         await run_client_classification_recalculation_async()
         await run_receivables_monitor_async()
+        await check_production_developer_roles_async()
 
     maintenance_tasks = (
         asyncio.create_task(

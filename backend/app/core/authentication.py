@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from base64 import urlsafe_b64decode
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass
@@ -19,9 +21,15 @@ from sqlalchemy.orm import Session
 from app.core.authorization import Permission
 from app.core.authorization import has_permission
 from app.core.config import settings
+from app.database.database import SessionLocal
 from app.database.database import get_db
 from app.models.auth_session import AuthSession
 from app.models.user import User
+
+
+identity_guard_logger = logging.getLogger(
+    "auneron.security"
+)
 
 
 PASSWORD_SCHEME = "scrypt"
@@ -135,6 +143,25 @@ class NonInteractivePrincipalError(Exception):
     """
 
 
+class ProductionRoleNotAllowedError(Exception):
+    """
+    role=developer is interactive and fully valid in development/test.
+    In production it is a different invariant from role=system: not an
+    intrinsically non-interactive principal, but a role this
+    environment does not permit for a live session. Existing
+    role=developer rows are never mutated/removed by this check -- see
+    check_production_developer_roles() for the read-only startup
+    counterpart.
+    """
+
+
+def _production_role_blocked(user: User) -> bool:
+    return (
+        settings.environment == "production"
+        and user.role == "developer"
+    )
+
+
 @dataclass(frozen=True)
 class AuthenticatedSession:
     user: User
@@ -175,6 +202,7 @@ def authenticate_user(
         or not password_valid
         or not user.active
         or user.role == "system"
+        or _production_role_blocked(user)
     ):
         return None
 
@@ -185,6 +213,12 @@ def create_session(
     db: Session,
     user: User,
 ) -> tuple[str, AuthSession]:
+    if _production_role_blocked(user):
+        raise ProductionRoleNotAllowedError(
+            "role=developer cannot receive an AuthSession "
+            "while environment=production."
+        )
+
     if user.role == "system":
         raise NonInteractivePrincipalError(
             "role=system cannot receive an AuthSession."
@@ -329,6 +363,7 @@ def require_user_session(
         user is None
         or not user.active
         or user.role == "system"
+        or _production_role_blocked(user)
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -369,6 +404,50 @@ def require_permission(
         return authenticated
 
     return dependency
+
+
+def check_production_developer_roles() -> int:
+    """
+    Read-only startup evidence (PR-2 DEFENSE-IN-DEPTH): in production,
+    counts persisted role=developer users and emits a structured
+    warning if any exist. Never mutates, deletes, disables or
+    reassigns a role -- create_session()/require_user_session() are
+    the enforcement boundary; this is observability only. No-op
+    outside production. Never logs email/name, only a count.
+    """
+
+    if settings.environment != "production":
+        return 0
+
+    db = SessionLocal()
+
+    try:
+        count = (
+            db.query(User)
+            .filter(User.role == "developer")
+            .count()
+        )
+
+        if count > 0:
+            identity_guard_logger.warning(
+                "production_developer_role_detected",
+                extra={
+                    "event": (
+                        "production.developer_role_detected"
+                    ),
+                    "count": count,
+                },
+            )
+
+        return count
+    finally:
+        db.close()
+
+
+async def check_production_developer_roles_async() -> int:
+    return await asyncio.to_thread(
+        check_production_developer_roles
+    )
 
 
 def require_elevated_permission(

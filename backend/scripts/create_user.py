@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.authentication import hash_password
 from app.core.authentication import normalize_email
 from app.core.authorization import USER_ROLES
+from app.core.config import settings
 from app.database.database import SessionLocal
 from app.models.user import User
 
@@ -93,6 +94,15 @@ def main() -> None:
         raise SystemExit(
             "O nome precisa ter pelo menos "
             "2 caracteres."
+        )
+
+    if (
+        settings.environment == "production"
+        and args.role == "developer"
+    ):
+        raise SystemExit(
+            "O papel developer não é permitido em "
+            "produção (APP_ENV=production)."
         )
 
     password = read_password()
