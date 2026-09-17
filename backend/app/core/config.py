@@ -39,6 +39,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="DEBUG",
     )
+    maintenance_enabled: bool = Field(
+        default=True,
+        validation_alias="MAINTENANCE_ENABLED",
+    )
 
     database_url: str = Field(
         validation_alias="DATABASE_URL",
@@ -519,6 +523,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "DATABASE_ECHO deve ser false "
                     "em production."
+                )
+
+            if not self.maintenance_enabled:
+                raise ValueError(
+                    "MAINTENANCE_ENABLED=false não é "
+                    "permitido em production."
                 )
 
         if (

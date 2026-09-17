@@ -41,6 +41,7 @@ dist/
 .env.*
 !.env.example
 !.env.test.example
+!.env.recovery-smoke.example
 
 # ======================
 # Uploads e arquivos importados

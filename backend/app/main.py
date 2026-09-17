@@ -136,55 +136,58 @@ async def lifespan(_: FastAPI):
         check_database_connection()
     )
 
-    if database_online:
-        await asyncio.to_thread(
-            run_auth_session_cleanup
-        )
-        await asyncio.to_thread(
-            run_skill_invocation_recovery
-        )
-        await run_work_skill_execution_recovery_async()
-        await run_work_outcome_evaluation_recovery_async()
-        await run_pilot_mutation_recovery_async()
-        await run_overdue_detection_async()
-        await run_advisory_dispatch_recovery_async()
-        await run_client_behavior_memory_recalculation_async()
-        await run_client_classification_recalculation_async()
-        await run_receivables_monitor_async()
-        await check_production_developer_roles_async()
+    if settings.maintenance_enabled:
+        if database_online:
+            await asyncio.to_thread(
+                run_auth_session_cleanup
+            )
+            await asyncio.to_thread(
+                run_skill_invocation_recovery
+            )
+            await run_work_skill_execution_recovery_async()
+            await run_work_outcome_evaluation_recovery_async()
+            await run_pilot_mutation_recovery_async()
+            await run_overdue_detection_async()
+            await run_advisory_dispatch_recovery_async()
+            await run_client_behavior_memory_recalculation_async()
+            await run_client_classification_recalculation_async()
+            await run_receivables_monitor_async()
+            await check_production_developer_roles_async()
 
-    maintenance_tasks = (
-        asyncio.create_task(
-            auth_session_maintenance_loop()
-        ),
-        asyncio.create_task(
-            skill_invocation_maintenance_loop()
-        ),
-        asyncio.create_task(
-            work_skill_execution_maintenance_loop()
-        ),
-        asyncio.create_task(
-            work_outcome_evaluation_maintenance_loop()
-        ),
-        asyncio.create_task(
-            pilot_mutation_maintenance_loop()
-        ),
-        asyncio.create_task(
-            advisory_dispatch_maintenance_loop()
-        ),
-        asyncio.create_task(
-            overdue_detection_maintenance_loop()
-        ),
-        asyncio.create_task(
-            client_behavior_memory_maintenance_loop()
-        ),
-        asyncio.create_task(
-            client_classification_maintenance_loop()
-        ),
-        asyncio.create_task(
-            receivables_monitor_maintenance_loop()
-        ),
-    )
+        maintenance_tasks = (
+            asyncio.create_task(
+                auth_session_maintenance_loop()
+            ),
+            asyncio.create_task(
+                skill_invocation_maintenance_loop()
+            ),
+            asyncio.create_task(
+                work_skill_execution_maintenance_loop()
+            ),
+            asyncio.create_task(
+                work_outcome_evaluation_maintenance_loop()
+            ),
+            asyncio.create_task(
+                pilot_mutation_maintenance_loop()
+            ),
+            asyncio.create_task(
+                advisory_dispatch_maintenance_loop()
+            ),
+            asyncio.create_task(
+                overdue_detection_maintenance_loop()
+            ),
+            asyncio.create_task(
+                client_behavior_memory_maintenance_loop()
+            ),
+            asyncio.create_task(
+                client_classification_maintenance_loop()
+            ),
+            asyncio.create_task(
+                receivables_monitor_maintenance_loop()
+            ),
+        )
+    else:
+        maintenance_tasks = ()
 
     application_logger.info(
         "application_started",
