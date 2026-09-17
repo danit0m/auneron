@@ -4,6 +4,7 @@ import {
   ClipboardCheck,
   FileUp,
   LayoutDashboard,
+  Lightbulb,
   LockKeyhole,
   LogOut,
   Palette,
@@ -91,6 +92,12 @@ const intelligenceItems: MenuItem[] = [
     path: "/brain",
     icon: BrainCircuit,
     permission: "brain.view",
+  },
+  {
+    label: "Recomendações",
+    path: "/recomendacoes",
+    icon: Lightbulb,
+    permission: "approval:read",
   },
   {
     label: "Aprovações",
