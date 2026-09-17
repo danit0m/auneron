@@ -84,7 +84,12 @@ IneligibilityReason = Literal[
 _TERMINAL_STATUSES = ("completed", "cancelled")
 
 
-def _work_key(account_id: int, due_date: date) -> str:
+def work_key_for_episode(account_id: int, due_date: date) -> str:
+    """
+    Autoridade unica para o work_key reservado de V1.B (PR-6A a
+    consome, nunca reconstroi o formato em outro lugar).
+    """
+
     return (
         f"human_escalation:v1:{account_id}:{due_date.isoformat()}"
     )
@@ -126,7 +131,7 @@ def _suppressing_work_item(
 
     existing = repository.find_by_key(
         scope_type="account",
-        work_key=_work_key(account_id, due_date),
+        work_key=work_key_for_episode(account_id, due_date),
         account_id=account_id,
     )
 

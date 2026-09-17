@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from app.schemas.outcome import FinancialEpisode
 from app.schemas.outcome import Money
 from app.schemas.outcome import OutcomeEpisodeResponse
+from app.schemas.work import WorkResponse
 
 
 EligibilityStatus = Literal["eligible", "ineligible"]
@@ -38,3 +39,11 @@ class HumanEscalationEligibilityResponse(BaseModel):
     reason: IneligibilityReason | None
     suppressing_work_item_id: int | None
     support_evidence: SupportEvidence | None
+
+
+class HumanEscalationMaterializationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_item: WorkResponse
+    created: bool
+    duplicate: bool

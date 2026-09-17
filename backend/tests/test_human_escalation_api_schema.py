@@ -39,10 +39,23 @@ def _human_escalation_openapi_operations() -> list[tuple[str, str]]:
 
 
 def test_human_escalation_api_exposes_exactly_one_operation() -> None:
+    """
+    Nome do teste preservado por continuidade histórica (V1.B: uma
+    operação, só leitura). PR-6A ampliou deliberadamente o contrato
+    para duas operações -- esta prova versionada foi atualizada junto,
+    não enfraquecida: continua exigindo exatamente o conjunto
+    autorizado, nem mais nem menos.
+    """
+
     assert _human_escalation_openapi_operations() == [
         (
             "GET",
             "/recommendations/human-escalation/accounts/"
             "{account_id}/episodes/{due_date}",
-        )
+        ),
+        (
+            "POST",
+            "/recommendations/human-escalation/accounts/"
+            "{account_id}/episodes/{due_date}/materialize",
+        ),
     ]
