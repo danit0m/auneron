@@ -58,6 +58,26 @@ sha256sum "./backups/backup_${STAMP}.dump" > \
 Confirme o hash antes de continuar o deploy. Sem backup validado, nao
 prossiga com a migration.
 
+## Mecanismo pg_dump/pg_restore comprovado (PR-4)
+
+Os wrappers `backend/scripts/backup_postgres.py`, `restore_postgres.py` e
+`verify_recovery.py` nao substituem o backup manual acima — eles comprovam,
+com evidencia medida, que o par pg_dump/pg_restore funciona de ponta a ponta
+contra o schema atual (26 tabelas, revisao Alembic identica origem/destino).
+O drill roda sempre contra um banco de recovery isolado
+(`auneron_recovery_drill`) e nunca contra `auneron` ou `auneron_test` — o
+guard de `restore_postgres.py` recusa esses dois nomes explicitamente, entao
+essa ferramenta nao pode ser usada para restaurar producao.
+
+Resultado do ultimo drill real: `Database Recovery Layer A: PASS` — ver
+`backend/DATABASE_BACKUP_VALIDATION.md`.
+
+A recuperacao completa da aplicacao contra um banco restaurado (Layer B —
+subir o backend de fato contra o snapshot e confirmar que funciona) permanece
+bloqueada por falta de um modo de iniciar o backend sem os maintenance loops
+disparando automaticamente. Ver `docs/operations/PRODUCTION_READINESS_GAP_REGISTER.md`
+(item P2) para o estado atual desse bloqueio.
+
 ## Rollback de imagem (backend/frontend)
 
 Use o hash de commit anotado no ultimo deploy bom conhecido:

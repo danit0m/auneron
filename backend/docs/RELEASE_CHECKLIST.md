@@ -108,6 +108,10 @@ python -m alembic heads
 python -m alembic check
 ```
 
+`alembic heads` deve retornar exatamente uma revisão. Mais de uma indica
+histórico de migração com branch não resolvido — não prossiga a release até
+isso ser corrigido.
+
 No destino:
 
 ```text
@@ -117,10 +121,15 @@ python -m alembic current
 
 Faça backup antes de migrações em banco real.
 
-Quando o Work Manager estiver incluído, o head esperado é
-`d7b3e5f1a902`. O downgrade de qualquer migração do Commit 22 remove dados de
-Work; siga `docs/work/WORK_MANAGER_OPERATIONS.md` antes de considerar rollback
-de schema.
+Não fixe o hash da head neste checklist: ele muda a cada nova migração
+mergeada e um valor hardcoded aqui envelhece silenciosamente. A condição
+operacional correta é sempre `alembic current` (no banco de destino) igual à
+saída de `alembic heads` naquele deploy — nunca um hash citado em
+documentação.
+
+Quando o Work Manager estiver incluído, o downgrade de qualquer migração que
+toque dados de Work pode removê-los; siga `docs/work/WORK_MANAGER_OPERATIONS.md`
+antes de considerar rollback de schema.
 
 ## 9. Containers
 
@@ -180,6 +189,10 @@ Confirme:
 - reverse proxy injeta `X-API-Key`;
 - cookie de sessão é `HttpOnly`, `SameSite=Strict` e `Secure`;
 - existe pelo menos um operador válido;
+- nenhuma sessão ou conta `role=developer` é esperada como identidade
+  interativa em produção — o papel é bloqueado por design em
+  `authenticate_user`/`create_session`/`require_user_session` quando
+  `APP_ENV=production` (ver `ENVIRONMENT_SECURITY.md`);
 - TTL de sessão e elevação estão definidos;
 - limites de login/elevação e janelas estão definidos;
 - manutenção periódica de sessões está configurada;

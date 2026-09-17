@@ -25,7 +25,13 @@ FastAPI
 PostgreSQL
 ```
 
-Em produção, o Nginx/reverse proxy exerce o mesmo papel do Vite.
+Em produção, dois componentes cumprem esse papel em série: Traefik termina
+TLS (Let's Encrypt/ACME) e roteia por domínio até o contêiner `frontend`; o
+Nginx desse contêiner serve a SPA e faz o proxy real de `/api/` para o
+backend, injetando `X-API-Key` a partir de um Docker secret (não de uma
+variável de ambiente comum). Ver `DEPLOYMENT.md` §"Topologia real de
+produção" para a descrição completa — este documento não a repete para
+evitar duas fontes divergentes.
 
 A `X-API-Key` continua sendo uma credencial de serviço. Ela nunca é
 publicada no bundle React e não representa a identidade do usuário.
@@ -113,7 +119,7 @@ A camada HTTP diferencia:
 
 ## E2E
 
-O script:
+A partir do diretório `backend/`, execute:
 
 ```powershell
 python .\scripts\e2e_frontend.py

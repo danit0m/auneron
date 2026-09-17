@@ -100,6 +100,14 @@ Usuário autenticado sem a permissão necessária retorna HTTP 403.
 Endpoints administrativos elevados também retornam HTTP 403 quando a
 sessão não está temporariamente elevada.
 
+O papel `developer` continua válido em desenvolvimento/teste, mas não é uma
+identidade interativa utilizável em `APP_ENV=production`: sessões desse papel
+são recusadas no login, na criação de sessão, e revalidadas (HTTP 401) a cada
+requisição autenticada via `require_user_session` — inclusive uma sessão
+pré-existente criada antes de o ambiente se tornar `production`. Ver
+`ENVIRONMENT_SECURITY.md` para o detalhamento completo dos três pontos de
+enforcement.
+
 ## Browser
 
 A SPA nunca recebe a API key.

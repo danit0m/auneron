@@ -51,6 +51,7 @@ dados sensíveis, incluindo:
 - API keys
 - Authorization
 - cookies
+- credenciais
 - URLs de banco
 - senhas
 - secrets

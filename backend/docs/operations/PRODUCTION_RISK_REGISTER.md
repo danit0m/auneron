@@ -1,6 +1,11 @@
 # Production Risk Register
 
-**Status:** living risk register from Commit 24D onward.
+**Status:** living risk register from Commit 24D onward. Operational
+go/no-go tracking for the Production Pilot (open gaps P1/P2/G3/G4 and the
+closure evidence for PR-1..PR-4) now lives in
+`docs/operations/PRODUCTION_READINESS_GAP_REGISTER.md`. This document keeps
+its own, separate role as the architectural risk/decision register — it is
+not being repurposed into the gap register.
 
 | Risk | Current control | Residual risk | Becomes blocker |
 | --- | --- | --- | --- |
@@ -10,9 +15,12 @@
 | Distributed rate limiting | current per-user limiter is in-process | limits are not global across instances | Production Readiness/Pilot |
 | Approval/consumption recovery | durable approval + consumption + runtime idempotency | distributed maintenance/reconciliation still required | 24E |
 | Secrets management | config validation, redaction, API-key hardening | production secret lifecycle/rotation not fully externalized | Production Readiness |
-| PostgreSQL backup/restore | database safety guards and migrations | restore procedure still needs tested operational evidence | Production Pilot |
+| PostgreSQL backup/restore | database safety guards, migrations, and a tested pg_dump/pg_restore/verify drill (PR-4) | Layer A (schema/data/Alembic restore) proven — see `DATABASE_BACKUP_VALIDATION.md`; Layer B (booting the application against a restored snapshot) remains blocked — see gap P2 in the Gap Register | Production Pilot (Layer B specifically) |
 | Distributed observability | structured logs/request IDs | centralized retention/alerting/SLOs not complete | Production Readiness |
 | Autonomous Work/Orchestrator authority | not integrated in 24D | future scheduler could become an authority bypass | 24E before enabling integration |
+| Maintenance loop silent failure | all 10 background loops wrap their fetch/execute step in try/except with structured `*.maintenance_failed` logging | closed (PR-1, `04fc339`) — see Gap Register; distributed multi-instance concurrency for 7 of the 10 loops is a separate, still-open risk (gap G4) | n/a — closed for this specific risk |
+| Production developer-role identity | environment-gated block in `authenticate_user`/`create_session`/`require_user_session`, plus `create_user.py` refusal and a read-only startup detector | closed (PR-2, `983a256`) — see Gap Register | n/a — closed |
+| Legacy SQLite migration tool reachable in production | production-environment abort in the script itself, plus image exclusion via the repo-root `.dockerignore` | closed (PR-3, `b9f83ec`) — see Gap Register | n/a — closed |
 
 ## 24D decision
 

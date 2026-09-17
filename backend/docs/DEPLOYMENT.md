@@ -34,6 +34,42 @@ PostgreSQL
 
 O PostgreSQL não deve ser publicado diretamente na Internet.
 
+## Topologia real de produção (`docker-compose.prod.yml`)
+
+O diagrama acima é a base genérica, independente de provedor. A stack real
+testada neste repositório (`backend/docker-compose.prod.yml`) implementa essa
+base com componentes específicos:
+
+```text
+Internet
+   |
+   v
+Traefik (TLS via Let's Encrypt/ACME, roteamento por domínio)
+   |
+   v
+frontend (Nginx servindo a SPA; proxy /api/ + injeção de X-API-Key
+          a partir de um Docker secret)
+   |
+   v
+backend (FastAPI, rede "app")
+   |
+   v
+postgres (rede "db", internal — sem porta publicada ao host)
+```
+
+Um serviço `migration` roda `alembic upgrade head` uma única vez
+(`restart: "no"`) antes do `backend` receber tráfego
+(`depends_on: service_completed_successfully`).
+
+Segredos (`postgres_password`, `database_url`, `api_key`) são fornecidos via
+Docker secrets (arquivos), não variáveis de ambiente. Redes são segmentadas em
+`web`/`app`/`db`.
+
+Esta seção descreve a topologia como o `docker-compose.prod.yml` a implementa
+hoje, para orientação. O compose continua sendo a única fonte executável de
+verdade — qualquer divergência futura entre esta prosa e o compose deve ser
+resolvida lendo o compose, não esta seção.
+
 ## Segredos necessários
 
 A plataforma de deploy fornece segredos em runtime.
@@ -212,6 +248,17 @@ administrativas sensíveis.
 
 A sessão padrão expira em 8 horas e a elevação padrão em 10 minutos,
 salvo configuração diferente.
+
+O papel `developer` continua válido em desenvolvimento e teste, mas não
+constitui identidade interativa utilizável em produção: com
+`APP_ENV=production`, sessões desse papel são recusadas no login
+(`authenticate_user`), na criação de sessão (`create_session`) e
+revalidadas a cada requisição autenticada (`require_user_session`) — inclusive
+uma sessão pré-existente criada antes do ambiente virar `production`.
+`scripts/create_user.py` também recusa criar um usuário `developer` quando
+`APP_ENV=production`. No startup, uma verificação somente leitura registra
+(sem nunca mutar) se contas `developer` pré-existentes foram detectadas em
+produção. Ver `ENVIRONMENT_SECURITY.md` e `API_SECURITY.md`.
 
 ## Rate limiting e sessões
 
