@@ -20,25 +20,55 @@ nunca como uma alegação sobre "o baseline atual do sistema".
 
 ## OPEN — REQUIRED BEFORE CONTROLLED PILOT
 
-### P1 — Intelligence-to-Human Recommendation Consumption
+### P1.2 — Human-origin Governed Financial Action Materialization (account.mark_overdue)
 
-- **Estado:** aberto. `nba_policy.py` (`get_nba_decision()`) já calcula a
-  decisão de Next Best Action a partir da elegibilidade de ações governadas,
-  mas não existe nenhum consumidor operacional — endpoint, rotina ou
-  superfície de UI — que exponha essa decisão a um humano autorizado.
-- **Risco concreto:** não é um risco de segurança/autoridade (não há execução
-  autônoma acoplada a essa decisão). É uma lacuna de valor: a inteligência já
-  calculada nunca chega a um humano para agir sobre ela.
-  Recomendação nunca concede autoridade — isso continua válido mesmo depois
-  de fechado.
-- **Mitigação atual:** nenhuma necessária — a ausência de consumidor não
-  expõe nenhuma superfície de execução indevida.
-- **Evidência:** `backend/app/core/nba_policy.py` (implementado e testado);
-  nenhuma rota em `backend/app/api/routes/` expõe `get_nba_decision()` hoje.
-- **Condição objetiva de fechamento:** existir um caminho read-only
-  (endpoint e/ou superfície operacional) que apresente a decisão NBA a um
-  humano autorizado, sem conceder execução automática nem ranking fabricado.
-- **Dependências:** nenhuma — depende apenas de priorização.
+- **Estado:** aberto. Identificado no Survey do PR-6, mantido fora do escopo
+  de materialização desde o Architecture Freeze do PR-6A.
+- **Risco concreto:** limite de autoridade deliberado, não falha de
+  segurança. `account.mark_overdue` já é recomendado pelo NBA e visível na
+  UI, mas nenhum corredor humano existe para materializá-lo: o único
+  corredor de execução real (`AuthenticatedAdvisoryProposalApprovalBridgeService`,
+  25M/25O) exige `proposal_id`/`binding_id` de uma
+  `AuthenticatedAdvisoryProposal` produzida exclusivamente pelo pipeline de
+  agente legado — sem rota pública; a rota genérica
+  `POST /approvals/skill-executions/{version_id}` cria a solicitação mas
+  nunca a executa (`decide()` só grava a decisão).
+- **Mitigação atual:** nenhuma necessária — sem corredor algum, nenhum
+  humano pode disparar essa mutação hoje.
+- **Evidência:**
+  `backend/app/services/authenticated_advisory_proposal_approval_bridge_service.py`;
+  `backend/app/api/routes/approvals.py:349`; achado central do PR-6 Survey.
+- **Condição objetiva de fechamento:** Survey/Freeze próprios sobre como um
+  humano materializa `account.mark_overdue` — estender o bridge 25M/25O para
+  origem humana (mudança de fronteira de autoridade já congelada, exige
+  Freeze próprio) ou outro desenho — com o mesmo rigor de
+  revalidação/idempotência do PR-6A.
+- **Dependências:** nenhuma dependência de P1.3/P2; independente.
+
+### P1.3 — Same-Episode Human Escalation Reopening Semantics
+
+- **Estado:** aberto. Fronteira deliberadamente congelada no PR-6A
+  Architecture Freeze — fail-closed, nunca workaround silencioso.
+- **Risco concreto:** lacuna funcional deliberada, não falha de segurança.
+  Depois que o WorkItem canônico
+  (`work_key = human_escalation:v1:{account_id}:{due_date}`) chega a estado
+  terminal, o mesmo episódio nunca gera nova materialização — a `work_key`
+  determinística fica permanentemente reivindicada. Se a eligibility voltar
+  a recomendar, o endpoint responde 409 em vez de criar um segundo WorkItem
+  ou reabrir o antigo.
+- **Mitigação atual:** guarda fail-closed em
+  `human_escalation_materialization_service.py`, coberta pelo teste
+  TERMINAL-DUPLICATE.
+- **Evidência:**
+  `backend/app/services/human_escalation_materialization_service.py`
+  (checagem de `TERMINAL_STATUSES`);
+  `backend/app/core/human_escalation_eligibility.py`
+  (`work_key_for_episode`, determinística, sem versionamento).
+- **Condição objetiva de fechamento:** Survey/Freeze próprios definindo sob
+  quais condições o mesmo episódio pode originar novo trabalho após
+  encerramento, e qual identidade/idempotency key usar (nunca a mesma
+  `work_key`, sob risco de colidir com o histórico).
+- **Dependências:** nenhuma dependência de P1.2/P2; independente.
 
 ### P2 — Isolated Application Recovery Smoke
 
@@ -117,6 +147,32 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
 ---
 
 ## CLOSED / EVIDENCE
+
+### P1 (core) — Intelligence-to-Human Recommendation Consumption (escalate_to_human)
+
+- **Baseline de fechamento:** commits
+  `3480e562ca44cb07f028980054dc9e2743d2cac0` (PR-6A — corredor de
+  materialização governada) e `c7d5781db26e8c6266c4c3164b21a2cdca488540`
+  (PR-6B — superfície de consumo humano).
+- **Evidência:** ciclo comprovado ponta a ponta — `GET /recommendations/
+  next-best-action/...` (`approval:read`) já expõe a decisão NBA;
+  `frontend/src/pages/Recomendacoes.tsx` apresenta decisão + evidência a um
+  humano autorizado, com NBA carregado sob demanda por episódio;
+  `escalate_to_human` selecionado materializa via `POST .../
+  human-escalation/.../materialize` (`work:create`), que revalida a
+  eligibility no servidor antes de qualquer escrita
+  (`backend/app/services/human_escalation_materialization_service.py`) —
+  nunca confia no snapshot exibido ao operador. Idempotência comprovada para
+  reexecução do mesmo ator, convergência entre atores diferentes, e falha
+  fechada (409) quando o WorkItem canônico já está em estado terminal.
+  Testes dedicados: `backend/tests/test_human_escalation_materialization.py`
+  (9 casos) + Acceptance Verification manual do PR-6B contra backend real
+  isolado.
+- **Nota:** este fechamento cobre exclusivamente `escalate_to_human`.
+  `account.mark_overdue` continua recomendável/visível na mesma UI, sem
+  corredor de materialização humana — ver P1.2. A semântica de reabertura de
+  um episódio após o WorkItem chegar a estado terminal permanece
+  deliberadamente não resolvida — ver P1.3.
 
 ### PR-1 — Maintenance Loop Resilience
 
