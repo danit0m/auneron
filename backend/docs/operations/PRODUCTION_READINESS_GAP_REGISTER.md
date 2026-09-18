@@ -45,31 +45,6 @@ nunca como uma alegação sobre "o baseline atual do sistema".
   revalidação/idempotência do PR-6A.
 - **Dependências:** nenhuma dependência de P1.3/P2; independente.
 
-### P1.3 — Same-Episode Human Escalation Reopening Semantics
-
-- **Estado:** aberto. Fronteira deliberadamente congelada no PR-6A
-  Architecture Freeze — fail-closed, nunca workaround silencioso.
-- **Risco concreto:** lacuna funcional deliberada, não falha de segurança.
-  Depois que o WorkItem canônico
-  (`work_key = human_escalation:v1:{account_id}:{due_date}`) chega a estado
-  terminal, o mesmo episódio nunca gera nova materialização — a `work_key`
-  determinística fica permanentemente reivindicada. Se a eligibility voltar
-  a recomendar, o endpoint responde 409 em vez de criar um segundo WorkItem
-  ou reabrir o antigo.
-- **Mitigação atual:** guarda fail-closed em
-  `human_escalation_materialization_service.py`, coberta pelo teste
-  TERMINAL-DUPLICATE.
-- **Evidência:**
-  `backend/app/services/human_escalation_materialization_service.py`
-  (checagem de `TERMINAL_STATUSES`);
-  `backend/app/core/human_escalation_eligibility.py`
-  (`work_key_for_episode`, determinística, sem versionamento).
-- **Condição objetiva de fechamento:** Survey/Freeze próprios definindo sob
-  quais condições o mesmo episódio pode originar novo trabalho após
-  encerramento, e qual identidade/idempotency key usar (nunca a mesma
-  `work_key`, sob risco de colidir com o histórico).
-- **Dependências:** nenhuma dependência de P1.2/P2; independente.
-
 ### P2 — Isolated Application Recovery Smoke
 
 - **Estado:** aberto. Layer A (verificação de recuperação de banco de dados)
@@ -171,8 +146,9 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
 - **Nota:** este fechamento cobre exclusivamente `escalate_to_human`.
   `account.mark_overdue` continua recomendável/visível na mesma UI, sem
   corredor de materialização humana — ver P1.2. A semântica de reabertura de
-  um episódio após o WorkItem chegar a estado terminal permanece
-  deliberadamente não resolvida — ver P1.3.
+  um episódio após o WorkItem chegar a estado terminal foi decidida e
+  fechada como política de domínio — não como reabertura implementada — ver
+  P1.3 (CLOSED / EVIDENCE).
 
 ### PR-1 — Maintenance Loop Resilience
 
@@ -228,3 +204,56 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   `backend/tests/test_backup_restore_guards.py`.
 - **Nota:** prova apenas Layer A (banco). Layer B (aplicação) permanece
   aberta — ver P2 acima.
+
+### P1.3 — Same-Episode Human Escalation Reopening Semantics
+
+- **Baseline de fechamento:** commits
+  `3480e562ca44cb07f028980054dc9e2743d2cac0` (PR-6A — geração única, fronteira
+  fail-closed original), `ad179422fc313de394fba1537770fc7a0217f14c` (P1.3B.1
+  — auditoria transacional de mudança de `vencimento`) e
+  `005197b22015ae7f3bc904a20d96a07e0537edb7` (P1.3B.2a — guarda de identidade
+  do episódio).
+- **Evidência:**
+  - PR-6A (`3480e562...`): geração única por episódio,
+    `work_key = human_escalation:v1:{account_id}:{due_date}`, 409
+    terminal-duplicate fail-closed —
+    `backend/app/services/human_escalation_materialization_service.py`.
+  - P1.3B.1 (`ad179422...`): `PUT /accounts/{id}` passou a obter a conta via
+    `SELECT ... FOR UPDATE` e a registrar toda mudança efetiva de
+    `vencimento` em `account_vencimento_changes` — histórico atômico,
+    serializado, nunca silencioso —
+    `backend/app/models/account_vencimento_change.py`,
+    `backend/app/api/routes/accounts.py`.
+  - P1.3B.2a (`005197b...`): `get_human_escalation_eligibility()` ganhou a
+    guarda R0 — `account.vencimento != due_date` → `ineligible`,
+    `reason="due_date_mismatch"`, avaliada antes de qualquer outro estado —
+    impedindo que o estado financeiro de um episódio diferente seja usado
+    para responder sobre o episódio solicitado —
+    `backend/app/core/human_escalation_eligibility.py`.
+  - Discovery Survey (mesma linha de trabalho, sem commit de código próprio
+    — decisão registrada aqui): levantamento mecânico de `AccountEvent`,
+    `Knowledge`, do receivables monitor e de todos os caminhos que mutam
+    `Account.status`/`vencimento` demonstrou que nenhum caminho governado do
+    domínio atual produz `eligible → ineligible → eligible` para o mesmo
+    `FinancialEpisode(account_id, due_date)`: `"pago"` nunca reverte por
+    nenhum caminho da aplicação, e uma mudança de `vencimento` — agora
+    auditável por P1.3B.1 e corretamente identificada por P1.3B.2a —
+    constitui outro `FinancialEpisode`, nunca uma nova geração do mesmo.
+- **Política resolvida:**
+  - **CLOSED:** a semântica do domínio atual foi decidida e comprovada — um
+    `FinancialEpisode(account_id, due_date)` admite no máximo uma geração de
+    WorkItem de Human Escalation.
+  - **DEFERRED (não OPEN):** Eligibility Epoch Primitive — capacidade
+    futura, condicionada à introdução de um novo fato governado de domínio
+    capaz de demonstrar uma segunda elegibilidade legítima para o mesmo
+    episódio (por exemplo, uma reversão governada de pagamento, hoje
+    inexistente, ou uma decisão humana explícita de reabertura).
+  - **NÃO IMPLEMENTADO:** reabertura do mesmo `FinancialEpisode`.
+  - **Comportamento atual, correto e definitivo enquanto DEFERRED
+    persistir:** WorkItem terminal → nova tentativa de materialização → 409
+    fail-closed.
+- **Nota:** este fechamento não implementa nenhuma primitive de epoch nem
+  identidade geracional de `work_key` — decide, com evidência mecânica, que
+  o domínio atual não as exige. Se um fato governado de reversão/reabertura
+  for introduzido no futuro, este item deve ser reaberto antes de qualquer
+  Survey de identidade geracional.
