@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.event_bus import event_bus
@@ -13,6 +14,7 @@ from app.core.config import settings
 from app.database.database import get_db
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.models.account_vencimento_change import AccountVencimentoChange
 from app.repositories.memory_repository import MemoryRepository
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.account import (
@@ -216,10 +218,11 @@ def update_account(
     ),
     db: Session = Depends(get_db),
 ):
-    account = db.get(
-        Account,
-        account_id,
-    )
+    account = db.execute(
+        select(Account)
+        .where(Account.id == account_id)
+        .with_for_update()
+    ).scalar_one_or_none()
 
     if account is None:
         raise HTTPException(
@@ -232,6 +235,7 @@ def update_account(
     )
 
     previous_status = account.status
+    previous_vencimento = account.vencimento
 
     for campo, valor in dados.items():
         setattr(
@@ -250,6 +254,21 @@ def update_account(
                 actor_user_id=authenticated.user.id,
                 previous_status=previous_status,
                 new_status=dados["status"],
+            )
+        )
+
+    if (
+        "vencimento" in dados
+        and dados["vencimento"] != previous_vencimento
+    ):
+        db.add(
+            AccountVencimentoChange(
+                account_id=account.id,
+                previous_vencimento=previous_vencimento,
+                new_vencimento=dados["vencimento"],
+                actor_type="user",
+                actor_reference=f"user:{authenticated.user.id}",
+                actor_user_id=authenticated.user.id,
             )
         )
 
