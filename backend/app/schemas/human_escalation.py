@@ -14,6 +14,7 @@ from app.schemas.work import WorkResponse
 EligibilityStatus = Literal["eligible", "ineligible"]
 
 IneligibilityReason = Literal[
+    "due_date_mismatch",
     "account_paid",
     "lifecycle_not_overdue",
     "active_escalation_exists",

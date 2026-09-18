@@ -155,6 +155,119 @@ def test_reason_precedence_account_paid_wins_over_active_escalation(
 
 
 # ---------------------------------------------------------------------
+# P1.3B.2a -- guarda de identidade do episodio (R0, antes de R1/R2/R3)
+# ---------------------------------------------------------------------
+
+
+def test_reason_is_due_date_mismatch_when_vencimento_diverges(
+    db_session,
+) -> None:
+    requested_due_date = _overdue_date()
+    actual_vencimento = requested_due_date - timedelta(days=15)
+    account = _make_account(
+        db_session, vencimento=actual_vencimento
+    )
+
+    result = get_human_escalation_eligibility(
+        db_session,
+        account=account,
+        due_date=requested_due_date,
+    )
+
+    assert result.status == "ineligible"
+    assert result.reason == "due_date_mismatch"
+    assert result.suppressing_work_item_id is None
+    assert result.support_evidence is None
+    assert result.episode.due_date == requested_due_date
+
+
+def test_reason_precedence_due_date_mismatch_wins_over_account_paid(
+    db_session,
+) -> None:
+    requested_due_date = _overdue_date()
+    actual_vencimento = requested_due_date - timedelta(days=15)
+    account = _make_account(
+        db_session,
+        vencimento=actual_vencimento,
+        status="pago",
+    )
+
+    result = get_human_escalation_eligibility(
+        db_session,
+        account=account,
+        due_date=requested_due_date,
+    )
+
+    assert result.reason == "due_date_mismatch"
+
+
+def test_reason_precedence_due_date_mismatch_wins_over_lifecycle_not_overdue(
+    db_session,
+) -> None:
+    requested_due_date = date.today() + timedelta(days=30)
+    actual_vencimento = requested_due_date - timedelta(days=100)
+    account = _make_account(
+        db_session, vencimento=actual_vencimento
+    )
+
+    result = get_human_escalation_eligibility(
+        db_session,
+        account=account,
+        due_date=requested_due_date,
+    )
+
+    assert result.reason == "due_date_mismatch"
+
+
+def test_reason_precedence_due_date_mismatch_wins_over_active_escalation(
+    db_session,
+) -> None:
+    requested_due_date = _overdue_date()
+    actual_vencimento = requested_due_date - timedelta(days=15)
+    account = _make_account(
+        db_session, vencimento=actual_vencimento
+    )
+
+    _make_work_item(
+        db_session,
+        account_id=account.id,
+        work_key=(
+            f"human_escalation:v1:{account.id}:"
+            f"{requested_due_date.isoformat()}"
+        ),
+        status="ready",
+    )
+
+    result = get_human_escalation_eligibility(
+        db_session,
+        account=account,
+        due_date=requested_due_date,
+    )
+
+    assert result.reason == "due_date_mismatch"
+
+
+def test_matching_vencimento_preserves_previous_behavior(
+    db_session,
+) -> None:
+    """
+    account.vencimento == due_date deve continuar avaliando
+    normalmente por R1/R2/R3 -- a guarda nova nunca intercepta o
+    caso comum.
+    """
+
+    due_date = _overdue_date()
+    account = _make_account(db_session, vencimento=due_date)
+
+    result = get_human_escalation_eligibility(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.status == "eligible"
+    assert result.reason is None
+
+
+# ---------------------------------------------------------------------
 # Secao 4 -- os 5 casos de supressao
 # ---------------------------------------------------------------------
 

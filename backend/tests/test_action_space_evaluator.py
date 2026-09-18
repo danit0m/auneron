@@ -134,6 +134,43 @@ def test_t3_reason_vocabulary_is_not_unified_across_capabilities(
 
 
 # ---------------------------------------------------------------------
+# P1.3B.2a -- episodio obsoleto (account.vencimento != due_date pedido)
+# nunca e recomendavel para escalate_to_human, herdado automaticamente
+# do ponto unico get_human_escalation_eligibility() -- nenhuma logica
+# nova neste avaliador.
+# ---------------------------------------------------------------------
+
+
+def test_obsolete_episode_never_recommends_escalate_to_human(
+    db_session,
+) -> None:
+    requested_due_date = date.today() - timedelta(days=42)
+    actual_vencimento = requested_due_date - timedelta(days=15)
+    account = _make_account(
+        db_session, vencimento=actual_vencimento
+    )
+
+    result = get_action_space_evaluation(
+        db_session, account=account, due_date=requested_due_date
+    )
+
+    by_key = {a.action_key: a for a in result.actions}
+
+    assert (
+        by_key[ESCALATE_TO_HUMAN_ACTION_KEY].system_recommendable
+        is False
+    )
+    assert (
+        by_key[ESCALATE_TO_HUMAN_ACTION_KEY].reason
+        == "due_date_mismatch"
+    )
+    assert (
+        ESCALATE_TO_HUMAN_ACTION_KEY
+        not in result.recommendable_actions
+    )
+
+
+# ---------------------------------------------------------------------
 # T4 -- ordem fisica fixa, nao-ranking, em cenarios distintos
 # ---------------------------------------------------------------------
 

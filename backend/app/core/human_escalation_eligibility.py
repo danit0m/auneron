@@ -76,6 +76,7 @@ RULE_VERSION = "human_escalation_eligibility_v1"
 EligibilityStatus = Literal["eligible", "ineligible"]
 
 IneligibilityReason = Literal[
+    "due_date_mismatch",
     "account_paid",
     "lifecycle_not_overdue",
     "active_escalation_exists",
@@ -201,6 +202,16 @@ def get_human_escalation_eligibility(
         due_date=due_date,
     )
     recommendation_key = _recommendation_key(account.id, due_date)
+
+    if account.vencimento != due_date:
+        return HumanEscalationEligibilityResult(
+            recommendation_key=recommendation_key,
+            episode=episode,
+            status="ineligible",
+            reason="due_date_mismatch",
+            suppressing_work_item_id=None,
+            support_evidence=None,
+        )
 
     if account.status.strip().lower() == "pago":
         return HumanEscalationEligibilityResult(

@@ -170,6 +170,39 @@ def test_materialize_ineligible_lifecycle_not_overdue_creates_nothing(
     assert _work_item_count(db_session) == before
 
 
+def test_materialize_obsolete_episode_fails_with_due_date_mismatch_and_creates_nothing(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """
+    P1.3B.2a -- se account.vencimento ja divergiu do due_date pedido
+    (por exemplo, alterado via PUT /accounts/{id} entre o GET de
+    elegibilidade e o POST de materializacao), a materializacao deve
+    falhar pelo caminho generico ja existente
+    (HumanEscalationNotRecommendableError), sem nenhum tratamento
+    especial -- e nunca criar WorkItem usando fatos financeiros do
+    episodio atual da conta como se fossem do episodio pedido.
+    """
+
+    requested_due_date = date.today() - timedelta(days=10)
+    actual_vencimento = requested_due_date - timedelta(days=15)
+    account = _make_overdue_account(
+        db_session,
+        due_date=actual_vencimento,
+        email="cliente.escalation.obsolete-episode@example.com",
+    )
+
+    before = _work_item_count(db_session)
+
+    response = client.post(
+        _materialize_url(account.id, requested_due_date)
+    )
+
+    assert response.status_code == 409
+    assert "due_date_mismatch" in response.json()["detail"]
+    assert _work_item_count(db_session) == before
+
+
 def test_materialize_requires_work_create_permission(
     client: TestClient,
     db_session: Session,
