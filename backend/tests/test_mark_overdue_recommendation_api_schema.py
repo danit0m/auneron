@@ -43,5 +43,15 @@ def test_mark_overdue_api_exposes_exactly_one_operation() -> None:
             "GET",
             "/recommendations/mark-overdue/accounts/"
             "{account_id}/episodes/{due_date}",
-        )
+        ),
+        (
+            "POST",
+            "/recommendations/mark-overdue/accounts/"
+            "{account_id}/episodes/{due_date}/execute",
+        ),
+        (
+            "POST",
+            "/recommendations/mark-overdue/accounts/"
+            "{account_id}/episodes/{due_date}/materialize",
+        ),
     ]

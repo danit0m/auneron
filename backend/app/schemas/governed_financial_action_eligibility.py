@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.approval import ApprovalRequestResponse
 from app.schemas.outcome import FinancialEpisode
+from app.schemas.work import WorkResponse
 
 
 MarkOverdueReason = Literal[
@@ -38,3 +40,24 @@ class MarkPaidEligibilityResponse(BaseModel):
     requires_external_fact: Literal["payment_observed"] | None
     reason: MarkPaidReason | None
     due_date_matches_current_vencimento: bool
+
+
+class HumanAccountMarkOverdueMaterializationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_item: WorkResponse
+    approval_request: ApprovalRequestResponse
+    created: bool
+    duplicate: bool
+
+
+class HumanAccountMarkOverdueExecutionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_item_id: int
+    approval_request_id: int
+    approval_consumption_id: int
+    invocation_id: int
+    invocation_status: str
+    duplicate: bool
+    output: dict[str, Any]
