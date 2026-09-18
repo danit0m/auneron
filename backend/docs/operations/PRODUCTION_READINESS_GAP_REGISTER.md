@@ -20,54 +20,14 @@ nunca como uma alegação sobre "o baseline atual do sistema".
 
 ## OPEN — REQUIRED BEFORE CONTROLLED PILOT
 
-### P1.2 — Human-origin Governed Financial Action Materialization (account.mark_overdue)
-
-- **Estado:** aberto. Identificado no Survey do PR-6, mantido fora do escopo
-  de materialização desde o Architecture Freeze do PR-6A.
-- **Risco concreto:** limite de autoridade deliberado, não falha de
-  segurança. `account.mark_overdue` já é recomendado pelo NBA e visível na
-  UI, mas nenhum corredor humano existe para materializá-lo: o único
-  corredor de execução real (`AuthenticatedAdvisoryProposalApprovalBridgeService`,
-  25M/25O) exige `proposal_id`/`binding_id` de uma
-  `AuthenticatedAdvisoryProposal` produzida exclusivamente pelo pipeline de
-  agente legado — sem rota pública; a rota genérica
-  `POST /approvals/skill-executions/{version_id}` cria a solicitação mas
-  nunca a executa (`decide()` só grava a decisão).
-- **Mitigação atual:** nenhuma necessária — sem corredor algum, nenhum
-  humano pode disparar essa mutação hoje.
-- **Evidência:**
-  `backend/app/services/authenticated_advisory_proposal_approval_bridge_service.py`;
-  `backend/app/api/routes/approvals.py:349`; achado central do PR-6 Survey.
-- **Condição objetiva de fechamento:** Survey/Freeze próprios sobre como um
-  humano materializa `account.mark_overdue` — estender o bridge 25M/25O para
-  origem humana (mudança de fronteira de autoridade já congelada, exige
-  Freeze próprio) ou outro desenho — com o mesmo rigor de
-  revalidação/idempotência do PR-6A.
-- **Dependências:** nenhuma dependência de P1.3/P2; independente.
-
-### P2 — Isolated Application Recovery Smoke
-
-- **Estado:** aberto. Layer A (verificação de recuperação de banco de dados)
-  já passou — ver `backend/DATABASE_BACKUP_VALIDATION.md`
-  (`Database Recovery Layer A: PASS`, PR-4). O bloqueio é especificamente a
-  ausência de um modo seguro de iniciar o backend sem que os 10 maintenance
-  loops (`backend/app/main.py:lifespan()`) disparem automaticamente.
-- **Risco concreto:** hoje não existe forma de comprovar que a aplicação — e
-  não só o banco — se recupera corretamente após um restore. Subir o backend
-  contra `auneron_recovery_drill` sem isolamento transformaria um smoke de
-  recuperação em execução operacional real, capaz de mutar o snapshot
-  restaurado através dos próprios maintenance loops.
-- **Mitigação atual:** nenhuma — Layer B permanece registrada como bloqueada
-  em vez de simulada ou pulada silenciosamente.
-- **Evidência:** `backend/DATABASE_BACKUP_VALIDATION.md`
-  §"Layer B — Application Recovery Smoke"; `backend/app/main.py` `lifespan()`
-  (os 10 loops iniciam incondicionalmente, sem flag de supressão).
-- **Condição objetiva de fechamento:** existir um mecanismo (flag ou modo de
-  inicialização) que permita subir o backend com os maintenance loops
-  suprimidos, possibilitando um smoke test de aplicação contra um banco
-  restaurado sem risco de mutação; em seguida, executar e documentar um
-  drill real de Layer B com o mesmo rigor de evidência do PR-4.
-- **Dependências:** independente de P1, G3 e G4.
+Nenhum item técnico permanece aberto nesta categoria no baseline
+reconciliado `7a73c30a0510f5a0f13c0a9c1d43c7ec1556142b` (Production Pilot
+Final Gate — Readiness Reconciliation Survey). P1.2 e P2, antes listados
+aqui, foram verificados diretamente contra o código/testes/evidência
+existentes — não apenas contra o texto histórico deste documento — e
+movidos para `CLOSED / EVIDENCE` abaixo. Esta seção é mantida vazia
+deliberadamente, para preservar a taxonomia do readiness contract, e não
+constitui, por si só, uma declaração de aprovação do piloto controlado.
 
 ---
 
@@ -257,3 +217,67 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   o domínio atual não as exige. Se um fato governado de reversão/reabertura
   for introduzido no futuro, este item deve ser reaberto antes de qualquer
   Survey de identidade geracional.
+
+### P1.2 — Human-origin Governed Financial Action Materialization (account.mark_overdue)
+
+- **Baseline de fechamento:** commits `176eb61dcb33db8e1bfdfdfdc5cd1208f31b337b`
+  (P1.2A — registro do catálogo real da skill `account.mark_overdue`,
+  pré-requisito operacional isolado) e
+  `c600a1e7d4271dd40a6a596793c233717677e7d9` (P1.2B — corredor humano
+  governado de materialização/execução).
+- **Evidência — P1.2A:** `backend/scripts/register_account_mark_overdue_skill.py`
+  registra Skill/SkillVersion/capability via `SkillService`, idempotente,
+  sem criar `AgentSkillBinding` — pré-condição para que qualquer corredor,
+  humano ou agent-only, encontre a skill publicada no catálogo real (antes
+  desta fatia, `account.mark_overdue` só existia como fixture de teste).
+- **Evidência — P1.2B:** novo corredor humano estreito e paralelo, sem
+  estender nem modificar o bridge 25M/25O nem
+  `AuthenticatedAdvisoryProposalApprovalBridgeService` (hashes verificados
+  byte-idênticos antes/depois do APPLY) —
+  `backend/app/services/human_account_mark_overdue_materialization_service.py`
+  (materialização: revalida eligibility e autoridade antes de qualquer
+  escrita, converge entre operadores diferentes via `work_key` do WorkItem,
+  409 fail-closed sobre WorkItem terminal) e
+  `backend/app/services/human_account_mark_overdue_execution_service.py`
+  (execução: lock `SELECT ... FOR UPDATE` da `Account`, dupla revalidação
+  de eligibility/autoridade imediatamente antes da mutação, consumo
+  single-use de `ApprovalConsumption` com `consumer_actor_type="system"`
+  seguindo o precedente de `account.mark_paid`, identidade humana
+  preservada em `AccountEvent.actor_type="user"`/`actor_user_id`). A
+  separação de deveres já existente em `ApprovalService.decide()`
+  (solicitante ≠ decisor para ações de risco `high`/`critical`) é herdada
+  sem alteração. Rotas: `POST .../episodes/{due_date}/materialize`
+  (`work:create`) e `POST .../episodes/{due_date}/execute`
+  (`skill:execute`), em `backend/app/api/routes/mark_overdue_recommendation.py`.
+  Testes dedicados: `backend/tests/test_human_account_mark_overdue_materialization.py`,
+  `backend/tests/test_human_account_mark_overdue_execution.py`.
+- **Nota:** nenhuma fronteira agent-only foi generalizada ou enfraquecida —
+  `GovernedSkillExecutionService`, `WorkSkillExecutionService.configure_with_existing_approval()`
+  e `AccountMarkOverdueExecutionService` permanecem exclusivos do corredor
+  legado de agente, intocados por este fechamento.
+
+### P2 — Isolated Application Recovery Smoke
+
+- **Baseline de fechamento:** commit
+  `a529369d6120a3975e71651c6ef79f8f6fd5aea4` ("feat(operations): add
+  MAINTENANCE_ENABLED gate and Application Recovery Smoke (P2)").
+- **Evidência — mecanismo de supressão no boot:** `Settings.maintenance_enabled`
+  (`backend/app/core/config.py`, default `True`, recusado em
+  `environment=="production"`) controla, em um único boundary em
+  `backend/app/main.py:lifespan()`, as 11 operações recovery-once e a
+  criação das 10 maintenance tasks — provado estruturalmente por
+  `backend/tests/test_maintenance_gate.py` (0/21 chamadas com `False`,
+  21/21 com `True`). `check_database_connection()`/`database_online`
+  permanece fora desse boundary — executa incondicionalmente, antes e
+  independente de `maintenance_enabled`, preservando o diagnóstico de
+  conectividade mesmo com a manutenção suprimida.
+- **Evidência — Application Recovery Layer B real:** drill completo
+  documentado em `backend/DATABASE_BACKUP_VALIDATION.md`
+  §"Layer B — Application Recovery Smoke (P2 — fechado)" —
+  `Application Recovery Layer B: PASS`. Orquestrado por
+  `backend/scripts/application_recovery_smoke.py`, coberto por
+  `backend/tests/test_application_recovery_smoke_guards.py`. Este registro
+  não reproduz o histórico operacional do drill — `DATABASE_BACKUP_VALIDATION.md`
+  continua sendo a evidência detalhada.
+- **Nota:** Layer A (banco) já estava fechada desde o PR-4; este fechamento
+  cobre especificamente Layer B (aplicação), que era o bloqueio registrado.
