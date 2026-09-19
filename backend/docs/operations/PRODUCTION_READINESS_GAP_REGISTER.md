@@ -281,3 +281,25 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   continua sendo a evidência detalhada.
 - **Nota:** Layer A (banco) já estava fechada desde o PR-4; este fechamento
   cobre especificamente Layer B (aplicação), que era o bloqueio registrado.
+
+### Controlled Production Pilot — Technical Final Acceptance
+
+- **Não é um gap.** Este item não representa uma lacuna que foi aberta
+  e depois fechada — é a preservação, neste índice de evidências, da
+  execução do primeiro piloto controlado real dentro do readiness
+  contract já fechado por P1.2/P1.3/P2 acima. Nada abaixo reabre ou
+  substitui esses fechamentos.
+- **Baseline da execução:** `e2bda4fc3ea2a07f8b961f2fc732950e50db76eb`.
+- **Episódio:** `(account_id=18, due_date=2026-09-09)`.
+- **Skill:** `account.mark_overdue`, versão `1.0.0`.
+- **Resultado:** `TECHNICAL FINAL ACCEPTANCE: PASS`.
+- **Evidência:** `backend/docs/operations/CONTROLLED_PILOT_EVIDENCE.md`
+  — cadeia completa `Materialize → Decision → Execute`, IDs canônicos,
+  isolamento do corredor legado, recovery pós-mutação e a distinção
+  entre reentrada estruturalmente verificada e replay empírico (não
+  executado). Este registro não reproduz essa narrativa.
+- **Nota:** o resultado comprova que o corredor controlado satisfaz o
+  readiness contract definido para este piloto, dentro do boundary
+  congelado (principals, conta e ação específicos). Não autoriza, por
+  si só, expansão do corredor humano para outros clientes, contas,
+  actions ou volume — isso é decisão de um gate operacional posterior.
