@@ -17,7 +17,10 @@ export type Permission =
   | "developer.ui-showcase"
   | "approval:read"
   | "approval:decide"
-  | "work:create";
+  | "work:create"
+  | "work:read"
+  | "skill:execute"
+  | "skill:execute_mutating";
 
 export interface AuthUser {
   id: number;

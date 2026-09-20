@@ -1,3 +1,5 @@
+import type { ApprovalRequestResponse } from "./approval";
+
 export type ActionKey =
   | "account.mark_overdue"
   | "account.mark_paid"
@@ -107,4 +109,51 @@ export interface HumanEscalationMaterializationResponse {
   work_item: HumanEscalationMaterializationResponseWorkItem;
   created: boolean;
   duplicate: boolean;
+}
+
+/**
+ * context_data.approval_request_id é o único vínculo entre o
+ * WorkItem canônico do episódio e a ApprovalRequest humana --
+ * escrito por HumanAccountMarkOverdueMaterializationService, nunca
+ * pelo cliente.
+ */
+export interface MarkOverdueWorkItemResponse {
+  id: number;
+  work_key: string | null;
+  status: string;
+  context_data: {
+    account_id?: number;
+    due_date?: string;
+    skill_key?: string;
+    approval_request_id?: number;
+  };
+}
+
+export interface WorkItemListResponse {
+  items: MarkOverdueWorkItemResponse[];
+}
+
+export interface MarkOverdueMaterializationResponse {
+  work_item: MarkOverdueWorkItemResponse;
+  approval_request: ApprovalRequestResponse;
+  created: boolean;
+  duplicate: boolean;
+}
+
+export interface MarkOverdueExecutionOutput {
+  action: string;
+  account_id: number;
+  previous_status: string;
+  new_status: string;
+  changed: boolean;
+}
+
+export interface MarkOverdueExecutionResponse {
+  work_item_id: number;
+  approval_request_id: number;
+  approval_consumption_id: number;
+  invocation_id: number;
+  invocation_status: string;
+  duplicate: boolean;
+  output: MarkOverdueExecutionOutput;
 }

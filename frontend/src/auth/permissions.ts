@@ -21,6 +21,9 @@ const managerPermissions = [
   "executive.view",
   "approval:read",
   "approval:decide",
+  "work:read",
+  "skill:execute",
+  "skill:execute_mutating",
 ] as const satisfies readonly Permission[];
 
 const executivePermissions = [
