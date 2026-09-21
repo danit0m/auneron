@@ -18,6 +18,8 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func
+from sqlalchemy import select
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -27,7 +29,9 @@ from app.main import app
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.approval import ApprovalConsumption
+from app.models.skill import SkillInvocation
 from app.models.user import User
+from app.models.work import WorkEvent
 from app.models.work import WorkItem
 from scripts.register_account_mark_overdue_skill import (
     main as register_account_mark_overdue_skill,
@@ -386,6 +390,90 @@ def test_execute_requires_skill_execute_permission(
     db_session.expire_all()
     reloaded = db_session.get(Account, account.id)
     assert reloaded.status == "aberto"
+
+
+def _governed_object_counts(
+    db_session: Session,
+) -> tuple[int, int, int, int]:
+    """
+    Contagens independentes -- nunca um unico SELECT multi-tabela sem
+    join, que produziria produto cartesiano (e potencialmente zeraria
+    todas as contagens se qualquer tabela estivesse vazia).
+    """
+
+    return (
+        db_session.execute(
+            select(func.count(ApprovalConsumption.id))
+        ).scalar_one(),
+        db_session.execute(
+            select(func.count(SkillInvocation.id))
+        ).scalar_one(),
+        db_session.execute(
+            select(func.count(AccountEvent.id))
+        ).scalar_one(),
+        db_session.execute(
+            select(func.count(WorkEvent.id))
+        ).scalar_one(),
+    )
+
+
+def test_execute_rejects_approver_as_executor_with_no_writes(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """
+    KD-1/N1 (Governed Action Model V1): o decisor da aprovação nao
+    pode exercer a execution authority da mesma decisao. Prova
+    zero writes em TODOS os objetos do corredor -- inclusive
+    WorkItem/WorkEvent, que nao existem em account.mark_paid e sao
+    a prova especifica de que o guard esta antes da primeira escrita
+    deste corredor (transicao ready -> in_progress).
+    """
+
+    due_date = date.today() - timedelta(days=10)
+    account, _request_id = _setup_approved_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.exec-approver@example.com",
+    )
+    # _setup_approved_episode ja criou e usou o approver internamente
+    # (via _approver_client em _decide) -- reautentica a mesma
+    # identidade existente em vez de recriar o usuario (email unico).
+    approver = TestClient(app)
+    approver.headers.update({API_KEY_HEADER_NAME: os.environ["API_KEY"]})
+    approver_login = approver.post(
+        "/auth/login",
+        json={"email": APPROVER_EMAIL, "password": APPROVER_PASSWORD},
+    )
+    assert approver_login.status_code == 200, approver_login.text
+
+    work_item_before = db_session.execute(
+        select(WorkItem.status, WorkItem.version).where(
+            WorkItem.account_id == account.id
+        )
+    ).one()
+    before_counts = _governed_object_counts(db_session)
+
+    response = approver.post(_execute_url(account.id, due_date))
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == (
+        "Executor não pode ser o mesmo usuário que decidiu a "
+        "aprovação."
+    )
+
+    db_session.expire_all()
+    reloaded_account = db_session.get(Account, account.id)
+    assert reloaded_account.status == "aberto"
+
+    work_item_after = db_session.execute(
+        select(WorkItem.status, WorkItem.version).where(
+            WorkItem.account_id == account.id
+        )
+    ).one()
+    assert work_item_after == work_item_before
+    assert _governed_object_counts(db_session) == before_counts
 
 
 def test_human_execution_service_never_impersonates_agent() -> None:
