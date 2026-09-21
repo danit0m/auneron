@@ -378,3 +378,28 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   contas/valores, scale hardening, prontidão externa ou início da
   extração do Governed Action Model — essas permanecem decisões de
   gates operacionais posteriores.
+
+### Governed Action Model V1 — Design Freeze
+
+- **Não é um gap.** Preservação, neste índice de evidências, do
+  fechamento do Design Freeze do contrato conceitual cross-cutting
+  extraído da comparação mecânica entre `account.mark_overdue` e
+  `account.mark_paid`. Não é uma correção de runtime — nenhum código,
+  teste, schema ou corredor foi alterado por este checkpoint.
+- **Baseline de entrada:** `52ac74cde3223019c09d8f621d93ff82fca763e5`.
+- **Resultado:** `Governed Action Model V1 — DESIGN FREEZE: CLOSED —
+  PASS` — quatro invariantes normativos (`N0`–`N3`), cinco categorias
+  formais de classificação, e os dois corredores existentes avaliados
+  como `GAM V1 ASSESSED WITH KNOWN DEVIATION` (nenhum é
+  `GAM V1 COMPLIANT`).
+- **Documento:** `backend/docs/GOVERNED_ACTION_MODEL.md` — contrato
+  completo, matriz de conformidade, mapeamento de mecanismos não
+  normativos, Known Deviations e Unproven Properties. Este registro
+  não reproduz essa narrativa.
+- **Nota:** permanecem explicitamente abertos/não resolvidos por este
+  checkpoint — `KD-1` (`account.mark_overdue` não impõe N1
+  estruturalmente); `KD-2`/`FINDING-MARK-PAID-001` (`account.mark_paid`
+  não satisfaz N2 integralmente); `DEFERRED-CONCURRENT-AUTHORITY`
+  (convergência de autoridade permanece propriedade separada, não é
+  Desired Invariant V1); ausência de `payment_observed`. Nenhuma
+  correção de corredor foi realizada.

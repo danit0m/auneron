@@ -390,3 +390,18 @@ business effect. Generic isolated SkillRuntime execution is blocked for this
 skill. The critical transaction records Account status, SkillInvocation,
 ApprovalConsumption, WorkSkillExecution and WorkEvent receipt atomically.
 No schema/Alembic migration is introduced.
+
+## Governed Action Model V1
+
+`account.mark_overdue` and `account.mark_paid` are now two independently
+proven mutable action corridors with different origins (`WorkItem`-oriented
+vs. `ApprovalRequest`-oriented, ADR 009). The Governed Action Model V1
+establishes the cross-cutting conceptual contract any governed mutable
+action must satisfy — Requester/Decision/Execution authority separation,
+a governed pre-effect failure contract, and single/compatible business
+effect under concurrency — while explicitly distinguishing normative
+invariants from the implementation mechanisms (`WorkItem`, `ApprovalRequest`,
+`ApprovalConsumption`, locks, receipts) that realize them today. It is
+extracted from evidence, not designed ahead of it, and both existing
+corridors are assessed against it with known deviations, not silently
+corrected. See `GOVERNED_ACTION_MODEL.md` for the full contract.
