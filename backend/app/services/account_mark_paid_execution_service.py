@@ -277,6 +277,11 @@ class AccountMarkPaidExecutionService:
         ):
             raise ApprovalStateError("Escopo atual diverge da ação aprovada.")
 
+        if authority.id == decision.decided_by_user_id:
+            raise ApprovalAuthorizationError(
+                "Executor não pode ser o mesmo usuário que decidiu a aprovação."
+            )
+
         account = self.db.execute(
             select(Account)
             .where(Account.id == normalized_account_id)
