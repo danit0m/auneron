@@ -349,3 +349,32 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   conclusão de um Second Mutating Skill — essas permanecem decisões de
   gates operacionais posteriores. G3/G4 permanecem exatamente onde
   estão e com sua classificação atual.
+
+### Controlled Mark-Paid Pilot — Episode 001
+
+- **Não é um gap.** Preservação, neste índice de evidências, do
+  primeiro episódio operacional real do corredor `account.mark_paid`
+  (ADR 009, distinto do corredor `WorkItem`-oriented de
+  `mark_overdue`), sob o guard `approver != executor` introduzido pelo
+  Second Mutating Skill — Safety Delta V1.
+- **Baseline:** `aede5af74c2878ef0dca0a6b1f8f856fef24fcfc`
+  (`test(governance): harden mark paid execution safety`).
+- **Episódio:** `(account_id=2)`, `atrasado → pago`.
+- **Skill:** `account.mark_paid`, versão `1.0.0`.
+- **Resultado:** `Controlled Mark-Paid Pilot — Episode 001 — PASS` —
+  três identidades independentes (`requester=user5, approver=user6,
+  executor=user3`), fluxo `Human Request → Independent Approval →
+  Independent Execution` demonstrado ponta a ponta, efeito único,
+  cadeia persistida reconstruída por join direto das tabelas, recovery
+  pós-mutação verificado.
+- **Evidência:** `backend/docs/operations/CONTROLLED_MARK_PAID_PILOT_EVIDENCE.md`
+  — cadeia completa, SoD, identidade/idempotência, isolamento, a
+  semântica negativa de `payment_observed`, `FINDING-MARK-PAID-001` e
+  `DEFERRED-CONCURRENT-AUTHORITY` (ambos registrados como open/deferred,
+  não resolvidos) e Recovery Evidence. Este registro não reproduz essa
+  narrativa.
+- **Nota:** não declara observação/comprovação de pagamento,
+  convergência de autoridades concorrentes, generalização para outras
+  contas/valores, scale hardening, prontidão externa ou início da
+  extração do Governed Action Model — essas permanecem decisões de
+  gates operacionais posteriores.
