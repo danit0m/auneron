@@ -303,3 +303,23 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   congelado (principals, conta e ação específicos). Não autoriza, por
   si só, expansão do corredor humano para outros clientes, contas,
   actions ou volume — isso é decisão de um gate operacional posterior.
+
+### Controlled Operator/UI Flow — Episode 002
+
+- **Não é um gap.** Preservação, neste índice de evidências, da
+  execução do primeiro ciclo do corredor humano operado inteiramente
+  pela interface (não mais via API direta como no Episódio 001), com
+  dois principals distintos e sessões independentes.
+- **Baseline:** `8a7ae0b6e0265ea07362c2d7a9d2dc19ce18f831`.
+- **Episódio:** `(account_id=17, due_date=2026-08-04)`.
+- **Skill:** `account.mark_overdue`, versão `1.0.0`.
+- **Resultado:** fluxo `Requester/UI → Approver/UI → nova sessão
+  Requester/UI → execução governada` demonstrado ponta a ponta, com
+  recovery pós-mutação verificado.
+- **Evidência:** `backend/docs/operations/CONTROLLED_OPERATOR_UI_FLOW_EVIDENCE.md`
+  — cadeia completa, segregação/autoridade, idempotência, isolamento do
+  advisory legado `#13`, Recovery Evidence e `FINDING-UI-001` (achado
+  de UX non-blocking, registrado sem correção). Este registro não
+  reproduz essa narrativa.
+- **Nota:** assim como o item anterior, não autoriza expansão do
+  corredor para outros clientes, contas, actions ou volume.
