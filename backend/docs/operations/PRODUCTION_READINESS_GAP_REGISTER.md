@@ -323,3 +323,29 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   reproduz essa narrativa.
 - **Nota:** assim como o item anterior, não autoriza expansão do
   corredor para outros clientes, contas, actions ou volume.
+
+### Controlled Repeatability Pilot — Episode 003
+
+- **Não é um gap.** Preservação, neste índice de evidências, da
+  demonstração de que o corredor humano já implantado repete um novo
+  episódio no mesmo baseline, sem desenvolvimento/redeploy adicional,
+  coexistindo com approvals agent-only preexistentes.
+- **Baseline:** `18ac6536851db37aa5f439421c65f3b247daa838` (mesmo dos
+  Episódios 001/002 — nenhuma alteração de código entre eles).
+- **Episódio:** `(account_id=1, due_date=2026-08-28)`.
+- **Skill:** `account.mark_overdue`, versão `1.0.0`.
+- **Resultado:** `Controlled Repeatability Pilot / Episode 003 — PASS`
+  — fluxo `Requester/UI → Approver/UI → nova sessão Requester/UI →
+  execução governada` repetido com sucesso, isolamento de namespace
+  preservado frente a advisories agent-only coexistentes, recovery
+  pós-mutação verificado.
+- **Evidência:** `backend/docs/operations/CONTROLLED_REPEATABILITY_PILOT_EVIDENCE.md`
+  — cadeia completa, coexistência com approvals agent-only, SoD,
+  idempotência, `FINDING-UI-001` (reproduzido, non-blocking) e Recovery
+  Evidence. Este registro não reproduz essa narrativa.
+- **Nota:** o resultado comprova repetibilidade do corredor controlado
+  dentro do boundary já congelado. Não declara scale hardening,
+  prontidão externa, generalização para outras Skills mutáveis ou
+  conclusão de um Second Mutating Skill — essas permanecem decisões de
+  gates operacionais posteriores. G3/G4 permanecem exatamente onde
+  estão e com sua classificação atual.
