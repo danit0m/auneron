@@ -15,13 +15,14 @@ Terminologia deliberadamente amendada (Pre-Pilot Safety Gate V2): este
 arquivo nao afirma isolamento de escopo por conta via ACL -- essa ACL
 nao existe no sistema. "Scope" aqui se refere exclusivamente a
 existencia do recurso (Account) verificada por
-authorize_skill_execution(). O caso "Account inexistente na execucao"
-foi deliberadamente excluido deste arquivo e registrado como
-FINDING-MARK-PAID-001 para checkpoint posterior, porque hoje ele
-escapa do contrato de erro do corredor (SkillScopeNotFoundError nao e
-ApprovalError e nao e mapeado pela rota) -- fixar esse 500 em teste
-transformaria um comportamento reconhecidamente inadequado em
-contrato de regressao.
+authorize_skill_execution().
+
+KD-2/N2 (Governed Action Model V1): o caso "Account inexistente na
+execucao" (antes FINDING-MARK-PAID-001) foi corrigido -- a rota
+execute-mark-paid agora captura SkillScopeNotFoundError e traduz para
+HTTP 403 governado, mesmo padrao ja usado pelas rotas de
+account.mark_overdue. Prova disso esta em
+test_execute_rejects_approved_authority_referencing_deleted_account.
 """
 
 import os
@@ -796,4 +797,55 @@ def test_execute_requires_approval_decide_permission_at_route_level(
 
     db_session.expire_all()
     assert db_session.get(Account, account.id).status == "aberto"
+    assert _counts(db_session) == before
+
+
+# ---------------------------------------------------------------------
+# KD-2/N2 -- autoridade aprovada referenciando Account removida entre
+# a aprovacao e a execucao (antes FINDING-MARK-PAID-001). A remocao da
+# Account e preparacao do cenario, nao efeito do corredor -- o
+# baseline e capturado DEPOIS da remocao/commit e imediatamente antes
+# do POST de execucao, para que os deltas provem exclusivamente o
+# comportamento de mark_paid. "Account unchanged" nao e uma
+# pos-condicao aplicavel aqui, ja que a propria Account foi removida
+# para criar a condicao.
+# ---------------------------------------------------------------------
+
+
+def test_execute_rejects_approved_authority_referencing_deleted_account(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _make_account(
+        db_session,
+        email="cliente.mark-paid.deleted-account@example.com",
+        status="aberto",
+    )
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key="mark-paid-deleted-account-1",
+    )
+
+    account_id = account.id
+    db_session.delete(account)
+    db_session.commit()
+    assert db_session.get(Account, account_id) is None
+
+    before = _counts(db_session)
+
+    response = _execute(
+        client,
+        account_id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == (
+        "Recurso inexistente ou não acessível."
+    )
+
     assert _counts(db_session) == before
