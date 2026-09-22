@@ -63,7 +63,7 @@ services:
       APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_APPLICATION_NAME: auneron-migration-prod
-      CORS_ORIGINS: https://auneron.com.br,https://www.auneron.com.br
+      CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}
 
     secrets:
       - database_url
@@ -94,7 +94,7 @@ services:
       APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_APPLICATION_NAME: auneron-api-prod
-      CORS_ORIGINS: https://auneron.com.br,https://www.auneron.com.br
+      CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-auneron_session}
       AUTH_SESSION_TTL_MINUTES: ${AUTH_SESSION_TTL_MINUTES:-480}
       AUTH_ELEVATION_TTL_MINUTES: ${AUTH_ELEVATION_TTL_MINUTES:-10}
@@ -171,7 +171,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=auneron_web_prod"
-      - "traefik.http.routers.auneron.rule=Host(`auneron.com.br`) || Host(`www.auneron.com.br`)"
+      - "traefik.http.routers.auneron.rule=Host(`${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}`)"
       - "traefik.http.routers.auneron.entrypoints=websecure"
       - "traefik.http.routers.auneron.tls.certresolver=letsencrypt"
       - "traefik.http.services.auneron.loadbalancer.server.port=80"
