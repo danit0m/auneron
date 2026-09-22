@@ -402,6 +402,8 @@ a governed pre-effect failure contract, and single/compatible business
 effect under concurrency — while explicitly distinguishing normative
 invariants from the implementation mechanisms (`WorkItem`, `ApprovalRequest`,
 `ApprovalConsumption`, locks, receipts) that realize them today. It is
-extracted from evidence, not designed ahead of it, and both existing
-corridors are assessed against it with known deviations, not silently
-corrected. See `GOVERNED_ACTION_MODEL.md` for the full contract.
+extracted from evidence, not designed ahead of it. The two corridors
+formally assessed against GAM V1, `account.mark_overdue` and
+`account.mark_paid`, satisfy N0-N3 and are classified as GAM V1 COMPLIANT
+within that assessed scope. See `GOVERNED_ACTION_MODEL.md` for the full
+contract.

@@ -403,3 +403,43 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   (convergência de autoridade permanece propriedade separada, não é
   Desired Invariant V1); ausência de `payment_observed`. Nenhuma
   correção de corredor foi realizada.
+
+### Governed Action Model V1 — N1/N2/N3 Closure and Corridor Conformance
+
+- **Não é um gap novo.** Preservação, neste índice de evidências, do
+  fechamento sequencial dos itens deixados explicitamente abertos pelo
+  Design Freeze acima — este registro não reescreve aquela entrada, que
+  permanece correta como fotografia do checkpoint `52ac74c...`.
+- **Baselines de fechamento:**
+  - `KD-1` — `4629bb45d487e988d81688c64077243b09cdce77` ("fix(governance):
+    enforce mark overdue authority separation").
+  - `KD-2` / `FINDING-MARK-PAID-001` —
+    `8593ed6d499b569f5365bf4c36386b3abf2e1b80` ("fix(governance): govern
+    missing account execution failure").
+  - `FINDING-MARK-OVERDUE-CONCURRENCY-001` —
+    `f060d972bdfcaad2516f53d6082f508120b37343` ("fix(governance): resolve
+    mark overdue concurrent lock-order deadlock").
+- **Resultado:**
+  ```
+  account.mark_overdue
+    N0-N3 COMPLIANT
+    GAM V1 COMPLIANT
+
+  account.mark_paid
+    N0-N3 COMPLIANT
+    GAM V1 COMPLIANT
+  ```
+- **Evidência:** `backend/docs/GOVERNED_ACTION_MODEL.md` §6/§8 — matriz
+  de conformidade atualizada e registro histórico fechado dos três
+  deviations. N3 apoia-se em dois reproducers de execução concorrente
+  (`tests/test_human_account_mark_overdue_execution_concurrency.py`,
+  `tests/test_account_mark_paid_execution_concurrency.py`), cada um
+  exercitando duas autoridades concorrentes a partir de sessões
+  independentes, com bloqueio real observado antes da liberação. Este
+  registro não reproduz a narrativa completa.
+- **Nota:** esta conclusão vale exclusivamente para os dois corredores
+  formalmente avaliados — `account.mark_overdue` e `account.mark_paid`
+  — não para toda ação mutável da plataforma. `DEFERRED-CONCURRENT-AUTHORITY`
+  (UP-2) permanece explicitamente deferred, não fechada por este item —
+  N3 comprova ausência de efeito duplicado na execução sob autoridades
+  concorrentes, não convergência de autoridade na criação/aprovação.

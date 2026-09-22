@@ -29,6 +29,13 @@ action corridors Auneron has proven operationally to date:
   the Second Mutating Skill — Safety Delta V1 functional suite and one
   operational episode (`CONTROLLED_MARK_PAID_PILOT_EVIDENCE.md`).
 
+N3 additionally rests on two concurrent-execution reproducers —
+`tests/test_human_account_mark_overdue_execution_concurrency.py` and
+`tests/test_account_mark_paid_execution_concurrency.py` — each exercising
+two competing authorities against the same governed business condition
+from independent sessions, with genuine database-level blocking observed
+before release, verifying a single/compatible business effect.
+
 This document does not reproduce those evidence packages. It records only
 the properties that survived a Discovery / Reconciliation / Normative
 Boundary Decision process comparing the two corridors field by field —
@@ -140,15 +147,21 @@ in §12.
 | Desired invariant | `mark_overdue` | `mark_paid` |
 |---|---|---|
 | N0 — requester ≠ approver | compliant | compliant |
-| N1 — approver ≠ executor | known deviation (KD-1) | compliant |
-| N2 — governed pre-effect errors | compliant on the examined surface | known deviation (KD-2) |
-| N3 — no duplicate/incompatible effect | evidence-supported on the examined surface | evidence-supported on the examined surface |
-| **Aggregate state** | **GAM V1 assessed with known deviation** | **GAM V1 assessed with known deviation** |
+| N1 — approver ≠ executor | compliant | compliant |
+| N2 — governed pre-effect errors | compliant | compliant |
+| N3 — no duplicate/incompatible effect | compliant | compliant |
+| **Aggregate state** | **GAM V1 COMPLIANT** | **GAM V1 COMPLIANT** |
 
-`evidence-supported on the examined surface` must not be reinterpreted
-later as an exhaustive proof of concurrency — it reflects the specific
-episodes and functional tests exercised, not every possible concurrent
-scenario.
+This conformance applies exclusively to the two corridors formally
+assessed against GAM V1 — `account.mark_overdue` and `account.mark_paid`
+— and must not be read as a claim about any other mutable action in
+Auneron. It must not be reinterpreted later as an exhaustive proof of
+every possible concurrent scenario — it reflects the specific episodes,
+functional tests and concurrent reproducers exercised to date (§2, §8).
+`DEFERRED-CONCURRENT-AUTHORITY` (UP-2, §9) remains a separate, still
+deferred property: N3 proves competing authorities do not produce a
+duplicate effect once execution is reached, not that authority creation
+itself converges.
 
 ## 7. Current Implementation Mapping — Non-Normative
 
@@ -176,17 +189,35 @@ Recovery:                backup_postgres.py / restore_postgres.py,
 None of the above is part of the universal contract — a different corridor
 may satisfy N0–N3 through entirely different mechanisms.
 
-## 8. Known Deviations
+## 8. Known Deviations (Historical — All Closed)
 
 ```
 KD-1
-account.mark_overdue does not structurally enforce N1.
+  N1 / account.mark_overdue
+  CLOSED @ 4629bb45d487e988d81688c64077243b09cdce77
+  account.mark_overdue did not structurally enforce N1. Fixed by an
+  explicit authority.id == decision.decided_by_user_id guard before
+  the business effect.
 
-KD-2
-account.mark_paid does not fully satisfy N2 on the examined surface;
-FINDING-MARK-PAID-001 remains open.
+KD-2 / FINDING-MARK-PAID-001
+  N2 / account.mark_paid
+  CLOSED @ 8593ed6d499b569f5365bf4c36386b3abf2e1b80
+  account.mark_paid did not fully satisfy N2 on the examined surface.
+  Fixed by mapping the previously-unclassified failure at the route
+  boundary.
+
+FINDING-MARK-OVERDUE-CONCURRENCY-001
+  N3 / account.mark_overdue concurrency
+  CLOSED @ f060d972bdfcaad2516f53d6082f508120b37343
+  Cause: inconsistent retained lock ordering between WorkItem/
+  ApprovalRequest and Account under concurrent execution.
+  Resolution: non-mutating initial reads no longer retain those row
+  locks; the business effect remains serialized by Account; WorkItem
+  mutation retains its own internal concurrency control.
 ```
-No deviation is corrected by this document.
+These deviations are preserved here as history, not corrected
+retroactively — each was true at the baseline it names. No deviation
+remains open as of `f060d972bdfcaad2516f53d6082f508120b37343`.
 
 ## 9. Unproven Properties
 
