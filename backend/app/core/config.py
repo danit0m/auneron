@@ -97,6 +97,14 @@ class Settings(BaseSettings):
         min_length=1,
         max_length=63,
     )
+    expected_database_name: str | None = Field(
+        default=None,
+        validation_alias="EXPECTED_DATABASE_NAME",
+    )
+    expected_database_host: str | None = Field(
+        default=None,
+        validation_alias="EXPECTED_DATABASE_HOST",
+    )
 
     api_key: SecretStr | None = Field(
         default=None,
@@ -380,6 +388,12 @@ class Settings(BaseSettings):
         ).database or ""
 
     @property
+    def database_host(self) -> str:
+        return make_url(
+            self.database_url
+        ).host or ""
+
+    @property
     def auth_cookie_secure(self) -> bool:
         return self.environment == "production"
 
@@ -529,6 +543,38 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "MAINTENANCE_ENABLED=false não é "
                     "permitido em production."
+                )
+
+            if not self.expected_database_name:
+                raise ValueError(
+                    "EXPECTED_DATABASE_NAME é "
+                    "obrigatória em production."
+                )
+
+            if (
+                self.database_name
+                != self.expected_database_name
+            ):
+                raise ValueError(
+                    "O banco de produção não "
+                    "corresponde à identidade "
+                    "esperada (nome)."
+                )
+
+            if not self.expected_database_host:
+                raise ValueError(
+                    "EXPECTED_DATABASE_HOST é "
+                    "obrigatória em production."
+                )
+
+            if (
+                self.database_host
+                != self.expected_database_host
+            ):
+                raise ValueError(
+                    "O banco de produção não "
+                    "corresponde à identidade "
+                    "esperada (host)."
                 )
 
         if (

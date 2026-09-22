@@ -33,6 +33,8 @@ def production_settings(
         "CORS_ORIGINS": "",
         "DEBUG": False,
         "DATABASE_ECHO": False,
+        "EXPECTED_DATABASE_NAME": "auneron",
+        "EXPECTED_DATABASE_HOST": "db",
     }
     values.update(overrides)
 

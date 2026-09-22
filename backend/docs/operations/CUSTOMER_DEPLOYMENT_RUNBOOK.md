@@ -45,6 +45,42 @@ código (`Settings.validate_environment`), não dependem de disciplina
 operacional.
 
 ```
+EXPECTED_DATABASE_NAME=<nome do banco deste deployment>
+EXPECTED_DATABASE_HOST=<host do PostgreSQL deste deployment>
+```
+
+Identidade positiva mínima de produção (G3). Obrigatórias e
+fail-fast em `production` (`${EXPECTED_DATABASE_NAME:?...}`/
+`${EXPECTED_DATABASE_HOST:?...}` no compose) — o backend recusa subir
+se `DATABASE_URL` apontar para um nome ou host diferente do declarado
+aqui, ou se qualquer uma das duas variáveis estiver ausente. Essa
+comparação é puramente sintática (parsing de `DATABASE_URL`, sem
+conexão de rede) e roda antes de qualquer tentativa de conexão real
+com o PostgreSQL.
+
+Para a topologia atual (`postgres` como serviço interno do Compose):
+
+```
+EXPECTED_DATABASE_NAME=auneron
+EXPECTED_DATABASE_HOST=postgres
+```
+
+Se este cliente usar um PostgreSQL externo (gerenciado, VM dedicada
+etc.), `EXPECTED_DATABASE_HOST` deve ser o hostname real desse
+serviço — nenhum valor é fixado no código, o contrato funciona igual
+nos dois casos.
+
+**Limite importante:** esta é uma identidade **declarada pelo
+operador**, não uma prova criptográfica ou física de que o processo
+está de fato conectado ao servidor PostgreSQL correto. G3 detecta
+`DATABASE_URL` apontando para um nome/host diferente do declarado —
+não detecta `DATABASE_URL` e `EXPECTED_DATABASE_*` configurados
+incorretamente **juntos** (por exemplo, ambos apontando para o
+deployment errado por engano do operador). `EXPECTED_DATABASE_PORT`
+não é validado nesta fase — pode ser adicionado depois sem alterar
+este modelo.
+
+```
 replicas == 1
 ```
 
@@ -148,6 +184,8 @@ evidência do drill.
 ```bash
 export CUSTOMER_DOMAIN=cliente.exemplo.com
 export ACME_EMAIL=operador@auneron.com.br
+export EXPECTED_DATABASE_NAME=auneron
+export EXPECTED_DATABASE_HOST=postgres
 export GIT_SHA=$(git rev-parse --short HEAD)
 
 cd backend

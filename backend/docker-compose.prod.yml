@@ -64,6 +64,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_APPLICATION_NAME: auneron-migration-prod
       CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}
+      EXPECTED_DATABASE_NAME: ${EXPECTED_DATABASE_NAME:?Defina EXPECTED_DATABASE_NAME (identidade esperada do banco de producao)}
+      EXPECTED_DATABASE_HOST: ${EXPECTED_DATABASE_HOST:?Defina EXPECTED_DATABASE_HOST (identidade esperada do banco de producao)}
 
     secrets:
       - database_url
@@ -95,6 +97,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_APPLICATION_NAME: auneron-api-prod
       CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}
+      EXPECTED_DATABASE_NAME: ${EXPECTED_DATABASE_NAME:?Defina EXPECTED_DATABASE_NAME (identidade esperada do banco de producao)}
+      EXPECTED_DATABASE_HOST: ${EXPECTED_DATABASE_HOST:?Defina EXPECTED_DATABASE_HOST (identidade esperada do banco de producao)}
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-auneron_session}
       AUTH_SESSION_TTL_MINUTES: ${AUTH_SESSION_TTL_MINUTES:-480}
       AUTH_ELEVATION_TTL_MINUTES: ${AUTH_ELEVATION_TTL_MINUTES:-10}
