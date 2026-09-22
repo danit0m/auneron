@@ -23,17 +23,31 @@ execute-mark-paid agora captura SkillScopeNotFoundError e traduz para
 HTTP 403 governado, mesmo padrao ja usado pelas rotas de
 account.mark_overdue. Prova disso esta em
 test_execute_rejects_approved_authority_referencing_deleted_account.
+
+mark_paid/N2 -- SkillAuthorizationError Boundary (achado do Conformance
+Evidence Gap Analysis V1): a rota execute-mark-paid agora tambem
+captura SkillAuthorizationError, produzida por
+_require_mode_authority() quando o executor carece de
+skill:execute_mutating. Esse caminho e apenas incidentalmente
+inalcancavel pela composicao atual de ROLE_PERMISSIONS (todo role com
+approval:decide tambem possui skill:execute_mutating hoje), nao por
+garantia estrutural de codigo -- por isso o teste
+test_execute_rejects_executor_missing_mutating_permission exercita o
+caminho real via mock.patch.dict escopado, sem alterar
+ROLE_PERMISSIONS de producao e sem mockar a excecao em si.
 """
 
 import os
 from datetime import date
 from datetime import timedelta
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import authorization as authorization_module
 from app.core.authentication import hash_password
 from app.core.security import API_KEY_HEADER_NAME
 from app.main import app
@@ -849,3 +863,85 @@ def test_execute_rejects_approved_authority_referencing_deleted_account(
     )
 
     assert _counts(db_session) == before
+
+
+# ---------------------------------------------------------------------
+# mark_paid/N2 -- SkillAuthorizationError Boundary. authorize_skill_
+# execution()/_require_mode_authority() exige skill:execute_mutating
+# para account.mark_paid (execution_mode="mutating"). Nenhum role real
+# de producao alcanca essa rejeicao hoje (todo role com approval:decide
+# tambem tem skill:execute_mutating em ROLE_PERMISSIONS) -- por isso o
+# cenario e construido com mock.patch.dict escopado sobre o dicionario
+# real consultado por has_permission() em tempo de execucao, removendo
+# apenas skill:execute_mutating de "manager" durante a chamada. A rota,
+# o service, authorize_skill_execution() e a excecao sao todos reais;
+# nada e mockado exceto a composicao de permissoes do role.
+# ---------------------------------------------------------------------
+
+
+def test_execute_rejects_executor_missing_mutating_permission(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _make_account(
+        db_session,
+        email="cliente.mark-paid.skill-authz@example.com",
+        status="aberto",
+    )
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key="mark-paid-skill-authz-1",
+    )
+
+    _set_role(db_session, "manager")
+    original_permissions = authorization_module.ROLE_PERMISSIONS[
+        "manager"
+    ]
+    assert "skill:execute_mutating" in original_permissions
+    assert "skill:execute" in original_permissions
+
+    before_status = db_session.get(Account, account.id).status
+    before_counts = _counts(db_session)
+
+    patched_permissions = frozenset(
+        original_permissions - {"skill:execute_mutating"}
+    )
+    with mock.patch.dict(
+        authorization_module.ROLE_PERMISSIONS,
+        {"manager": patched_permissions},
+    ):
+        assert "skill:execute_mutating" not in (
+            authorization_module.ROLE_PERMISSIONS["manager"]
+        )
+        assert "skill:execute" in (
+            authorization_module.ROLE_PERMISSIONS["manager"]
+        )
+
+        response = _execute(
+            client,
+            account.id,
+            approval_request_id=request_id,
+            expected_status="aberto",
+        )
+
+    # ROLE_PERMISSIONS restaurado ao sair do patch -- prova de que a
+    # alteracao global foi estritamente temporaria.
+    assert (
+        authorization_module.ROLE_PERMISSIONS["manager"]
+        == original_permissions
+    )
+    assert "skill:execute_mutating" in (
+        authorization_module.ROLE_PERMISSIONS["manager"]
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == (
+        "Ator sem autoridade para skill mutating."
+    )
+
+    db_session.expire_all()
+    assert db_session.get(Account, account.id).status == before_status
+    assert _counts(db_session) == before_counts

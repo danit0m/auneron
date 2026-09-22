@@ -37,6 +37,7 @@ from app.services.overdue_detection_service import OverdueDetectionService
 from app.api.routes.approvals import _raise_approval_http_error
 from app.core.approval_errors import ApprovalError
 from app.core.approval_observability import log_approval_event
+from app.core.skill_errors import SkillAuthorizationError
 from app.core.skill_errors import SkillScopeNotFoundError
 from app.schemas.account import AccountMarkPaidExecuteRequest
 from app.services.account_mark_paid_execution_service import (
@@ -370,7 +371,10 @@ def execute_account_mark_paid(
             user_id=authenticated.user.id,
             request_id=payload.approval_request_id,
         )
-    except SkillScopeNotFoundError as error:
+    except (
+        SkillAuthorizationError,
+        SkillScopeNotFoundError,
+    ) as error:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(error),
