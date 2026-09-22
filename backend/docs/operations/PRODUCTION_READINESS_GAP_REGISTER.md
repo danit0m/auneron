@@ -443,3 +443,23 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
   (UP-2) permanece explicitamente deferred, não fechada por este item —
   N3 comprova ausência de efeito duplicado na execução sob autoridades
   concorrentes, não convergência de autoridade na criação/aprovação.
+
+### Controlled Pilot — Episode 004 (Competing Authority + Recovery Proof)
+
+- **Status:** CLOSED / EVIDENCE.
+- **Evidence:** `backend/docs/operations/CONTROLLED_COMPETING_AUTHORITY_EVIDENCE.md`
+  — cadeia completa E004.1–E004.5, fixture (`Account 19`), IDs
+  concretos, recovery drill isolado e observação de autoridade
+  concorrente. Este registro não reproduz essa narrativa.
+- **Result:**
+  - human `account.mark_overdue` corridor completed;
+  - `Account 19` `aberto` → `atrasado` exactly once in the observed
+    episode;
+  - requester/approver/executor = 1/6/4;
+  - recovery reconstruction PASS;
+  - agent-originated competing authority observed.
+- **Boundary:**
+  - cross-corridor concurrent execution was not experimentally
+    tested;
+  - UP-2 remains DEFERRED;
+  - no tenant-isolation or external/customer-MVP readiness claim.
