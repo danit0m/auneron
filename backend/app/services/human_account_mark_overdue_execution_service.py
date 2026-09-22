@@ -55,6 +55,8 @@ from app.core.approval_errors import ApprovalStateError
 from app.core.approval_errors import ApprovalValidationError
 from app.core.autonomy_policy import classify_skill_risk
 from app.core.skill_authorization import authorize_skill_execution
+from app.core.work_errors import WorkStateError
+from app.core.work_errors import WorkVersionConflictError
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.approval import ApprovalConsumption
@@ -119,6 +121,18 @@ class HumanMarkOverdueApprovalRejectedError(Exception):
         super().__init__(
             f"A aprovação humana não foi concedida (status={status})."
         )
+
+
+class HumanMarkOverdueWorkItemConflictError(Exception):
+    """
+    O WorkItem mudou concorrentemente (versão ou estado) entre a
+    leitura inicial deste corredor e a transição ready->in_progress --
+    outra execução venceu a corrida, ou um ator externo ao corredor
+    alterou o item. Não é um conflito de consumo de ApprovalRequest.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -236,7 +250,7 @@ class HumanAccountMarkOverdueExecutionService:
             scope_type="account",
             work_key=canonical_key,
             account_id=normalized_account_id,
-            for_update=True,
+            for_update=False,
         )
 
         if work_item is None:
@@ -256,7 +270,7 @@ class HumanAccountMarkOverdueExecutionService:
                 "WorkItem canônico sem ApprovalRequest associada."
             )
 
-        request = self.approvals.lock_request(approval_request_id)
+        request = self.approvals.get_request(approval_request_id)
         if request is None:
             raise ApprovalNotFoundError(
                 "Solicitação de aprovação não encontrada."
@@ -425,18 +439,27 @@ class HumanAccountMarkOverdueExecutionService:
             )
 
         if work_item.status == "ready":
-            work_item = self.work_service.transition_status(
-                work_item.id,
-                expected_version=work_item.version,
-                actor=WorkActor(
-                    actor_type="system",
-                    actor_reference=(
-                        f"system:work:{work_item.id}"
+            try:
+                work_item = self.work_service.transition_status(
+                    work_item.id,
+                    expected_version=work_item.version,
+                    actor=WorkActor(
+                        actor_type="system",
+                        actor_reference=(
+                            f"system:work:{work_item.id}"
+                        ),
+                        actor_user_id=None,
                     ),
-                    actor_user_id=None,
-                ),
-                status="in_progress",
-            ).work_item
+                    status="in_progress",
+                ).work_item
+            except (
+                WorkVersionConflictError,
+                WorkStateError,
+            ) as error:
+                raise HumanMarkOverdueWorkItemConflictError(
+                    "O WorkItem foi alterado concorrentemente antes "
+                    "da transição para execução."
+                ) from error
         elif work_item.status != "in_progress":
             raise ApprovalStateError(
                 "WorkItem deve estar ready/in_progress para "

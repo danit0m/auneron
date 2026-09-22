@@ -42,6 +42,9 @@ from app.services.human_account_mark_overdue_execution_service import (
     HumanMarkOverdueApprovalRejectedError,
 )
 from app.services.human_account_mark_overdue_execution_service import (
+    HumanMarkOverdueWorkItemConflictError,
+)
+from app.services.human_account_mark_overdue_execution_service import (
     HumanMarkOverdueWorkItemNotFoundError,
 )
 from app.services.human_account_mark_overdue_materialization_service import (
@@ -220,6 +223,11 @@ def execute_account_mark_overdue(
             detail=str(error),
         ) from error
     except HumanMarkOverdueApprovalRejectedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except HumanMarkOverdueWorkItemConflictError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),

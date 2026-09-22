@@ -17,6 +17,7 @@ from datetime import date
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func
 from sqlalchemy import select
@@ -25,6 +26,8 @@ from sqlalchemy.orm import Session
 
 from app.core.authentication import hash_password
 from app.core.security import API_KEY_HEADER_NAME
+from app.core.work_errors import WorkStateError
+from app.core.work_errors import WorkVersionConflictError
 from app.main import app
 from app.models.account import Account
 from app.models.account_event import AccountEvent
@@ -33,6 +36,14 @@ from app.models.skill import SkillInvocation
 from app.models.user import User
 from app.models.work import WorkEvent
 from app.models.work import WorkItem
+from app.services.human_account_mark_overdue_execution_service import (
+    HumanAccountMarkOverdueExecutionService,
+)
+from app.services.human_account_mark_overdue_execution_service import (
+    HumanMarkOverdueWorkItemConflictError,
+)
+from app.services.work_service import WorkActor
+from app.services.work_service import WorkManagerService
 from scripts.register_account_mark_overdue_skill import (
     main as register_account_mark_overdue_skill,
 )
@@ -474,6 +485,122 @@ def test_execute_rejects_approver_as_executor_with_no_writes(
     ).one()
     assert work_item_after == work_item_before
     assert _governed_object_counts(db_session) == before_counts
+
+
+def test_execute_converts_workitem_version_conflict_to_governed_error(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    N3 -- WorkItem agora e lido sem FOR UPDATE inicial; a serializacao
+    real da transicao ready->in_progress vive dentro de
+    WorkManagerService._mutate(), que rebloqueia e valida
+    expected_version/estado frescos sob concorrencia genuina (ja
+    coberto por test_work_service.py/test_work_lifecycle.py -- nao
+    duplicado aqui). O que este teste prova e especificamente o codigo
+    NOVO deste corredor: quando transition_status() levanta
+    WorkVersionConflictError, execute() converte para
+    HumanMarkOverdueWorkItemConflictError, preservando a causa.
+
+    Reproduzir a corrida real de forma deterministica e sem threads
+    nao se mostrou viavel: sob READ COMMITTED (isolamento de
+    producao), o mecanismo depende da ordem real no tempo entre a
+    leitura simples deste corredor e o commit concorrente de outra
+    transacao. A tentativa de contornar isso com REPEATABLE READ numa
+    unica sessao foi registrada e descartada -- ela congela a leitura
+    simples como esperado, mas faz o FOR UPDATE subsequente de
+    _mutate() falhar com SerializationFailure do proprio Postgres, um
+    erro diferente do que a producao realmente produz sob READ
+    COMMITTED. Por isso este teste isola deliberadamente a logica de
+    conversao, injetando a excecao no ponto exato em que
+    WorkManagerService.transition_status e chamado.
+    """
+
+    due_date = date.today() - timedelta(days=10)
+    account, _request_id = _setup_approved_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.exec-workitem-version@example.com",
+    )
+    authority = _current_user(db_session)
+
+    def _raise_version_conflict(*args, **kwargs):
+        raise WorkVersionConflictError(
+            expected_version=1, current_version=2
+        )
+
+    monkeypatch.setattr(
+        WorkManagerService,
+        "transition_status",
+        _raise_version_conflict,
+    )
+
+    service = HumanAccountMarkOverdueExecutionService(db_session)
+    with pytest.raises(HumanMarkOverdueWorkItemConflictError):
+        service.execute(
+            account_id=account.id,
+            due_date=due_date,
+            authority_user_id=authority.id,
+        )
+
+    db_session.rollback()
+    reloaded_account = db_session.get(Account, account.id)
+    assert reloaded_account.status == "aberto"
+
+
+def test_execute_converts_workitem_state_conflict_to_governed_error(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Mesma logica de conversao do teste acima, para a segunda excecao
+    que o mesmo except tuple cobre -- WorkStateError. Nao corresponde
+    a um caminho real alcancavel a partir deste ponto de chamada
+    especifico: todo mutador de WorkItem incrementa version em
+    lockstep com o status (_append_locked_event(), unico lugar que
+    altera version, e chamado apenas de dentro de _mutate(), depois de
+    _validate_expected_version() ja ter passado) -- se a versao bate,
+    o estado tambem bate, entao WorkVersionConflictError sempre
+    dispara primeiro (ver PRE-DESIGN-FREEZE Microverification V3).
+    O except tuple trata as duas excecoes de forma identica; provar a
+    conversao para ambas fecha a cobertura do bloco novo sem alegar um
+    caminho real que nao existe.
+    """
+
+    due_date = date.today() - timedelta(days=10)
+    account, _request_id = _setup_approved_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.exec-workitem-state@example.com",
+    )
+    authority = _current_user(db_session)
+
+    def _raise_state_error(*args, **kwargs):
+        raise WorkStateError(
+            "Transição de status inválida: cancelled -> in_progress."
+        )
+
+    monkeypatch.setattr(
+        WorkManagerService,
+        "transition_status",
+        _raise_state_error,
+    )
+
+    service = HumanAccountMarkOverdueExecutionService(db_session)
+    with pytest.raises(HumanMarkOverdueWorkItemConflictError):
+        service.execute(
+            account_id=account.id,
+            due_date=due_date,
+            authority_user_id=authority.id,
+        )
+
+    db_session.rollback()
+    reloaded_account = db_session.get(Account, account.id)
+    assert reloaded_account.status == "aberto"
 
 
 def test_human_execution_service_never_impersonates_agent() -> None:
