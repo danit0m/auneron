@@ -36,25 +36,8 @@ constitui, por si só, uma declaração de aprovação do piloto controlado.
 Achados do PR-5 Survey classificados como bucket C (exigiriam código/infra,
 fora do escopo documental do PR-5). A Survey não demonstrou que sejam
 blockers do piloto controlado atual — permanecem aqui, não na seção acima.
-
-### G3 — Production Database Identity Guard
-
-- **Estado:** aberto. Gap pré-existente, reconfirmado inalterado pelo PR-5
-  Survey por leitura linha a linha do `model_validator` atual.
-- **Risco concreto:** `config.py` (`Settings.validate_environment`, bloco
-  `if self.environment == "production":`) exige apenas que o banco seja
-  PostgreSQL e recusa o nome literal `auneron_test`; não exige que o banco de
-  produção tenha uma identidade/nome específico. Em tese, `APP_ENV=production`
-  pode apontar para um Postgres vazio ou incorreto sem que a validação de
-  settings recuse o boot.
-- **Mitigação atual:** nenhuma automática — depende de configuração
-  operacional correta de `DATABASE_URL` no ambiente de produção.
-- **Evidência:** `backend/app/core/config.py`, função `validate_environment`.
-- **Condição objetiva de fechamento:** adicionar validação de identidade do
-  banco de produção além do dialeto (ex.: nome esperado explícito, ou outro
-  mecanismo de verificação), com teste de contrato provando a rejeição de um
-  banco de produção mal configurado.
-- **Dependências:** nenhuma — pode ser resolvido isoladamente.
+G3, antes listado aqui, foi implementado e comprovado por evidência real —
+ver "CLOSED / EVIDENCE" abaixo.
 
 ### G4 — Multi-instance Maintenance Concurrency Verification
 
@@ -463,3 +446,34 @@ blockers do piloto controlado atual — permanecem aqui, não na seção acima.
     tested;
   - UP-2 remains DEFERRED;
   - no tenant-isolation or external/customer-MVP readiness claim.
+
+### G3 — Production Database Identity Guard
+
+- **Baseline de fechamento:** commit
+  `50e698bb14f91ea764849aecf514a395f4a91aed` ("fix(config): enforce
+  production database identity").
+- **Evidência:** `backend/app/core/config.py`
+  (`Settings.expected_database_name`/`expected_database_host`, nova
+  property `database_host`, bloco de `validate_environment()`
+  exclusivo de `environment=="production"` que exige as duas
+  variáveis e rejeita qualquer divergência frente a
+  `database_name`/`database_host` derivados de `DATABASE_URL`);
+  `backend/tests/test_config_security.py` (matriz dedicada: identidade
+  correta, mismatch de nome, mismatch de host, ausência individual das
+  duas variáveis, `DATABASE_URL` sem host, comportamento preservado
+  fora de `production`, ausência de vazamento de
+  `DATABASE_URL`/credenciais nas mensagens de erro);
+  `backend/docker-compose.prod.yml`
+  (`EXPECTED_DATABASE_NAME`/`EXPECTED_DATABASE_HOST` obrigatórias e
+  fail-fast em `migration` e `backend`, confirmado por `docker compose
+  config` com e sem as variáveis); suíte completa do backend,
+  `1425/1425 PASS`.
+- **Nota:** identidade positiva restrita a nome + host do banco,
+  declarada pelo operador — não é prova criptográfica/física da
+  identidade do PostgreSQL, não detecta `DATABASE_URL` e
+  `EXPECTED_DATABASE_*` configurados incorretamente em conjunto, e não
+  introduz nenhum conceito de tenant/customer identity.
+  `EXPECTED_DATABASE_PORT` permanece fora de escopo, por decisão
+  explícita — pode ser adicionado depois sem alterar este modelo.
+  Runbook correspondente:
+  `backend/docs/operations/CUSTOMER_DEPLOYMENT_RUNBOOK.md`.
