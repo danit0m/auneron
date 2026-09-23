@@ -82,6 +82,10 @@ from app.core.receivables_monitor_maintenance import (
     receivables_monitor_maintenance_loop,
     run_receivables_monitor_async,
 )
+from app.core.business_effect_verification_maintenance import (
+    business_effect_verification_maintenance_loop,
+    run_business_effect_verification_recovery_async,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -152,6 +156,7 @@ async def lifespan(_: FastAPI):
             await run_client_behavior_memory_recalculation_async()
             await run_client_classification_recalculation_async()
             await run_receivables_monitor_async()
+            await run_business_effect_verification_recovery_async()
             await check_production_developer_roles_async()
 
         maintenance_tasks = (
@@ -184,6 +189,9 @@ async def lifespan(_: FastAPI):
             ),
             asyncio.create_task(
                 receivables_monitor_maintenance_loop()
+            ),
+            asyncio.create_task(
+                business_effect_verification_maintenance_loop()
             ),
         )
     else:
