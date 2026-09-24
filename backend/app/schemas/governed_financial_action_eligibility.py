@@ -42,6 +42,21 @@ class MarkPaidEligibilityResponse(BaseModel):
     due_date_matches_current_vencimento: bool
 
 
+class HumanAccountMarkOverdueMaterializationRequest(BaseModel):
+    """
+    DW-6.4B -- corpo opcional. Ausencia total do corpo continua
+    suportando o comportamento historico (materializacao sem
+    referencia a nenhuma recomendacao). Quando fornecido,
+    recommendation_snapshot_id e apenas uma REFERENCIA declarada pelo
+    operador -- nunca aceita/consumida sem passar pela verificacao de
+    integridade do DW-6.4A (get_verified()).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    recommendation_snapshot_id: int | None = None
+
+
 class HumanAccountMarkOverdueMaterializationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

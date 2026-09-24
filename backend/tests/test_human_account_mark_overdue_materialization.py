@@ -20,6 +20,9 @@ from sqlalchemy.orm import Session
 from app.core.authentication import AuthenticatedSession, hash_password
 from app.models.account import Account
 from app.models.approval import ApprovalRequest
+from app.models.nba_recommendation_snapshot import (
+    NbaRecommendationSnapshot,
+)
 from app.models.user import User
 from app.models.work import WorkItem
 from app.services.human_account_mark_overdue_materialization_service import (
@@ -114,6 +117,35 @@ def _approval_request_count(db_session: Session) -> int:
     return db_session.execute(
         text("SELECT COUNT(*) FROM approval_requests")
     ).scalar_one()
+
+
+def _nba_url(account_id: int, due_date: date) -> str:
+    return (
+        "/recommendations/next-best-action/accounts/"
+        f"{account_id}/episodes/{due_date.isoformat()}"
+    )
+
+
+def _create_snapshot(
+    client: TestClient,
+    *,
+    account_id: int,
+    due_date: date,
+    require_mark_overdue: bool = True,
+) -> int:
+    response = client.get(_nba_url(account_id, due_date))
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    if require_mark_overdue:
+        assert "account.mark_overdue" in payload["decision"][
+            "selected_actions"
+        ], (
+            "fixture do teste precisa que account.mark_overdue "
+            "esteja recomendado -- ajuste o estado da conta."
+        )
+
+    return payload["recommendation_snapshot_id"]
 
 
 def test_materialize_creates_work_item_and_approval_for_eligible_episode(
@@ -461,3 +493,374 @@ def test_materialize_fails_closed_when_skill_not_registered(
     assert response.status_code == 409
     assert _work_item_count(db_session) == 0
     assert _approval_request_count(db_session) == 0
+
+
+# --- DW-6.4B: recommendation_snapshot_id declarado -----------------------
+
+
+def test_materialize_new_episode_with_valid_snapshot_creates_association(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case2@example.com",
+    )
+    snapshot_id = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+
+    response = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+
+    assert response.status_code == 201
+    work_item_id = response.json()["work_item"]["id"]
+
+    db_session.expire_all()
+    reloaded = db_session.get(WorkItem, work_item_id)
+    assert (
+        reloaded.context_data["recommendation_snapshot_id"]
+        == snapshot_id
+    )
+
+
+def test_materialize_repeat_with_same_snapshot_is_idempotent(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 4: existente S1 + S1 -> idempotent success, nenhuma escrita
+    nova."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case4@example.com",
+    )
+    snapshot_id = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+
+    first = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+    assert first.status_code == 201
+    first_work_id = first.json()["work_item"]["id"]
+
+    second = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+
+    assert second.status_code == 200
+    payload = second.json()
+    assert payload["duplicate"] is True
+    assert payload["work_item"]["id"] == first_work_id
+    assert _work_item_count(db_session) == 1
+    assert _approval_request_count(db_session) == 1
+
+
+def test_materialize_repeat_with_different_snapshot_conflicts(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 5: existente S1 + S2 -> 409, mesmo com S1/S2 recomendando
+    o mesmo conteudo -- o ID e a identidade da ocorrencia, nao o
+    digest."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case5@example.com",
+    )
+    snapshot_1 = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+    snapshot_2 = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+    assert snapshot_2 != snapshot_1
+
+    first = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_1},
+    )
+    assert first.status_code == 201
+
+    before_work = _work_item_count(db_session)
+    second = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_2},
+    )
+
+    assert second.status_code == 409
+    assert _work_item_count(db_session) == before_work
+
+
+def test_materialize_repeat_without_snapshot_preserves_existing_association(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 6: existente S1 + sem referencia -> idempotent success,
+    preserva S1 -- ausencia de nova declaracao nunca apaga a
+    original."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case6@example.com",
+    )
+    snapshot_id = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+
+    first = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+    assert first.status_code == 201
+    work_item_id = first.json()["work_item"]["id"]
+
+    second = client.post(_materialize_url(account.id, due_date))
+
+    assert second.status_code == 200
+    assert second.json()["duplicate"] is True
+
+    db_session.expire_all()
+    reloaded = db_session.get(WorkItem, work_item_id)
+    assert (
+        reloaded.context_data["recommendation_snapshot_id"]
+        == snapshot_id
+    )
+
+
+def test_materialize_legacy_without_association_rejects_retroactive_snapshot(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 7: legado sem associacao + S1 -> 409, nunca anexar
+    provenance retroativamente."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case7@example.com",
+    )
+
+    first = client.post(_materialize_url(account.id, due_date))
+    assert first.status_code == 201
+    work_item_id = first.json()["work_item"]["id"]
+
+    snapshot_id = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+
+    second = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+
+    assert second.status_code == 409
+    assert _work_item_count(db_session) == 1
+
+    db_session.expire_all()
+    reloaded = db_session.get(WorkItem, work_item_id)
+    assert (
+        "recommendation_snapshot_id" not in reloaded.context_data
+    )
+
+
+def test_materialize_nonexistent_snapshot_returns_422(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 8: snapshot inexistente -> 422 (referencia invalida do
+    request, nao 404 -- nao e um recurso proprio)."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case8@example.com",
+    )
+
+    response = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": 999_999_999},
+    )
+
+    assert response.status_code == 422
+    assert _work_item_count(db_session) == 0
+
+
+def test_materialize_tampered_snapshot_returns_409(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 9: snapshot adulterado (payload alterado, digest original
+    preservado) -> 409, nunca aceito silenciosamente."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case9@example.com",
+    )
+    snapshot_id = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+
+    row = db_session.get(NbaRecommendationSnapshot, snapshot_id)
+    tampered_payload = dict(row.snapshot_payload)
+    tampered_payload["decision"] = dict(
+        tampered_payload["decision"]
+    )
+    tampered_payload["decision"]["selected_actions"] = []
+    db_session.execute(
+        NbaRecommendationSnapshot.__table__.update()
+        .where(NbaRecommendationSnapshot.id == snapshot_id)
+        .values(snapshot_payload=tampered_payload)
+    )
+    db_session.commit()
+
+    response = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+
+    assert response.status_code == 409
+    assert _work_item_count(db_session) == 0
+
+
+def test_materialize_snapshot_from_another_account_returns_409(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 10: snapshot pertence a outra conta -> 409."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account_a = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case10-a@example.com",
+    )
+    account_b = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case10-b@example.com",
+    )
+    snapshot_for_a = _create_snapshot(
+        client, account_id=account_a.id, due_date=due_date
+    )
+
+    response = client.post(
+        _materialize_url(account_b.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_for_a},
+    )
+
+    assert response.status_code == 409
+    assert _work_item_count(db_session) == 0
+
+
+def test_materialize_snapshot_from_another_due_date_returns_409(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 11: snapshot pertence a outro episodio (due_date) da MESMA
+    conta -> 409."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.snapshot-case11@example.com",
+    )
+    other_due_date = due_date - timedelta(days=3)
+    snapshot_other_episode = _create_snapshot(
+        client,
+        account_id=account.id,
+        due_date=other_due_date,
+        require_mark_overdue=False,
+    )
+
+    response = client.post(
+        _materialize_url(account.id, due_date),
+        json={
+            "recommendation_snapshot_id": snapshot_other_episode
+        },
+    )
+
+    assert response.status_code == 409
+    assert _work_item_count(db_session) == 0
+
+
+def test_materialize_snapshot_not_recommending_mark_overdue_returns_409(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Caso 12: snapshot existe, integridade valida, mesma conta/
+    episodio, mas account.mark_overdue nao esta em selected_actions ->
+    409. decision_type sozinho nunca prova recomendacao da skill."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        status="atrasado",
+        email="cliente.mark-overdue.snapshot-case12@example.com",
+    )
+    snapshot_id = _create_snapshot(
+        client,
+        account_id=account.id,
+        due_date=due_date,
+        require_mark_overdue=False,
+    )
+
+    # Corrige o estado diretamente para tornar a materializacao
+    # elegivel -- o snapshot ja foi gerado com status="atrasado"
+    # (mark_overdue indisponivel), devolvido intacto.
+    account.status = "aberto"
+    db_session.commit()
+
+    response = client.post(
+        _materialize_url(account.id, due_date),
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+
+    assert response.status_code == 409
+    assert _work_item_count(db_session) == 0
+
+
+def test_materialize_without_body_continues_historical_behavior(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Regressao explicita: ausencia total do corpo continua valida --
+    snapshot nunca e requisito para acao humana governada."""
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=10)
+    account = _make_overdue_account(
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.no-body@example.com",
+    )
+
+    response = client.post(_materialize_url(account.id, due_date))
+
+    assert response.status_code == 201
+    work_item_id = response.json()["work_item"]["id"]
+
+    db_session.expire_all()
+    reloaded = db_session.get(WorkItem, work_item_id)
+    assert (
+        "recommendation_snapshot_id" not in reloaded.context_data
+    )

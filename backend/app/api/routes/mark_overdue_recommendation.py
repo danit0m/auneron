@@ -27,6 +27,9 @@ from app.schemas.governed_financial_action_eligibility import (
     HumanAccountMarkOverdueExecutionResponse,
 )
 from app.schemas.governed_financial_action_eligibility import (
+    HumanAccountMarkOverdueMaterializationRequest,
+)
+from app.schemas.governed_financial_action_eligibility import (
     HumanAccountMarkOverdueMaterializationResponse,
 )
 from app.schemas.governed_financial_action_eligibility import (
@@ -61,6 +64,12 @@ from app.services.human_account_mark_overdue_materialization_service import (
 )
 from app.services.human_account_mark_overdue_materialization_service import (
     HumanMarkOverdueReopeningNotSupportedError,
+)
+from app.services.human_account_mark_overdue_materialization_service import (
+    HumanMarkOverdueSnapshotConflictError,
+)
+from app.services.human_account_mark_overdue_materialization_service import (
+    HumanMarkOverdueSnapshotReferenceInvalidError,
 )
 from app.services.human_account_mark_overdue_materialization_service import (
     SKILL_KEY,
@@ -112,6 +121,9 @@ def materialize_account_mark_overdue(
     account_id: int,
     due_date: date,
     response: Response,
+    body: (
+        HumanAccountMarkOverdueMaterializationRequest | None
+    ) = None,
     authenticated: AuthenticatedSession = Depends(
         require_permission("work:create")
     ),
@@ -127,12 +139,33 @@ def materialize_account_mark_overdue(
 
     service = HumanAccountMarkOverdueMaterializationService(db)
 
+    recommendation_snapshot_id = (
+        body.recommendation_snapshot_id
+        if body is not None
+        else None
+    )
+
     try:
         result = service.materialize(
             account=account,
             due_date=due_date,
             authenticated=authenticated,
+            recommendation_snapshot_id=(
+                recommendation_snapshot_id
+            ),
         )
+    except HumanMarkOverdueSnapshotReferenceInvalidError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+            ),
+            detail=str(error),
+        ) from error
+    except HumanMarkOverdueSnapshotConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
     except HumanMarkOverdueNotRecommendableError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
