@@ -57,3 +57,5 @@ class NbaDecisionEvidenceResponse(BaseModel):
     calibration: CalibrationSnapshot
     applied_rules: list[str]
     decision: Decision
+    requires_human_review: bool
+    human_review_reasons: list[str]

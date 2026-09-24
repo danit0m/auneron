@@ -56,6 +56,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.action_space_evaluator import ActionSpaceEvaluation
@@ -66,12 +67,22 @@ from app.core.outcome_correlation import FinancialEpisode
 from app.core.receivable_lifecycle import business_today
 from app.core.receivable_lifecycle import evaluate_receivable_lifecycle
 from app.models.account import Account
+from app.models.approval import ApprovalConsumption
+from app.models.approval import ApprovalRequest
+from app.models.business_effect_verification import (
+    BusinessEffectVerification,
+)
 
 
 POLICY_VERSION = "nba_policy_v1"
 
 MARK_OVERDUE_ACTION_KEY = "account.mark_overdue"
 ESCALATE_TO_HUMAN_ACTION_KEY = "escalate_to_human"
+
+# R4 -- DW-4 V1 (Design Freeze 2026-09-24). Sinal advisory, paralelo a
+# R0-R3, nunca participa de selected_actions/recommendable_actions.
+PRIOR_EFFECT_CONTRADICTION_REASON = "prior_effect_contradiction"
+PRIOR_EFFECT_CONTRADICTION_RULE = "prior_effect_contradiction_review"
 
 DecisionType = Literal["single_action", "action_bundle", "no_action"]
 
@@ -114,6 +125,8 @@ class NbaDecisionEvidence:
     calibration: CalibrationSnapshot
     applied_rules: tuple[str, ...]
     decision: Decision
+    requires_human_review: bool
+    human_review_reasons: tuple[str, ...]
 
 
 def _calibration_snapshot() -> CalibrationSnapshot:
@@ -253,6 +266,77 @@ def _decide(
     )
 
 
+def _human_mark_overdue_episode_key(
+    account_id: int, due_date: date
+) -> str:
+    # Duplicado deliberadamente do template usado em
+    # human_account_mark_overdue_materialization_service.py (arquivo
+    # protegido, nao editado neste V1 -- ver DW-4 Design Freeze). Se
+    # aquele produtor mudar o formato da chave, este lookup precisa ser
+    # atualizado manualmente; nao ha primitive compartilhada. Isto NAO
+    # e uma alegacao de que idempotency_key e UNIQUE local em
+    # ApprovalRequest -- a unicidade pratica vem de
+    # uq_work_items_account_key em WorkItem, uma invariante de outro
+    # modulo.
+    return (
+        "human_mark_overdue_approval:v1:"
+        f"{account_id}:{due_date.isoformat()}"
+    )
+
+
+def _lookup_episode_contradiction(
+    db: Session,
+    *,
+    account_id: int,
+    due_date: date,
+) -> BusinessEffectVerification | None:
+    exact_key = _human_mark_overdue_episode_key(
+        account_id, due_date
+    )
+    statement = (
+        select(BusinessEffectVerification)
+        .join(
+            ApprovalConsumption,
+            ApprovalConsumption.id
+            == BusinessEffectVerification.approval_consumption_id,
+        )
+        .join(
+            ApprovalRequest,
+            ApprovalRequest.id
+            == ApprovalConsumption.approval_request_id,
+        )
+        .where(
+            ApprovalRequest.idempotency_key == exact_key,
+            BusinessEffectVerification.target_account_id
+            == account_id,
+            BusinessEffectVerification.skill_key
+            == MARK_OVERDUE_ACTION_KEY,
+        )
+    )
+    # scalar_one_or_none() propaga MultipleResultsFound se a
+    # cardinalidade zero-ou-um esperada para o episodio for quebrada --
+    # fail-closed deliberado, nunca escolher first()/latest(). Essa
+    # cardinalidade depende da invariante cross-module de WorkItem,
+    # alem das constraints downstream; ApprovalRequest.idempotency_key
+    # nao e globalmente UNIQUE.
+    return db.execute(statement).scalar_one_or_none()
+
+
+def _evaluate_prior_effect_review(
+    verification: BusinessEffectVerification | None,
+) -> tuple[bool, tuple[str, ...], tuple[str, ...]]:
+    if (
+        verification is not None
+        and verification.result == "contradicted"
+    ):
+        return (
+            True,
+            (PRIOR_EFFECT_CONTRADICTION_REASON,),
+            (PRIOR_EFFECT_CONTRADICTION_RULE,),
+        )
+    return (False, (), ())
+
+
 def get_nba_decision(
     db: Session,
     *,
@@ -278,6 +362,15 @@ def get_nba_decision(
         calibration=calibration,
     )
 
+    prior_verification = _lookup_episode_contradiction(
+        db, account_id=account.id, due_date=due_date
+    )
+    (
+        requires_human_review,
+        human_review_reasons,
+        review_rules,
+    ) = _evaluate_prior_effect_review(prior_verification)
+
     return NbaDecisionEvidence(
         episode=FinancialEpisode(
             account_id=account.id, due_date=due_date
@@ -286,6 +379,8 @@ def get_nba_decision(
         observed_facts=observed_facts,
         policy_version=POLICY_VERSION,
         calibration=calibration,
-        applied_rules=applied_rules,
+        applied_rules=applied_rules + review_rules,
         decision=decision,
+        requires_human_review=requires_human_review,
+        human_review_reasons=human_review_reasons,
     )

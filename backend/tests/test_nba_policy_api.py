@@ -78,6 +78,8 @@ def test_nba_returns_200_with_frozen_shape(
         "calibration",
         "applied_rules",
         "decision",
+        "requires_human_review",
+        "human_review_reasons",
     }
     assert payload["episode"] == {
         "account_id": account.id,
