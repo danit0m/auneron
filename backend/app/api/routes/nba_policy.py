@@ -8,6 +8,10 @@ from app.core.nba_policy import get_nba_decision
 from app.database.database import get_db
 from app.models.account import Account
 from app.schemas.nba_policy import NbaDecisionEvidenceResponse
+from app.schemas.nba_policy import NbaRecommendationSnapshotPayload
+from app.services.nba_recommendation_snapshot_service import (
+    NbaRecommendationSnapshotService,
+)
 
 
 router = APIRouter(
@@ -44,4 +48,26 @@ def get_account_nba_decision(
         due_date=due_date,
     )
 
-    return NbaDecisionEvidenceResponse.model_validate(result)
+    # I2 emendado (DW-6.4A): o unico efeito colateral permitido neste
+    # GET e o apendice append-only de proveniencia abaixo -- nunca
+    # muta Account/WorkItem/Knowledge/MemoryItem/Approval/Execution/
+    # BusinessEffectVerification. get_nba_decision() acima permanece
+    # puro; o snapshot e construido a partir do NbaDecisionEvidence ja
+    # computado, nunca recalculado.
+    snapshot = NbaRecommendationSnapshotService(db).persist(
+        result
+    )
+
+    # NbaDecisionEvidenceResponse exige recommendation_snapshot_id,
+    # inexistente em `result` (NbaDecisionEvidence de dominio, DW-6.4A
+    # congelado como nunca ganhando esse campo) -- por isso a validacao
+    # passa primeiro pela forma sem o ID (mesma usada para o digest) e
+    # so entao o ID e adicionado, evitando ValidationError por campo
+    # ausente.
+    payload = NbaRecommendationSnapshotPayload.model_validate(
+        result
+    )
+    return NbaDecisionEvidenceResponse(
+        **payload.model_dump(),
+        recommendation_snapshot_id=snapshot.id,
+    )

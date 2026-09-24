@@ -47,6 +47,29 @@ class Decision(BaseModel):
     selected_actions: list[str]
 
 
+class NbaRecommendationSnapshotPayload(BaseModel):
+    """
+    DW-6.4A -- forma canonica usada exclusivamente para serializar
+    NbaDecisionEvidence (objeto de dominio) em snapshot_payload/
+    snapshot_digest. Nunca inclui recommendation_snapshot_id -- essa
+    identidade so existe depois que o snapshot ja foi persistido, e
+    incluir aqui criaria autorreferencia. Nao confundir com
+    NbaDecisionEvidenceResponse (forma HTTP, com o ID).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    episode: FinancialEpisode
+    action_space: ActionSpaceEvaluationResponse
+    observed_facts: ObservedFacts
+    policy_version: str
+    calibration: CalibrationSnapshot
+    applied_rules: list[str]
+    decision: Decision
+    requires_human_review: bool
+    human_review_reasons: list[str]
+
+
 class NbaDecisionEvidenceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -59,3 +82,4 @@ class NbaDecisionEvidenceResponse(BaseModel):
     decision: Decision
     requires_human_review: bool
     human_review_reasons: list[str]
+    recommendation_snapshot_id: int

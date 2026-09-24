@@ -80,6 +80,7 @@ def test_nba_returns_200_with_frozen_shape(
         "decision",
         "requires_human_review",
         "human_review_reasons",
+        "recommendation_snapshot_id",
     }
     assert payload["episode"] == {
         "account_id": account.id,
@@ -167,14 +168,33 @@ def test_nba_returns_404_for_nonexistent_account(
     assert response.status_code == 404
 
 
-def test_nba_get_performs_zero_writes(
+def test_nba_get_has_no_business_side_effects(
     client: TestClient,
     db_session: Session,
 ) -> None:
+    """
+    I2 emendado (DW-6.4A): o GET do NBA nao cria, altera ou resolve
+    estado de negocio, memoria, conhecimento, autoridade ou execucao.
+    O unico apendice permitido -- nba_recommendation_snapshots -- e
+    provado separadamente em
+    test_nba_get_persists_exactly_one_recommendation_snapshot, nunca
+    nesta lista.
+    """
     due_date = date.today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
-    tables = ("accounts", "work_items", "knowledge", "memory_items")
+    tables = (
+        "accounts",
+        "work_items",
+        "knowledge",
+        "memory_items",
+        "approval_requests",
+        "approval_decisions",
+        "approval_consumptions",
+        "skill_invocations",
+        "account_events",
+        "business_effect_verifications",
+    )
     before = {
         table: db_session.execute(
             text(f"SELECT COUNT(*) FROM {table}")
@@ -196,3 +216,93 @@ def test_nba_get_performs_zero_writes(
     }
 
     assert before == after
+
+
+def test_nba_get_persists_exactly_one_recommendation_snapshot(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """
+    I2 emendado (DW-6.4A): o unico efeito colateral permitido no GET
+    do NBA e o apendice de proveniencia append-only. Cada GET produz
+    uma ocorrencia nova -- nunca deduplicada por digest -- e o
+    snapshot persistido corresponde exatamente a recomendacao servida,
+    exceto pela identidade HTTP recommendation_snapshot_id (que so
+    existe depois do snapshot ja persistido).
+    """
+    due_date = date.today() - timedelta(days=10)
+    account = _make_account(db_session, vencimento=due_date)
+
+    before = db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM nba_recommendation_snapshots"
+        )
+    ).scalar_one()
+
+    response = client.get(
+        "/recommendations/next-best-action/accounts/"
+        f"{account.id}/episodes/{due_date.isoformat()}"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    after = db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM nba_recommendation_snapshots"
+        )
+    ).scalar_one()
+    assert after == before + 1
+
+    snapshot_id = payload["recommendation_snapshot_id"]
+    row = db_session.execute(
+        text(
+            "SELECT account_id, due_date, policy_version, "
+            "decision_type, requires_human_review, "
+            "snapshot_payload, snapshot_digest "
+            "FROM nba_recommendation_snapshots WHERE id = :id"
+        ),
+        {"id": snapshot_id},
+    ).mappings().one()
+
+    assert row["account_id"] == account.id
+    assert row["due_date"].isoformat() == due_date.isoformat()
+    assert row["policy_version"] == payload["policy_version"]
+    assert (
+        row["decision_type"]
+        == payload["decision"]["decision_type"]
+    )
+    assert (
+        row["requires_human_review"]
+        == payload["requires_human_review"]
+    )
+    assert (
+        row["snapshot_payload"]["decision"]
+        == payload["decision"]
+    )
+    assert (
+        row["snapshot_payload"]["applied_rules"]
+        == payload["applied_rules"]
+    )
+    assert "recommendation_snapshot_id" not in row[
+        "snapshot_payload"
+    ]
+
+    # Duas requisicoes consecutivas, mesmo conteudo computado, geram
+    # DUAS ocorrencias -- nunca deduplicadas por digest.
+    second_response = client.get(
+        "/recommendations/next-best-action/accounts/"
+        f"{account.id}/episodes/{due_date.isoformat()}"
+    )
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+    assert (
+        second_payload["recommendation_snapshot_id"]
+        != snapshot_id
+    )
+
+    final_count = db_session.execute(
+        text(
+            "SELECT COUNT(*) FROM nba_recommendation_snapshots"
+        )
+    ).scalar_one()
+    assert final_count == before + 2
