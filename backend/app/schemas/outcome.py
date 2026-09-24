@@ -23,6 +23,15 @@ EvidenceSource = Literal[
     "work_skill_execution",
     "skill_invocation",
     "account_event",
+    "approval_consumption",
+    "business_effect_verification",
+]
+
+EffectVerificationResult = Literal[
+    "pending",
+    "verified",
+    "contradicted",
+    "unverifiable",
 ]
 
 ProvenanceClass = Literal[
@@ -100,6 +109,34 @@ class ExecutionOutcome(BaseModel):
     evidence: list[Evidence] = []
 
 
+class HumanApprovalOutcome(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    linkage: Linkage
+    status: str | None
+    decided_at: datetime | None
+    decided_by_reference: str | None
+    evidence: list[Evidence] = []
+
+
+class HumanExecutionOutcome(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    linkage: Linkage
+    status: str | None
+    finished_at: datetime | None
+    evidence: list[Evidence] = []
+
+
+class EffectVerificationOutcome(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    linkage: Linkage
+    result: EffectVerificationResult | None
+    checked_at: datetime | None
+    evidence: list[Evidence] = []
+
+
 class PaymentOutcome(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -133,6 +170,9 @@ class OutcomeEpisodeResponse(BaseModel):
     recommendation: RecommendationOutcome
     approval: ApprovalOutcome
     execution: ExecutionOutcome
+    human_approval: HumanApprovalOutcome
+    human_execution: HumanExecutionOutcome
+    effect_verification: EffectVerificationOutcome
     payment: PaymentOutcome
     derived: DerivedMetrics
     amount: AmountInfo

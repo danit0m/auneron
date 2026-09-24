@@ -29,17 +29,27 @@ from sqlalchemy.orm import Session
 
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.models.approval import ApprovalConsumption
 from app.models.approval import ApprovalDecision
 from app.models.approval import ApprovalRequest
 from app.models.authenticated_advisory_proposal import (
     AuthenticatedAdvisoryProposal,
 )
+from app.models.business_effect_verification import (
+    BusinessEffectVerification,
+)
 from app.models.knowledge import Knowledge
+from app.models.skill import SkillDefinition
+from app.models.skill import SkillInvocation
+from app.models.skill import SkillVersion
 from app.models.work import WorkItem
 from app.models.work_skill_execution import WorkSkillExecution
 from app.services.overdue_detection_service import (
     _EPISODE_ATTEMPT_KEY_PATTERN,
 )
+
+
+HUMAN_MARK_OVERDUE_SKILL_KEY = "account.mark_overdue"
 
 
 RULE_VERSION = "outcome_correlation_v1"
@@ -57,7 +67,8 @@ Linkage = str
 EvidenceSource = str
 # "knowledge" | "authenticated_advisory_proposal" | "approval_request" |
 # "approval_decision" | "work_item" | "work_skill_execution" |
-# "skill_invocation" | "account_event"
+# "skill_invocation" | "account_event" | "approval_consumption" |
+# "business_effect_verification"
 
 
 @dataclass(frozen=True)
@@ -109,6 +120,53 @@ class ExecutionOutcome:
 
 
 @dataclass(frozen=True)
+class HumanApprovalOutcome:
+    """
+    Corredor humano (DW-5 V1) -- reconstruido exclusivamente a partir de
+    ApprovalRequest/ApprovalDecision/ApprovalConsumption. Nunca le
+    AuthenticatedAdvisoryProposal. Campo aditivo, paralelo a
+    ApprovalOutcome (corredor agente) -- nunca o substitui nem e
+    substituido por ele.
+    """
+
+    linkage: Linkage
+    status: str | None
+    decided_at: datetime | None
+    decided_by_reference: str | None
+    evidence: tuple[Evidence, ...] = ()
+
+
+@dataclass(frozen=True)
+class HumanExecutionOutcome:
+    """
+    Corredor humano (DW-5 V1) -- reconstruido via
+    ApprovalConsumption.skill_invocation_id (FK direto). Nunca le
+    WorkSkillExecution -- o corredor humano nunca cria essa linha.
+    """
+
+    linkage: Linkage
+    status: str | None
+    finished_at: datetime | None
+    evidence: tuple[Evidence, ...] = ()
+
+
+@dataclass(frozen=True)
+class EffectVerificationOutcome:
+    """
+    Projeta a prova ja produzida pelo DW-3 (BusinessEffectVerification).
+    Nunca reexecuta a verificacao nem busca AccountEvent de forma
+    independente -- le apenas o account_event_id ja resolvido pelo DW-3.
+    Estruturalmente separado de ExecutionOutcome/HumanExecutionOutcome:
+    execution outcome != business effect verification.
+    """
+
+    linkage: Linkage
+    result: str | None
+    checked_at: datetime | None
+    evidence: tuple[Evidence, ...] = ()
+
+
+@dataclass(frozen=True)
 class PaymentOutcome:
     linkage: Linkage
     rule_version: str
@@ -137,6 +195,9 @@ class OutcomeEpisodeResult:
     recommendation: RecommendationOutcome
     approval: ApprovalOutcome
     execution: ExecutionOutcome
+    human_approval: HumanApprovalOutcome
+    human_execution: HumanExecutionOutcome
+    effect_verification: EffectVerificationOutcome
     payment: PaymentOutcome
     derived: DerivedMetrics
     amount: AmountInfo
@@ -464,6 +525,232 @@ def _execute(
     )
 
 
+def _human_work_item(
+    db: Session,
+    account_id: int,
+    due_date: date,
+) -> WorkItem | None:
+    # Identidade exata do corredor humano (DW-5 Design Freeze) --
+    # unica implementacao deste work_key e
+    # human_account_mark_overdue_materialization_service.py
+    # (protegido, nunca reconstruido aqui de outra forma). Resolucao
+    # positiva: a existencia do corredor humano nunca e inferida pela
+    # ausencia do corredor agente.
+    work_key = (
+        f"account_mark_overdue:v1:{account_id}:{due_date.isoformat()}"
+    )
+
+    return db.execute(
+        select(WorkItem).where(
+            WorkItem.account_id == account_id,
+            WorkItem.work_key == work_key,
+        )
+    ).scalar_one_or_none()
+
+
+def _human_approval_request(
+    db: Session,
+    work_item: WorkItem,
+    account_id: int,
+) -> ApprovalRequest | None:
+    """
+    Recupera o ApprovalRequest referenciado por
+    WorkItem.context_data["approval_request_id"] e valida presenca +
+    existencia referencial + consistencia semantica (conta, skill).
+    Fail-closed: qualquer divergencia retorna None -- nunca busca "a
+    request mais proxima", nunca ignora a divergencia.
+    """
+    context = (
+        work_item.context_data
+        if isinstance(work_item.context_data, dict)
+        else {}
+    )
+    approval_request_id = context.get("approval_request_id")
+
+    if not isinstance(approval_request_id, int):
+        return None
+
+    approval_request = db.get(ApprovalRequest, approval_request_id)
+
+    if approval_request is None:
+        return None
+
+    if approval_request.target_account_id != account_id:
+        return None
+
+    version = db.get(
+        SkillVersion, approval_request.skill_version_id
+    )
+
+    if version is None:
+        return None
+
+    skill = db.get(SkillDefinition, version.skill_id)
+
+    if (
+        skill is None
+        or skill.skill_key != HUMAN_MARK_OVERDUE_SKILL_KEY
+    ):
+        return None
+
+    return approval_request
+
+
+def _human_approve(
+    db: Session,
+    approval_request: ApprovalRequest,
+) -> tuple[HumanApprovalOutcome, ApprovalConsumption | None]:
+    decision = db.execute(
+        select(ApprovalDecision).where(
+            ApprovalDecision.approval_request_id
+            == approval_request.id
+        )
+    ).scalar_one_or_none()
+
+    consumption = db.execute(
+        select(ApprovalConsumption).where(
+            ApprovalConsumption.approval_request_id
+            == approval_request.id
+        )
+    ).scalar_one_or_none()
+
+    evidence = [
+        Evidence(
+            source="approval_request",
+            id=approval_request.id,
+            linkage="correlated",
+        )
+    ]
+
+    if decision is not None:
+        evidence.append(
+            Evidence(
+                source="approval_decision",
+                id=decision.id,
+                linkage="direct",
+            )
+        )
+
+    if consumption is not None:
+        evidence.append(
+            Evidence(
+                source="approval_consumption",
+                id=consumption.id,
+                linkage="direct",
+            )
+        )
+
+    return (
+        HumanApprovalOutcome(
+            linkage="correlated",
+            status=approval_request.status,
+            decided_at=(
+                decision.created_at if decision else None
+            ),
+            decided_by_reference=(
+                decision.decided_by_reference
+                if decision
+                else None
+            ),
+            evidence=tuple(evidence),
+        ),
+        consumption,
+    )
+
+
+def _human_execution_outcome(
+    db: Session,
+    consumption: ApprovalConsumption | None,
+) -> HumanExecutionOutcome:
+    if consumption is None or consumption.skill_invocation_id is None:
+        return HumanExecutionOutcome(
+            linkage="absent",
+            status=None,
+            finished_at=None,
+        )
+
+    invocation = db.get(
+        SkillInvocation, consumption.skill_invocation_id
+    )
+
+    if invocation is None:
+        return HumanExecutionOutcome(
+            linkage="absent",
+            status=None,
+            finished_at=None,
+        )
+
+    return HumanExecutionOutcome(
+        linkage="correlated",
+        status=invocation.status,
+        finished_at=invocation.finished_at,
+        evidence=(
+            Evidence(
+                source="skill_invocation",
+                id=invocation.id,
+                linkage="direct",
+            ),
+        ),
+    )
+
+
+def _effect_verification_outcome(
+    db: Session,
+    consumption: ApprovalConsumption | None,
+) -> EffectVerificationOutcome:
+    if consumption is None:
+        return EffectVerificationOutcome(
+            linkage="absent",
+            result=None,
+            checked_at=None,
+        )
+
+    verification = db.execute(
+        select(BusinessEffectVerification).where(
+            BusinessEffectVerification.approval_consumption_id
+            == consumption.id
+        )
+    ).scalar_one_or_none()
+
+    if verification is None:
+        return EffectVerificationOutcome(
+            linkage="absent",
+            result=None,
+            checked_at=None,
+        )
+
+    evidence = [
+        Evidence(
+            source="business_effect_verification",
+            id=verification.id,
+            linkage="direct",
+        )
+    ]
+
+    if verification.account_event_id is not None:
+        evidence.append(
+            Evidence(
+                source="account_event",
+                id=verification.account_event_id,
+                linkage="direct",
+            )
+        )
+
+    return EffectVerificationOutcome(
+        # Nivel externo segue a mesma convencao ja usada por
+        # ExecutionOutcome: reflete o elo mais fraco da cadeia ate aqui
+        # (o ponteiro JSONB WorkItem->ApprovalRequest), mesmo que
+        # ApprovalConsumption->BusinessEffectVerification em si seja
+        # FK+UNIQUE real -- por isso "correlated", nao "direct", no
+        # nivel do outcome. O item de Evidence individual permanece
+        # "direct".
+        linkage="correlated",
+        result=verification.result,
+        checked_at=verification.checked_at,
+        evidence=tuple(evidence),
+    )
+
+
 def _paid_events(
     db: Session,
     account_id: int,
@@ -598,6 +885,39 @@ def get_outcome_episode(
         approval_source_attempt,
     )
 
+    # Corredor humano (DW-5 V1) -- resolvido de forma inteiramente
+    # independente do corredor agente acima; nunca inferido pela
+    # ausencia deste. Se ambos existirem para o mesmo episodio (E004,
+    # competing authority), ambos permanecem visiveis -- nenhum
+    # sobrescreve o outro.
+    human_work_item = _human_work_item(db, account_id, due_date)
+
+    human_approval_request = (
+        _human_approval_request(db, human_work_item, account_id)
+        if human_work_item is not None
+        else None
+    )
+
+    if human_approval_request is not None:
+        human_approval, human_consumption = _human_approve(
+            db, human_approval_request
+        )
+    else:
+        human_approval = HumanApprovalOutcome(
+            linkage="absent",
+            status=None,
+            decided_at=None,
+            decided_by_reference=None,
+        )
+        human_consumption = None
+
+    human_execution = _human_execution_outcome(
+        db, human_consumption
+    )
+    effect_verification = _effect_verification_outcome(
+        db, human_consumption
+    )
+
     first_recommended_at = (
         parsed_proposals[0][1].created_at
         if parsed_proposals
@@ -624,6 +944,9 @@ def get_outcome_episode(
         recommendation=recommendation,
         approval=approval,
         execution=execution,
+        human_approval=human_approval,
+        human_execution=human_execution,
+        effect_verification=effect_verification,
         payment=payment,
         derived=derived,
         amount=amount,
