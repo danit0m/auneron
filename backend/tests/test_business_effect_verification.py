@@ -1177,3 +1177,82 @@ def test_recovery_candidates_are_filtered_correctly(
     assert contradicted_id not in candidate_ids
     assert unverifiable_id not in candidate_ids
     assert non_v1_id not in candidate_ids
+
+
+def test_bev_verifies_policy_authority_consumption_path(
+    db_session: Session,
+) -> None:
+    """
+    DW-7.3 -- BEV aceita policy_authority_consumption_id como fonte
+    alternativa de identidade (XOR com approval_consumption_id), sem
+    alterar a lógica de _evaluate_effect (nunca usa
+    SkillInvocation.status como verdade, sempre relê Account/
+    AccountEvent).
+    """
+    from app.core.policy_definitions import (
+        ACCOUNT_MARK_OVERDUE_POLICY_V1,
+    )
+    from app.services.policy_account_mark_overdue_execution_service import (
+        PolicyAccountMarkOverdueExecutionService,
+    )
+    from app.services.policy_authority_grant_service import (
+        PolicyAuthorityGrantService,
+    )
+
+    register_account_mark_overdue_skill()
+    granter = User(
+        name="BEV Policy Granter",
+        email="bev-policy-granter@example.com",
+        password_hash="not-used",
+        role="administrator",
+        active=True,
+    )
+    db_session.add(granter)
+    db_session.commit()
+    db_session.refresh(granter)
+    PolicyAuthorityGrantService(db_session).create_grant(
+        policy_key=ACCOUNT_MARK_OVERDUE_POLICY_V1.policy_key,
+        granted_by_user_id=granter.id,
+        expires_at=_utc_now() + timedelta(hours=24),
+    )
+
+    due_date = date.today() - timedelta(days=3)
+    account = Account(
+        cliente="Cliente BEV Policy",
+        email="cliente-bev-policy@example.com",
+        whatsapp=None,
+        valor=650,
+        vencimento=due_date,
+        status="aberto",
+    )
+    db_session.add(account)
+    db_session.commit()
+    db_session.refresh(account)
+
+    execution = PolicyAccountMarkOverdueExecutionService(
+        db_session
+    ).execute(account_id=account.id, due_date=due_date)
+
+    service = BusinessEffectVerificationService(db_session)
+    outcome = service.verify(
+        policy_authority_consumption_id=(
+            execution.policy_authority_consumption_id
+        )
+    )
+
+    assert outcome.verification.result == "verified"
+    assert (
+        outcome.verification.policy_authority_consumption_id
+        == execution.policy_authority_consumption_id
+    )
+    assert outcome.verification.approval_consumption_id is None
+    assert outcome.verification.skill_key == "account.mark_overdue"
+
+    # Replay: segunda chamada não reavalia (resultado terminal).
+    replay = service.verify(
+        policy_authority_consumption_id=(
+            execution.policy_authority_consumption_id
+        )
+    )
+    assert replay.duplicate is True
+    assert replay.verification.id == outcome.verification.id

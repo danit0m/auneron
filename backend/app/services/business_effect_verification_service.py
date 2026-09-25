@@ -17,6 +17,10 @@ from app.models.approval import ApprovalRequest
 from app.models.business_effect_verification import (
     BusinessEffectVerification,
 )
+from app.models.policy_authority_consumption import (
+    PolicyAuthorityConsumption,
+)
+from app.models.policy_authority_grant import PolicyAuthorityGrant
 from app.models.skill import SkillDefinition
 from app.models.skill import SkillVersion
 from app.repositories.business_effect_verification_repository import (
@@ -37,6 +41,13 @@ def _mark_overdue_event_key(approval_request_id: int) -> str:
     return (
         "account_event:effect:human_account_mark_overdue:"
         f"approval:{approval_request_id}"
+    )
+
+
+def _policy_mark_overdue_event_key(episode_scope_key: str) -> str:
+    return (
+        "account_event:effect:policy_account_mark_overdue:"
+        f"{episode_scope_key}"
     )
 
 
@@ -115,6 +126,36 @@ class BusinessEffectVerificationService:
         )
 
     def verify(
+        self,
+        approval_consumption_id: int | None = None,
+        *,
+        policy_authority_consumption_id: int | None = None,
+    ) -> BusinessEffectVerificationResult:
+        """
+        Ponto de entrada de identidade dual (DW-7.3): exatamente uma
+        das duas fontes de autoridade deve ser informada, espelhando o
+        CHECK ck_bev_consumption_source_xor. A lógica de avaliação do
+        efeito (_evaluate_effect) é 100% compartilhada e não distingue
+        a origem -- nunca usa SkillInvocation.status como verdade,
+        sempre relê Account/AccountEvent.
+        """
+        if (approval_consumption_id is None) == (
+            policy_authority_consumption_id is None
+        ):
+            raise BusinessEffectVerificationError(
+                "Informe exatamente approval_consumption_id ou "
+                "policy_authority_consumption_id."
+            )
+
+        if approval_consumption_id is not None:
+            return self._verify_approval_source(
+                approval_consumption_id
+            )
+        return self._verify_policy_source(
+            policy_authority_consumption_id
+        )
+
+    def _verify_approval_source(
         self,
         approval_consumption_id: int,
     ) -> BusinessEffectVerificationResult:
@@ -238,6 +279,126 @@ class BusinessEffectVerificationService:
             raced = self.repository.get_by_consumption_id(
                 normalized_id
             )
+            if raced is None:
+                raise
+            return BusinessEffectVerificationResult(
+                verification=raced,
+                duplicate=True,
+            )
+
+        return BusinessEffectVerificationResult(
+            verification=verification,
+            duplicate=False,
+        )
+
+    def _verify_policy_source(
+        self,
+        policy_authority_consumption_id: int,
+    ) -> BusinessEffectVerificationResult:
+        normalized_id = _positive_id(
+            policy_authority_consumption_id,
+            field_name="policy_authority_consumption_id",
+        )
+
+        existing = self.db.execute(
+            select(BusinessEffectVerification)
+            .where(
+                BusinessEffectVerification
+                .policy_authority_consumption_id
+                == normalized_id
+            )
+            .with_for_update()
+        ).scalar_one_or_none()
+        if existing is not None and existing.result != "pending":
+            return BusinessEffectVerificationResult(
+                verification=existing,
+                duplicate=True,
+            )
+
+        consumption = self.db.get(
+            PolicyAuthorityConsumption, normalized_id
+        )
+        if consumption is None:
+            raise BusinessEffectVerificationError(
+                "PolicyAuthorityConsumption não encontrado."
+            )
+
+        grant = self.db.get(
+            PolicyAuthorityGrant,
+            consumption.policy_authority_grant_id,
+        )
+        if grant is None:
+            raise BusinessEffectVerificationError(
+                "PolicyAuthorityGrant não encontrado."
+            )
+
+        contract = SKILL_EFFECT_CONTRACTS.get(grant.skill_key)
+        if contract is None:
+            raise BusinessEffectVerificationError(
+                "skill_key fora do escopo DW-3/DW-7 V1 "
+                f"({grant.skill_key!r})."
+            )
+
+        expected_status = contract.expected_status
+        event_key = _policy_mark_overdue_event_key(
+            consumption.episode_scope_key
+        )
+        target_account_id = consumption.target_account_id
+
+        (
+            result,
+            account_status_observed,
+            account_event_id,
+        ) = self._evaluate_effect(
+            target_account_id=target_account_id,
+            expected_status=expected_status,
+            event_key=event_key,
+        )
+
+        checked_at = (
+            None if result == "pending" else _utc_now()
+        )
+
+        if existing is not None:
+            existing.target_account_id = target_account_id
+            existing.expected_status = expected_status
+            existing.account_event_key_searched = event_key
+            existing.account_event_id = account_event_id
+            existing.account_status_observed = (
+                account_status_observed
+            )
+            existing.result = result
+            existing.checked_at = checked_at
+            self.db.flush()
+            self.db.commit()
+            return BusinessEffectVerificationResult(
+                verification=existing,
+                duplicate=False,
+            )
+
+        verification = BusinessEffectVerification(
+            policy_authority_consumption_id=normalized_id,
+            skill_key=grant.skill_key,
+            target_account_id=target_account_id,
+            expected_status=expected_status,
+            account_event_id=account_event_id,
+            account_event_key_searched=event_key,
+            account_status_observed=account_status_observed,
+            result=result,
+            checked_at=checked_at,
+        )
+        try:
+            self.repository.add(verification)
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raced = self.db.execute(
+                select(BusinessEffectVerification).where(
+                    BusinessEffectVerification
+                    .policy_authority_consumption_id
+                    == normalized_id
+                )
+            ).scalar_one_or_none()
             if raced is None:
                 raise
             return BusinessEffectVerificationResult(

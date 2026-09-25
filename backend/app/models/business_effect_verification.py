@@ -61,9 +61,20 @@ class BusinessEffectVerification(Base):
             "AND account_status_observed IS NOT NULL)",
             name="ck_bev_verified_has_evidence",
         ),
+        CheckConstraint(
+            "(approval_consumption_id IS NOT NULL "
+            "AND policy_authority_consumption_id IS NULL) "
+            "OR (approval_consumption_id IS NULL "
+            "AND policy_authority_consumption_id IS NOT NULL)",
+            name="ck_bev_consumption_source_xor",
+        ),
         UniqueConstraint(
             "approval_consumption_id",
             name="uq_bev_consumption",
+        ),
+        UniqueConstraint(
+            "policy_authority_consumption_id",
+            name="uq_bev_policy_consumption",
         ),
     )
 
@@ -82,7 +93,17 @@ class BusinessEffectVerification(Base):
             ),
             ondelete="RESTRICT",
         ),
-        nullable=False,
+        nullable=True,
+    )
+
+    policy_authority_consumption_id = Column(
+        BigInteger,
+        ForeignKey(
+            "policy_authority_consumptions.id",
+            name="fk_bev_policy_authority_consumption_id_pac",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
     )
 
     skill_key = Column(
