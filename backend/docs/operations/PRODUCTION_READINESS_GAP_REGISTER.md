@@ -447,6 +447,45 @@ ver "CLOSED / EVIDENCE" abaixo.
   - UP-2 remains DEFERRED;
   - no tenant-isolation or external/customer-MVP readiness claim.
 
+### Controlled Digital Worker Pilot — Episode 005 (Recommendation Provenance + Full Chain)
+
+- **Não é um gap.** Preservação, neste índice de evidências, do
+  primeiro episódio a demonstrar, ponta a ponta, a cadeia completa
+  `Observe → Understand → Recommend → Recommendation Provenance →
+  Declared Human Materialization → Independent Approval → Governed
+  Execution → Effect Verification → Report` — os episódios 001–004
+  cobrem apenas `Materialize → Decision → Execute`, todos anteriores
+  aos checkpoints DW-6.4A/DW-6.4B/DW-6.5 que introduziram a proveniência
+  de recomendação.
+- **Baseline (código):** `38c845f2fc6f2bd071e01e8a01030a71b05c02f5` —
+  inalterado por todo o episódio.
+- **Episódio:** `(account_id=20, due_date=2026-09-14)`.
+- **Skill:** `account.mark_overdue`, versão `1.0.0`.
+- **Resultado:** `CONNECTED DIGITAL WORKER PILOT — EPISODE 005 —
+  TECHNICAL RESULT: PASS` — `NbaRecommendationSnapshot #1` →
+  `WorkItem #9` (associação declarada `recommendation_snapshot_id=1`) →
+  `ApprovalRequest #20` → `ApprovalDecision #11` →
+  `ApprovalConsumption #10` → `SkillInvocation #10` → `AccountEvent #15`
+  (`aberto → atrasado`) → `BusinessEffectVerification #10` (`VERIFIED`)
+  → `Outcome` reconstruindo `recommendation_provenance.linkage=correlated`
+  num único `GET`, sem nenhuma escrita. Reentrada testada
+  empiricamente (não apenas estruturalmente) em dois pontos —
+  materialização e execução — ambas `duplicate=true`, delta `+0`.
+- **Evidência:** `backend/docs/operations/CONTROLLED_DIGITAL_WORKER_PILOT_EVIDENCE.md`
+  — cadeia completa, proveniência operacional dos quatro gates
+  preparatórios (migration/rebuild/isolamento de manutenção/credenciais),
+  boundary de atores (`requester=5, approver=6, executor=4`), isolamento
+  do corredor legado, o advisory `cliente_criado:20` explicitamente
+  classificado como fora do episódio, e a distinção entre BEV
+  sincronamente disparada e recuperação automática (não exercitada
+  aqui). Este registro não reproduz essa narrativa.
+- **Nota:** o resultado comprova exclusivamente L2 — Governed Operator,
+  restrito a este corredor e episódio. Não autoriza, por si só,
+  autonomia L3/L4, produtização pela UI, generalização para outros
+  corredores, ou qualquer alegação de verdade financeira externa —
+  essas permanecem decisões de gates operacionais e de design
+  posteriores.
+
 ### G3 — Production Database Identity Guard
 
 - **Baseline de fechamento:** commit
