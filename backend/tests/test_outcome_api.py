@@ -75,6 +75,7 @@ def test_outcome_episode_returns_200_with_all_categories_absent(
     assert payload["recommendation"]["linkage"] == "absent"
     assert payload["approval"]["linkage"] == "absent"
     assert payload["execution"]["linkage"] == "absent"
+    assert payload["recommendation_provenance"]["linkage"] == "absent"
     assert payload["payment"]["linkage"] == "absent"
     assert payload["derived"]["days_detection_to_payment"] is None
     assert payload["amount"]["value"] == 500.0
@@ -129,6 +130,7 @@ def test_outcome_episode_response_matches_frozen_shape(
         "recommendation",
         "approval",
         "execution",
+        "recommendation_provenance",
         "human_approval",
         "human_execution",
         "effect_verification",
@@ -140,6 +142,17 @@ def test_outcome_episode_response_matches_frozen_shape(
         "account_id",
         "due_date",
     }
+    assert set(payload["recommendation_provenance"].keys()) == {
+        "linkage",
+        "recommendation_snapshot_id",
+        "policy_version",
+        "decision_type",
+        "selected_actions",
+        "requires_human_review",
+        "created_at",
+        "evidence",
+    }
+    assert payload["recommendation_provenance"]["linkage"] == "absent"
     assert set(payload["payment"].keys()) == {
         "linkage",
         "rule_version",

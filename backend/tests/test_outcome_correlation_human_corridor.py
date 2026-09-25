@@ -22,6 +22,8 @@ test_outcome_correlation.py (_insert_proposal/_insert_approval_request/
 _insert_work_item_and_execution), para provar coexistencia real.
 """
 
+import hashlib
+import json
 import os
 from dataclasses import fields as dataclass_fields
 from datetime import date
@@ -30,6 +32,7 @@ from datetime import timedelta
 from datetime import timezone
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.authentication import hash_password
@@ -42,6 +45,9 @@ from app.models.account_event import AccountEvent
 from app.models.approval import ApprovalRequest
 from app.models.authenticated_advisory_proposal import (
     AuthenticatedAdvisoryProposal,
+)
+from app.models.nba_recommendation_snapshot import (
+    NbaRecommendationSnapshot,
 )
 from app.models.skill import AgentSkillBinding
 from app.models.skill import SkillCapability
@@ -240,6 +246,82 @@ def _corrupt_approval_request_id(
     work_item.context_data = context
     db_session.commit()
     db_session.refresh(work_item)
+
+
+def _corrupt_recommendation_snapshot_id(
+    db_session: Session, work_item: WorkItem, value
+) -> None:
+    context = dict(work_item.context_data or {})
+    if value is None:
+        context.pop("recommendation_snapshot_id", None)
+    else:
+        context["recommendation_snapshot_id"] = value
+    work_item.context_data = context
+    db_session.commit()
+    db_session.refresh(work_item)
+
+
+def _nba_url(account_id: int, due_date: date) -> str:
+    return (
+        "/recommendations/next-best-action/accounts/"
+        f"{account_id}/episodes/{due_date.isoformat()}"
+    )
+
+
+def _create_snapshot(
+    client: TestClient,
+    *,
+    account_id: int,
+    due_date: date,
+    require_mark_overdue: bool = True,
+) -> int:
+    response = client.get(_nba_url(account_id, due_date))
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    if require_mark_overdue:
+        assert (
+            "account.mark_overdue"
+            in payload["decision"]["selected_actions"]
+        ), (
+            "fixture do teste precisa que account.mark_overdue "
+            "esteja recomendado -- ajuste o estado da conta."
+        )
+
+    return payload["recommendation_snapshot_id"]
+
+
+def _materialize_with_snapshot(
+    client: TestClient,
+    db_session: Session,
+    *,
+    email: str,
+    days_overdue: int = 10,
+) -> tuple[Account, date, WorkItem, ApprovalRequest, int]:
+    register_account_mark_overdue_skill()
+    due_date = date.today() - timedelta(days=days_overdue)
+    account = _make_account(
+        db_session, email=email, vencimento=due_date
+    )
+    snapshot_id = _create_snapshot(
+        client, account_id=account.id, due_date=due_date
+    )
+
+    materialize = client.post(
+        "/recommendations/mark-overdue/accounts/"
+        f"{account.id}/episodes/{due_date.isoformat()}/materialize",
+        json={"recommendation_snapshot_id": snapshot_id},
+    )
+    assert materialize.status_code == 201, materialize.text
+
+    work_item_id = materialize.json()["work_item"]["id"]
+    request_id = (
+        materialize.json()["approval_request"]["request_id"]
+    )
+    db_session.expire_all()
+    work_item = db_session.get(WorkItem, work_item_id)
+    approval_request = db_session.get(ApprovalRequest, request_id)
+    return account, due_date, work_item, approval_request, snapshot_id
 
 
 # --- agent-corridor direct-insertion helpers, mirroring
@@ -826,6 +908,7 @@ def test_agent_only_preserves_existing_behavior(
     assert result.human_approval.linkage == "absent"
     assert result.human_execution.linkage == "absent"
     assert result.effect_verification.linkage == "absent"
+    assert result.recommendation_provenance.linkage == "absent"
 
 
 def test_human_only_has_recommendation_absent(
@@ -908,6 +991,12 @@ def test_agent_and_human_both_present_preserve_both_chains(
     assert result.human_execution.status == "succeeded"
     assert result.effect_verification.result == "verified"
 
+    # recommendation_provenance (DW-6.5) e exclusivamente do corredor
+    # humano -- esta materializacao nao declarou nenhum snapshot, e o
+    # recommendation.linkage do corredor agente (correlated, acima) nao
+    # vaza para ca.
+    assert result.recommendation_provenance.linkage == "absent"
+
 
 # --- 7. Contract -----------------------------------------------------------
 
@@ -934,3 +1023,351 @@ def test_root_result_includes_new_fields_and_preserves_existing(
         "human_execution",
         "effect_verification",
     }.issubset(field_names)
+    assert {
+        "recommendation_provenance",
+    }.issubset(field_names)
+
+
+# --- 8. Recommendation Provenance (DW-6.5) ---------------------------------
+
+
+def test_legacy_work_item_without_snapshot_yields_absent(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, _, _ = _materialize(
+        client, db_session, email="prov.legacy-no-snapshot@example.com"
+    )
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.recommendation_provenance.linkage == "absent"
+    assert result.recommendation_provenance.recommendation_snapshot_id is None
+    assert result.recommendation_provenance.policy_version is None
+    assert result.recommendation_provenance.selected_actions is None
+    assert result.recommendation_provenance.evidence == ()
+
+
+def test_malformed_pointer_yields_invalid(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, work_item, _ = _materialize(
+        client, db_session, email="prov.malformed-pointer@example.com"
+    )
+    _corrupt_recommendation_snapshot_id(
+        db_session, work_item, "not-an-id"
+    )
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.recommendation_provenance.linkage == "invalid"
+    assert (
+        result.recommendation_provenance.recommendation_snapshot_id
+        is None
+    )
+
+
+def test_nonexistent_snapshot_yields_invalid(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, work_item, _ = _materialize(
+        client, db_session, email="prov.nonexistent-snapshot@example.com"
+    )
+    _corrupt_recommendation_snapshot_id(
+        db_session, work_item, 999_999_999
+    )
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.recommendation_provenance.linkage == "invalid"
+    assert (
+        result.recommendation_provenance.recommendation_snapshot_id
+        == 999_999_999
+    )
+
+
+def test_tampered_snapshot_yields_invalid(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, work_item, _, snapshot_id = (
+        _materialize_with_snapshot(
+            client,
+            db_session,
+            email="prov.tampered-snapshot@example.com",
+        )
+    )
+
+    row = db_session.get(NbaRecommendationSnapshot, snapshot_id)
+    tampered_payload = dict(row.snapshot_payload)
+    tampered_payload["decision"] = dict(
+        tampered_payload["decision"]
+    )
+    tampered_payload["decision"]["selected_actions"] = []
+    db_session.execute(
+        NbaRecommendationSnapshot.__table__.update()
+        .where(NbaRecommendationSnapshot.id == snapshot_id)
+        .values(snapshot_payload=tampered_payload)
+    )
+    db_session.commit()
+    # SessionLocal e expire_on_commit=False -- o objeto `row` ja
+    # carregado no identity map desta sessao nao e invalidado
+    # automaticamente pelo commit; sem isto, o repository.get_by_id()
+    # de get_verified() (mesma sessao) retornaria o payload em cache,
+    # anterior a adulteracao, nunca a linha real ja alterada no banco.
+    db_session.expire_all()
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.recommendation_provenance.linkage == "invalid"
+    assert (
+        result.recommendation_provenance.recommendation_snapshot_id
+        == snapshot_id
+    )
+    assert result.recommendation_provenance.policy_version is None
+    assert result.recommendation_provenance.selected_actions is None
+
+
+def test_malformed_decision_structure_yields_invalid_not_exception(
+    client: TestClient, db_session: Session
+) -> None:
+    """
+    Blocker do Patch Review V1: get_verified() prova apenas que
+    snapshot_payload nao mudou desde que foi hasheado -- nunca que sua
+    estrutura interna e a esperada. Este teste constroi um payload
+    estruturalmente malformado ("decision" nao e um objeto) cujo digest
+    e recalculado para bater com o conteudo malformado (nunca preservando
+    o digest antigo -- isso testaria o caminho de adulteracao ja coberto
+    por test_tampered_snapshot_yields_invalid, nao este). get_verified()
+    portanto NAO rejeita por integridade -- o payload malformado precisa
+    ser tratado pela revalidacao semantica de _recommendation_provenance(),
+    que deve degradar para "invalid" sem levantar excecao.
+    """
+    account, due_date, work_item, _, snapshot_id = (
+        _materialize_with_snapshot(
+            client,
+            db_session,
+            email="prov.malformed-decision@example.com",
+        )
+    )
+
+    row = db_session.get(NbaRecommendationSnapshot, snapshot_id)
+    malformed_payload = dict(row.snapshot_payload)
+    malformed_payload["decision"] = None
+
+    recomputed_digest = hashlib.sha256(
+        json.dumps(
+            malformed_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    db_session.execute(
+        NbaRecommendationSnapshot.__table__.update()
+        .where(NbaRecommendationSnapshot.id == snapshot_id)
+        .values(
+            snapshot_payload=malformed_payload,
+            snapshot_digest=recomputed_digest,
+        )
+    )
+    db_session.commit()
+    # SessionLocal e expire_on_commit=False -- forca releitura do
+    # estado persistido, nao do objeto em cache no identity map (mesma
+    # razao de test_tampered_snapshot_yields_invalid).
+    db_session.expire_all()
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    provenance = result.recommendation_provenance
+    assert provenance.linkage == "invalid"
+    assert provenance.recommendation_snapshot_id == snapshot_id
+    assert provenance.policy_version is None
+    assert provenance.decision_type is None
+    assert provenance.selected_actions is None
+    assert provenance.requires_human_review is None
+    assert provenance.created_at is None
+    assert provenance.evidence == ()
+
+
+def test_snapshot_wrong_account_yields_invalid(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, work_item, _ = _materialize(
+        client, db_session, email="prov.wrong-account-a@example.com"
+    )
+    _, _, _, _, other_snapshot_id = _materialize_with_snapshot(
+        client,
+        db_session,
+        email="prov.wrong-account-b@example.com",
+    )
+    _corrupt_recommendation_snapshot_id(
+        db_session, work_item, other_snapshot_id
+    )
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.recommendation_provenance.linkage == "invalid"
+    assert (
+        result.recommendation_provenance.recommendation_snapshot_id
+        == other_snapshot_id
+    )
+
+
+def test_snapshot_wrong_due_date_yields_invalid(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, work_item, _ = _materialize(
+        client, db_session, email="prov.wrong-due-date@example.com"
+    )
+    other_due_date = due_date - timedelta(days=100)
+    other_snapshot_id = _create_snapshot(
+        client,
+        account_id=account.id,
+        due_date=other_due_date,
+        require_mark_overdue=False,
+    )
+    _corrupt_recommendation_snapshot_id(
+        db_session, work_item, other_snapshot_id
+    )
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.recommendation_provenance.linkage == "invalid"
+    assert (
+        result.recommendation_provenance.recommendation_snapshot_id
+        == other_snapshot_id
+    )
+
+
+def test_snapshot_without_mark_overdue_action_yields_invalid(
+    client: TestClient, db_session: Session
+) -> None:
+    due_date = date.today() - timedelta(days=10)
+    account = _make_account(
+        db_session,
+        email="prov.wrong-action@example.com",
+        vencimento=due_date,
+        status="atrasado",
+    )
+    snapshot_id = _create_snapshot(
+        client,
+        account_id=account.id,
+        due_date=due_date,
+        require_mark_overdue=False,
+    )
+
+    # Corrige o estado para elegivel e materializa sem body -- o
+    # snapshot ja foi gerado com status="atrasado" (mark_overdue
+    # indisponivel), devolvido intacto, exatamente como em
+    # test_materialize_snapshot_not_recommending_mark_overdue_returns_409.
+    account.status = "aberto"
+    db_session.commit()
+
+    register_account_mark_overdue_skill()
+    materialize = client.post(
+        "/recommendations/mark-overdue/accounts/"
+        f"{account.id}/episodes/{due_date.isoformat()}/materialize"
+    )
+    assert materialize.status_code == 201, materialize.text
+    work_item_id = materialize.json()["work_item"]["id"]
+    db_session.expire_all()
+    work_item = db_session.get(WorkItem, work_item_id)
+
+    _corrupt_recommendation_snapshot_id(
+        db_session, work_item, snapshot_id
+    )
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    assert result.recommendation_provenance.linkage == "invalid"
+    assert (
+        result.recommendation_provenance.recommendation_snapshot_id
+        == snapshot_id
+    )
+
+
+def test_valid_association_yields_correlated(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, _, _, snapshot_id = (
+        _materialize_with_snapshot(
+            client,
+            db_session,
+            email="prov.valid-association@example.com",
+        )
+    )
+
+    result = get_outcome_episode(
+        db_session, account=account, due_date=due_date
+    )
+
+    provenance = result.recommendation_provenance
+    assert provenance.linkage == "correlated"
+    assert provenance.recommendation_snapshot_id == snapshot_id
+    assert provenance.policy_version is not None
+    assert provenance.decision_type is not None
+    assert provenance.selected_actions is not None
+    assert "account.mark_overdue" in provenance.selected_actions
+    assert provenance.requires_human_review is not None
+    assert provenance.created_at is not None
+    assert len(provenance.evidence) == 1
+    assert provenance.evidence[0].source == "nba_recommendation_snapshot"
+    assert provenance.evidence[0].id == snapshot_id
+    assert provenance.evidence[0].linkage == "direct"
+
+
+def test_recommendation_provenance_read_performs_zero_writes(
+    client: TestClient, db_session: Session
+) -> None:
+    account, due_date, _, _, _snapshot_id = (
+        _materialize_with_snapshot(
+            client,
+            db_session,
+            email="prov.zero-writes@example.com",
+        )
+    )
+
+    tables = (
+        "accounts",
+        "work_items",
+        "approval_requests",
+        "approval_decisions",
+        "approval_consumptions",
+        "skill_invocations",
+        "account_events",
+        "business_effect_verifications",
+        "nba_recommendation_snapshots",
+    )
+    before = {
+        table: db_session.execute(
+            text(f"SELECT COUNT(*) FROM {table}")
+        ).scalar_one()
+        for table in tables
+    }
+
+    get_outcome_episode(db_session, account=account, due_date=due_date)
+
+    after = {
+        table: db_session.execute(
+            text(f"SELECT COUNT(*) FROM {table}")
+        ).scalar_one()
+        for table in tables
+    }
+
+    assert before == after

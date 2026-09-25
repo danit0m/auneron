@@ -62,13 +62,14 @@ _APPROVAL_ADVISORY_KEY_PATTERN = re.compile(
 
 
 Linkage = str
-# "direct" | "correlated" | "absent" | "unresolved_due_date_change"
+# "direct" | "correlated" | "absent" | "unresolved_due_date_change" |
+# "invalid"
 
 EvidenceSource = str
 # "knowledge" | "authenticated_advisory_proposal" | "approval_request" |
 # "approval_decision" | "work_item" | "work_skill_execution" |
 # "skill_invocation" | "account_event" | "approval_consumption" |
-# "business_effect_verification"
+# "business_effect_verification" | "nba_recommendation_snapshot"
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,45 @@ class ExecutionOutcome:
     status: str | None
     finished_at: datetime | None
     sourced_from_attempt: int | None
+    evidence: tuple[Evidence, ...] = ()
+
+
+@dataclass(frozen=True)
+class RecommendationProvenanceOutcome:
+    """
+    DW-6.5 -- proveniencia da recomendacao NBA declaradamente associada
+    pelo corredor humano (WorkItem.context_data["recommendation_snapshot_id"],
+    DW-6.4B). Campo aditivo e paralelo a RecommendationOutcome (corredor
+    agente) -- nunca o substitui, nunca compartilha resolucao com ele.
+    Resolvido exclusivamente via o ponteiro declarado, sempre reverificado
+    por NbaRecommendationSnapshotService.get_verified() -- nunca por
+    latest/nearest-timestamp/mesmo-account/mesmo-due_date/digest-igual.
+
+    linkage="absent": nenhuma referencia foi declarada (chave ausente de
+    context_data) -- episodio humano legitimo, nunca corrupcao, nunca
+    backfill.
+    linkage="invalid": uma referencia foi declarada mas nao e confiavel
+    agora -- pointer presente porem malformado (nao-int), snapshot
+    inexistente, snapshot_payload adulterado (digest invalido), ou
+    snapshot integro porem semanticamente incompativel (conta/due_date/
+    selected_actions). Nunca silenciado como "absent" -- preserva apenas
+    recommendation_snapshot_id quando o pointer bruto for um int
+    utilizavel; nenhum outro campo de um snapshot nao confiavel e
+    projetado.
+    linkage="correlated": referencia resolvida, integra e semanticamente
+    compativel -- mesma convencao ja usada por human_approval/
+    human_execution/effect_verification (nivel externo reflete o elo
+    mais fraco, o pointer JSONB, mesmo que o snapshot resolvido em si
+    seja uma linha real recuperada por PK).
+    """
+
+    linkage: Linkage
+    recommendation_snapshot_id: int | None
+    policy_version: str | None
+    decision_type: str | None
+    selected_actions: tuple[str, ...] | None
+    requires_human_review: bool | None
+    created_at: datetime | None
     evidence: tuple[Evidence, ...] = ()
 
 
@@ -195,6 +235,7 @@ class OutcomeEpisodeResult:
     recommendation: RecommendationOutcome
     approval: ApprovalOutcome
     execution: ExecutionOutcome
+    recommendation_provenance: RecommendationProvenanceOutcome
     human_approval: HumanApprovalOutcome
     human_execution: HumanExecutionOutcome
     effect_verification: EffectVerificationOutcome
@@ -548,6 +589,160 @@ def _human_work_item(
     ).scalar_one_or_none()
 
 
+def _no_recommendation_provenance(
+    *, linkage: Linkage, recommendation_snapshot_id: int | None
+) -> RecommendationProvenanceOutcome:
+    return RecommendationProvenanceOutcome(
+        linkage=linkage,
+        recommendation_snapshot_id=recommendation_snapshot_id,
+        policy_version=None,
+        decision_type=None,
+        selected_actions=None,
+        requires_human_review=None,
+        created_at=None,
+    )
+
+
+def _recommendation_provenance(
+    db: Session,
+    human_work_item: WorkItem | None,
+    *,
+    account_id: int,
+    due_date: date,
+) -> RecommendationProvenanceOutcome:
+    """
+    DW-6.5 -- unico ponto de resolucao permitido: o WorkItem exato do
+    corredor humano (ja identificado positivamente por
+    _human_work_item()) -> context_data["recommendation_snapshot_id"] ->
+    NbaRecommendationSnapshotService.get_verified(). Nunca busca por
+    inferencia. "invalid" nunca e silenciado como "absent" -- a distincao
+    entre "nenhuma referencia foi declarada" e "uma referencia foi
+    declarada mas nao e confiavel agora" e a garantia central deste
+    Design Freeze.
+    """
+
+    # Import local -- deferido para evitar ciclo de import em tempo de
+    # carregamento do modulo: nba_recommendation_snapshot_service ->
+    # nba_policy -> action_space_evaluator ->
+    # governed_financial_action_eligibility -> outcome_correlation
+    # (este mesmo arquivo, para FinancialEpisode). Nenhum efeito
+    # funcional -- o servico so e instanciado dentro desta funcao de
+    # qualquer forma.
+    from app.services.nba_recommendation_snapshot_service import (
+        NbaRecommendationSnapshotIntegrityError,
+    )
+    from app.services.nba_recommendation_snapshot_service import (
+        NbaRecommendationSnapshotService,
+    )
+
+    if human_work_item is None:
+        return _no_recommendation_provenance(
+            linkage="absent",
+            recommendation_snapshot_id=None,
+        )
+
+    context = (
+        human_work_item.context_data
+        if isinstance(human_work_item.context_data, dict)
+        else {}
+    )
+
+    if "recommendation_snapshot_id" not in context:
+        return _no_recommendation_provenance(
+            linkage="absent",
+            recommendation_snapshot_id=None,
+        )
+
+    pointer_id = context["recommendation_snapshot_id"]
+
+    # bool e subclasse de int em Python -- um JSON `true`/`false`
+    # persistido nao e um ID utilizavel, mesmo passando em isinstance
+    # simples.
+    if not isinstance(pointer_id, int) or isinstance(pointer_id, bool):
+        return _no_recommendation_provenance(
+            linkage="invalid",
+            recommendation_snapshot_id=None,
+        )
+
+    try:
+        snapshot = NbaRecommendationSnapshotService(
+            db
+        ).get_verified(pointer_id)
+    except NbaRecommendationSnapshotIntegrityError:
+        return _no_recommendation_provenance(
+            linkage="invalid",
+            recommendation_snapshot_id=pointer_id,
+        )
+
+    if snapshot is None:
+        return _no_recommendation_provenance(
+            linkage="invalid",
+            recommendation_snapshot_id=pointer_id,
+        )
+
+    if (
+        snapshot.account_id != account_id
+        or snapshot.due_date != due_date
+    ):
+        return _no_recommendation_provenance(
+            linkage="invalid",
+            recommendation_snapshot_id=pointer_id,
+        )
+
+    payload = (
+        snapshot.snapshot_payload
+        if isinstance(snapshot.snapshot_payload, dict)
+        else {}
+    )
+
+    # get_verified() prova apenas que snapshot_payload nao mudou desde
+    # que foi hasheado -- nunca que sua estrutura interna e a esperada.
+    # dict.get(key, default) so aplica o default quando a CHAVE esta
+    # ausente, nunca quando o valor presente e nao-dict/nao-lista --
+    # por isso cada nivel e checado explicitamente com isinstance antes
+    # de qualquer acesso encadeado, para que uma estrutura inesperada
+    # (mesmo com digest valido) vire "invalid" em vez de escapar como
+    # AttributeError/TypeError ate a fronteira HTTP.
+    decision = payload.get("decision")
+    if not isinstance(decision, dict):
+        return _no_recommendation_provenance(
+            linkage="invalid",
+            recommendation_snapshot_id=pointer_id,
+        )
+
+    raw_selected_actions = decision.get("selected_actions")
+    if not isinstance(raw_selected_actions, list):
+        return _no_recommendation_provenance(
+            linkage="invalid",
+            recommendation_snapshot_id=pointer_id,
+        )
+
+    selected_actions = tuple(raw_selected_actions)
+
+    if HUMAN_MARK_OVERDUE_SKILL_KEY not in selected_actions:
+        return _no_recommendation_provenance(
+            linkage="invalid",
+            recommendation_snapshot_id=pointer_id,
+        )
+
+    return RecommendationProvenanceOutcome(
+        linkage="correlated",
+        recommendation_snapshot_id=snapshot.id,
+        policy_version=snapshot.policy_version,
+        decision_type=snapshot.decision_type,
+        selected_actions=selected_actions,
+        requires_human_review=snapshot.requires_human_review,
+        created_at=snapshot.created_at,
+        evidence=(
+            Evidence(
+                source="nba_recommendation_snapshot",
+                id=snapshot.id,
+                linkage="direct",
+            ),
+        ),
+    )
+
+
 def _human_approval_request(
     db: Session,
     work_item: WorkItem,
@@ -892,6 +1087,13 @@ def get_outcome_episode(
     # sobrescreve o outro.
     human_work_item = _human_work_item(db, account_id, due_date)
 
+    recommendation_provenance = _recommendation_provenance(
+        db,
+        human_work_item,
+        account_id=account_id,
+        due_date=due_date,
+    )
+
     human_approval_request = (
         _human_approval_request(db, human_work_item, account_id)
         if human_work_item is not None
@@ -944,6 +1146,7 @@ def get_outcome_episode(
         recommendation=recommendation,
         approval=approval,
         execution=execution,
+        recommendation_provenance=recommendation_provenance,
         human_approval=human_approval,
         human_execution=human_execution,
         effect_verification=effect_verification,

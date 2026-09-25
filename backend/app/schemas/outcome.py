@@ -12,6 +12,7 @@ Linkage = Literal[
     "correlated",
     "absent",
     "unresolved_due_date_change",
+    "invalid",
 ]
 
 EvidenceSource = Literal[
@@ -25,6 +26,7 @@ EvidenceSource = Literal[
     "account_event",
     "approval_consumption",
     "business_effect_verification",
+    "nba_recommendation_snapshot",
 ]
 
 EffectVerificationResult = Literal[
@@ -109,6 +111,19 @@ class ExecutionOutcome(BaseModel):
     evidence: list[Evidence] = []
 
 
+class RecommendationProvenanceOutcome(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    linkage: Linkage
+    recommendation_snapshot_id: int | None
+    policy_version: str | None
+    decision_type: str | None
+    selected_actions: list[str] | None
+    requires_human_review: bool | None
+    created_at: datetime | None
+    evidence: list[Evidence] = []
+
+
 class HumanApprovalOutcome(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -170,6 +185,7 @@ class OutcomeEpisodeResponse(BaseModel):
     recommendation: RecommendationOutcome
     approval: ApprovalOutcome
     execution: ExecutionOutcome
+    recommendation_provenance: RecommendationProvenanceOutcome
     human_approval: HumanApprovalOutcome
     human_execution: HumanExecutionOutcome
     effect_verification: EffectVerificationOutcome
