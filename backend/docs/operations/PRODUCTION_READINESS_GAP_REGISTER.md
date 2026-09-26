@@ -516,3 +516,30 @@ ver "CLOSED / EVIDENCE" abaixo.
   explícita — pode ser adicionado depois sem alterar este modelo.
   Runbook correspondente:
   `backend/docs/operations/CUSTOMER_DEPLOYMENT_RUNBOOK.md`.
+
+### G4 — Policy Autonomous Worker L3 Pilot (account.mark_overdue)
+
+- **Baseline (código):** `479618cd8ed11d333346a87affecae41a2a0ef6a` —
+  inalterado durante todo o piloto.
+- **Schema:** migration `a3f7c9d15e28`.
+- **Episódios:** `(account_id=21, due_date=2026-09-15)` — positivo;
+  `(account_id=22, due_date=2026-09-16)` — negativo/negado.
+- **Resultado:** `CONTROLLED CONNECTED AUTONOMOUS PILOT — PROVEN` —
+  `PolicyAuthorityGrant #1` (criado, ativo, depois revogado) →
+  `PolicyAuthorityConsumption #1` → `SkillInvocation #11` (`succeeded`)
+  → `AccountEvent #16` (`aberto → atrasado`) →
+  `BusinessEffectVerification #11` (`verified`, ação manual pós-janela).
+  Episódio negativo confirmou zero efeito sob autoridade indisponível
+  (`executions_authority_unavailable=1`), reproduzido identicamente
+  após restart controlado do backend (`--force-recreate`).
+- **Evidência:** `backend/docs/operations/
+  POLICY_AUTONOMOUS_WORKER_L3_PILOT_EVIDENCE.md` — cadeia completa dos
+  três cenários (positivo/negativo/restart), achado de observabilidade
+  `FINDING-DW75-OBS-001` (não-bloqueante), claim formal e listas
+  explícitas de PROVEN/NOT PROVEN.
+- **Nota:** o resultado comprova L3 exclusivamente para
+  `account.mark_overdue`, modelo single-customer-per-deployment, sob
+  um Grant deployment-wide predelegado. Não autoriza, por si só,
+  `account.mark_paid`, outros skills, múltiplos episódios simultâneos,
+  multi-tenancy, aprendizado adaptativo ou autonomia irrestrita — essas
+  permanecem decisões de checkpoints futuros e distintos.
