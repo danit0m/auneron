@@ -27,6 +27,7 @@ from app.models.work_learning_runtime_context_snapshot import (
 from app.models.work_outcome_evaluation import WorkOutcomeEvaluation
 from app.models.account_event import AccountEvent
 from app.models.account_vencimento_change import AccountVencimentoChange
+from app.models.escalation_observation import EscalationObservation
 
 __all__ = [
     "Account",
@@ -54,4 +55,5 @@ __all__ = [
     "WorkOutcomeEvaluation",
     "AccountEvent",
     "AccountVencimentoChange",
+    "EscalationObservation",
 ]
