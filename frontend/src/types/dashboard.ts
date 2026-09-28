@@ -45,3 +45,28 @@ export interface DashboardData {
   alertas: Alerta[];
   vencimentos: Vencimento[];
 }
+
+export interface GovernedOperationsSummaryPeriod {
+  start: string;
+  end: string;
+  days: number;
+}
+
+export interface AutonomousEffectVerificationSummary {
+  verified: number;
+  checked_other: number;
+  not_yet_checked: number;
+  total: number;
+  verification_rate: number | null;
+}
+
+export interface GovernedOperationsSummary {
+  period: GovernedOperationsSummaryPeriod;
+  eligible_accounts_identified: number;
+  autonomous_dispositions: number;
+  human_governed_dispositions: number;
+  autonomous_disposition_rate: number | null;
+  autonomous_effect_verification: AutonomousEffectVerificationSummary;
+  pending_overdue_accounts_now: number;
+  estimate: null;
+}

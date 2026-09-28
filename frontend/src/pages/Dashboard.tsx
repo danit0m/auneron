@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import api, {
   getApiErrorMessage,
 } from "../api/api";
+import { GovernedOperationsSummary } from "../components/dashboard/GovernedOperationsSummary";
 import { Header } from "../components/layout/Header";
 import type { DashboardData } from "../types/dashboard";
 
@@ -120,6 +121,8 @@ export function Dashboard() {
       />
 
       <section className="page-content">
+        <GovernedOperationsSummary />
+
         <div className="summary-grid">
           <article className="summary-card">
             <div className="summary-icon summary-icon-blue">

@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -9,6 +9,14 @@ from app.core.receivable_lifecycle import business_today
 from app.core.receivable_lifecycle import evaluate_receivable_lifecycle
 from app.database.database import get_db
 from app.models.account import Account
+from app.schemas.governed_operations_summary import (
+    AutonomousEffectVerificationSummary,
+    GovernedOperationsSummaryPeriod,
+    GovernedOperationsSummaryResponse,
+)
+from app.services.governed_operations_summary_service import (
+    GovernedOperationsSummaryService,
+)
 
 router = APIRouter(
     prefix="/dashboard",
@@ -156,3 +164,38 @@ def dashboard(db: Session = Depends(get_db)):
 
         "vencimentos": vencimentos
     }
+
+
+@router.get(
+    "/governed-operations-summary",
+    response_model=GovernedOperationsSummaryResponse,
+)
+def governed_operations_summary(
+    period_days: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(get_db),
+) -> GovernedOperationsSummaryResponse:
+    result = GovernedOperationsSummaryService(db).compute(
+        period_days=period_days,
+    )
+
+    return GovernedOperationsSummaryResponse(
+        period=GovernedOperationsSummaryPeriod(
+            start=result.period_start,
+            end=result.period_end,
+            days=result.period_days,
+        ),
+        eligible_accounts_identified=result.eligible_accounts_identified,
+        autonomous_dispositions=result.autonomous_dispositions,
+        human_governed_dispositions=result.human_governed_dispositions,
+        autonomous_disposition_rate=result.autonomous_disposition_rate,
+        autonomous_effect_verification=(
+            AutonomousEffectVerificationSummary(
+                verified=result.verification_verified,
+                checked_other=result.verification_checked_other,
+                not_yet_checked=result.verification_not_yet_checked,
+                total=result.verification_total,
+                verification_rate=result.verification_rate,
+            )
+        ),
+        pending_overdue_accounts_now=result.pending_overdue_accounts_now,
+    )

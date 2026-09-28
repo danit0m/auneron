@@ -1,0 +1,210 @@
+/* =========================================
+   GOVERNED OPERATIONS SUMMARY
+========================================= */
+
+.governed-summary {
+  display: grid;
+  gap: 16px;
+  padding: 20px 22px;
+  border: 1px solid #dce5f5;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #ffffff, #f7faff);
+}
+
+.governed-summary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.governed-summary-eyebrow {
+  display: block;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.governed-summary-header h2 {
+  margin: 6px 0 0;
+  color: #172033;
+  font-size: 19px;
+}
+
+.governed-summary-header p {
+  max-width: 620px;
+  margin: 6px 0 0;
+  color: #718096;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* =========================================
+   BLOCK: PERIODO / AGORA -- separacao visual
+   obrigatoria, nunca implicando soma entre elas
+========================================= */
+
+.governed-summary-block {
+  padding-top: 14px;
+  border-top: 1px solid #e7edf6;
+}
+
+.governed-summary-block-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.governed-summary-block-header span {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #eef3ff;
+  color: #315bc9;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.governed-summary-block-header strong {
+  color: #526076;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.governed-summary-now .governed-summary-block-header span {
+  background: #fff3dd;
+  color: #b45309;
+}
+
+/* =========================================
+   METRIC CARDS
+========================================= */
+
+.governed-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.governed-summary-card,
+.governed-summary-now-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e5eaf1;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.governed-summary-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border-radius: 12px;
+}
+
+.governed-summary-icon-slate {
+  background: #eef2f7;
+  color: #475569;
+}
+
+.governed-summary-icon-blue {
+  background: #eaf1ff;
+  color: #2563eb;
+}
+
+.governed-summary-icon-purple {
+  background: #f1eafe;
+  color: #7c3aed;
+}
+
+.governed-summary-icon-green {
+  background: #e4f8f0;
+  color: #059669;
+}
+
+.governed-summary-icon-orange {
+  background: #fff3dd;
+  color: #d97706;
+}
+
+.governed-summary-card-content {
+  min-width: 0;
+}
+
+.governed-summary-card-content span,
+.governed-summary-card-content strong,
+.governed-summary-card-content small {
+  display: block;
+}
+
+.governed-summary-card-content span {
+  color: #8a96a8;
+  font-size: 10px;
+}
+
+.governed-summary-card-content strong {
+  margin-top: 4px;
+  color: #172033;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.governed-summary-card-content small {
+  margin-top: 5px;
+  color: #9aa6b7;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.governed-summary-now-card {
+  max-width: 360px;
+}
+
+/* =========================================
+   STATES: loading / error
+========================================= */
+
+.governed-summary-state {
+  display: flex;
+  min-height: 120px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #718096;
+  font-size: 12px;
+  text-align: center;
+}
+
+.governed-summary-state-error {
+  flex-direction: row;
+  color: #b91c1c;
+}
+
+/* =========================================
+   RESPONSIVE
+========================================= */
+
+@media (max-width: 1150px) {
+  .governed-summary-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .governed-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .governed-summary-header {
+    flex-direction: column;
+  }
+}
