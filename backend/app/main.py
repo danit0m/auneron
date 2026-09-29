@@ -213,6 +213,7 @@ async def lifespan(_: FastAPI):
             "environment": settings.environment,
             "version": settings.app_version,
             "database_online": database_online,
+            "forwarded_allow_ips": settings.forwarded_allow_ips,
         },
     )
 

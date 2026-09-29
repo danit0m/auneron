@@ -178,20 +178,12 @@ def _hash_identity(
 def _client_identity(
     request: Request,
 ) -> str:
-    forwarded_for = request.headers.get(
-        "x-forwarded-for"
-    )
-
-    if forwarded_for:
-        first_hop = (
-            forwarded_for
-            .split(",", 1)[0]
-            .strip()
-        )
-
-        if first_hop:
-            return first_hop
-
+    # A resolução de confiança de proxy (quem pode declarar o IP real do
+    # cliente via X-Forwarded-For) é responsabilidade exclusiva do
+    # ProxyHeadersMiddleware do Uvicorn (--proxy-headers +
+    # FORWARDED_ALLOW_IPS). Este código nunca deve reparsear o header
+    # bruto -- isso reintroduziria uma segunda fonte de verdade divergente
+    # da que o Uvicorn já resolveu em request.client. Ver SEC-AUTH-1.1/1.1C.
     if request.client is not None:
         return request.client.host
 

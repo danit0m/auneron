@@ -218,6 +218,49 @@ O navegador acessa:
 e o proxy converte para as rotas FastAPI, injeta `X-API-Key` e preserva o
 cookie de sessão.
 
+## Identidade do cliente (`FORWARDED_ALLOW_IPS`)
+
+O backend usa o `ProxyHeadersMiddleware` do Uvicorn (`--proxy-headers`, já
+ativo no `Dockerfile`) como única autoridade para resolver o IP real do
+cliente a partir de `X-Forwarded-For`. A aplicação nunca reparseia esse
+header por conta própria -- ela só lê `request.client.host`, que o Uvicorn
+já resolveu de forma confiável. A confiança é controlada inteiramente pela
+variável de ambiente `FORWARDED_ALLOW_IPS` (lida nativamente pelo Uvicorn,
+sem flag de CLI e sem mudança no `Dockerfile`).
+
+Topologias suportadas:
+
+| Topologia | Peer TCP do backend | `FORWARDED_ALLOW_IPS` |
+|---|---|---|
+| Dev direto (`docker-compose.yml`) | `127.0.0.1` | `127.0.0.1` (default) |
+| Prod empacotada (`docker-compose.prod.yml`, `Traefik → Nginx → backend`) | Nginx (rede `app`, IP estático) | `172.28.1.10/32,172.28.0.10/32` (default do compose) |
+| Prod com LB/CDN externo (`LB → Traefik → Nginx → backend`) | Nginx (igual à linha acima) | os dois valores acima **mais** o CIDR oficial mínimo publicado pelo provedor do LB/CDN |
+| Acesso direto/bypass de proxy | o próprio requisitante | não está na lista -- XFF é ignorado, resolve para o peer real, sem bypass possível |
+
+**Checklist obrigatório ao adicionar um LB/CDN externo** -- as duas mudanças
+abaixo são um único passo, nunca uma sem a outra (se só uma for feita, todo
+cliente externo colapsa na identidade do LB ou perde a resolução correta):
+
+1. Configure `forwardedHeaders.trustedIPs` do **Traefik** com o CIDR oficial
+   do LB/CDN (documentação do provedor -- nunca uma faixa ampla "por
+   garantia").
+2. Acrescente o **mesmo CIDR** a `FORWARDED_ALLOW_IPS` do **backend**, além
+   dos dois valores empacotados (`172.28.1.10/32,172.28.0.10/32`).
+
+Os dois IPs estáticos empacotados (Nginx e Traefik) são fixados via
+`ipam.config.subnet` + `ipv4_address` no próprio `docker-compose.prod.yml`
+-- não são valores de exemplo, são a configuração real da stack. Se a
+infraestrutura de destino já usar as faixas `172.28.0.0/24` ou
+`172.28.1.0/24` para outra coisa, ajuste os dois arquivos (`docker-compose.prod.yml`
+e a constante `PACKAGED_PROXY_IPS` em `app/core/config.py`) juntos antes do
+deploy -- os dois precisam concordar, ou o backend recusa o boot em
+`APP_ENV=production`.
+
+Em `production`, o backend recusa subir se `FORWARDED_ALLOW_IPS` estiver
+vazia, contiver `*` ou uma rota total (`0.0.0.0/0`/`::/0`), não incluir os
+dois proxies empacotados, apontar para loopback, ou divergir do valor
+efetivamente presente em `os.environ` do processo.
+
 ## TLS e cookie
 
 HTTPS é obrigatório em produção.

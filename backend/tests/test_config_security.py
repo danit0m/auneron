@@ -79,8 +79,14 @@ VALID_PRODUCTION_API_KEY = (
     "Q7d9R2m8L4x1P6v3N5k0T8z2B9c4W7y1"
 )
 
+# Valor canônico congelado em SEC-AUTH-1.1C (PACKAGED_PROXY_IPS).
+VALID_PRODUCTION_FORWARDED_ALLOW_IPS = (
+    "172.28.1.10/32,172.28.0.10/32"
+)
+
 
 def production_settings(
+    monkeypatch: pytest.MonkeyPatch,
     **overrides,
 ) -> Settings:
     values = {
@@ -96,8 +102,22 @@ def production_settings(
         "DATABASE_ECHO": False,
         "EXPECTED_DATABASE_NAME": "auneron",
         "EXPECTED_DATABASE_HOST": "postgres",
+        "FORWARDED_ALLOW_IPS": (
+            VALID_PRODUCTION_FORWARDED_ALLOW_IPS
+        ),
     }
     values.update(overrides)
+
+    # O validador de produção compara Settings.forwarded_allow_ips com
+    # os.environ["FORWARDED_ALLOW_IPS"] (SEC-AUTH-1.1C, bloqueador 3) --
+    # o ambiente do processo precisa refletir o mesmo valor que está
+    # sendo passado ao construtor, inclusive quando um teste sobrescreve
+    # FORWARDED_ALLOW_IPS via overrides. monkeypatch restaura sozinho ao
+    # final de cada teste, sem vazar para os demais.
+    monkeypatch.setenv(
+        "FORWARDED_ALLOW_IPS",
+        values["FORWARDED_ALLOW_IPS"],
+    )
 
     return Settings(
         _env_file=None,
@@ -105,17 +125,22 @@ def production_settings(
     )
 
 
-def test_g3_accepts_matching_database_identity() -> None:
-    settings = production_settings()
+def test_g3_accepts_matching_database_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = production_settings(monkeypatch)
 
     assert settings.database_name == "auneron"
     assert settings.database_host == "postgres"
 
 
-def test_g3_rejects_database_name_mismatch() -> None:
+def test_g3_rejects_database_name_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     try:
         production_settings(
-            EXPECTED_DATABASE_NAME="outro_banco"
+            monkeypatch,
+            EXPECTED_DATABASE_NAME="outro_banco",
         )
     except ValidationError as error:
         assert "identidade" in str(
@@ -128,10 +153,13 @@ def test_g3_rejects_database_name_mismatch() -> None:
         )
 
 
-def test_g3_rejects_database_host_mismatch() -> None:
+def test_g3_rejects_database_host_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     try:
         production_settings(
-            EXPECTED_DATABASE_HOST="outro-host"
+            monkeypatch,
+            EXPECTED_DATABASE_HOST="outro-host",
         )
     except ValidationError as error:
         assert "identidade" in str(
@@ -144,10 +172,13 @@ def test_g3_rejects_database_host_mismatch() -> None:
         )
 
 
-def test_g3_requires_expected_database_name_in_production() -> None:
+def test_g3_requires_expected_database_name_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     try:
         production_settings(
-            EXPECTED_DATABASE_NAME=None
+            monkeypatch,
+            EXPECTED_DATABASE_NAME=None,
         )
     except ValidationError as error:
         assert "EXPECTED_DATABASE_NAME" in str(
@@ -160,10 +191,13 @@ def test_g3_requires_expected_database_name_in_production() -> None:
         )
 
 
-def test_g3_requires_expected_database_host_in_production() -> None:
+def test_g3_requires_expected_database_host_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     try:
         production_settings(
-            EXPECTED_DATABASE_HOST=None
+            monkeypatch,
+            EXPECTED_DATABASE_HOST=None,
         )
     except ValidationError as error:
         assert "EXPECTED_DATABASE_HOST" in str(
@@ -176,12 +210,15 @@ def test_g3_requires_expected_database_host_in_production() -> None:
         )
 
 
-def test_g3_rejects_database_url_without_host() -> None:
+def test_g3_rejects_database_url_without_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     try:
         production_settings(
+            monkeypatch,
             DATABASE_URL=(
                 "postgresql+psycopg:///auneron"
-            )
+            ),
         )
     except ValidationError as error:
         assert "identidade" in str(
@@ -219,13 +256,15 @@ def test_g3_not_enforced_in_test_environment() -> None:
     assert settings.expected_database_host is None
 
 
-def test_g3_error_messages_do_not_leak_database_url() -> None:
+def test_g3_error_messages_do_not_leak_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     for overrides in (
         {"EXPECTED_DATABASE_NAME": "outro_banco"},
         {"EXPECTED_DATABASE_HOST": "outro-host"},
     ):
         try:
-            production_settings(**overrides)
+            production_settings(monkeypatch, **overrides)
         except ValidationError as error:
             message = str(error)
 

@@ -1,5 +1,7 @@
+import os
 from decimal import Decimal
 from functools import lru_cache
+from ipaddress import ip_network
 from pathlib import Path
 from typing import Literal
 from typing import Self
@@ -14,6 +16,17 @@ from sqlalchemy.engine import make_url
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+# IPs estáticos dos proxies empacotados (docker-compose.prod.yml), fixados
+# via SEC-AUTH-1.1C. Em production, FORWARDED_ALLOW_IPS precisa conter os
+# dois, sempre como /32 -- CIDRs adicionais (LB/CDN externo) são permitidos
+# além destes, mas estes dois nunca podem virar uma faixa mais ampla.
+PACKAGED_PROXY_IPS = frozenset(
+    {
+        "172.28.1.10/32",  # frontend/nginx, rede "app" (peer imediato do backend)
+        "172.28.0.10/32",  # traefik, rede "web" (aparece na cadeia XFF via Nginx)
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -360,6 +373,11 @@ class Settings(BaseSettings):
         validation_alias="CORS_ORIGINS",
     )
 
+    forwarded_allow_ips: str = Field(
+        default="127.0.0.1",
+        validation_alias="FORWARDED_ALLOW_IPS",
+    )
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [
@@ -443,6 +461,70 @@ class Settings(BaseSettings):
                         "CORS_ORIGINS em production não pode "
                         "apontar para loopback."
                     )
+
+    def _validate_forwarded_allow_ips(self) -> None:
+        entries = [
+            entry.strip()
+            for entry in self.forwarded_allow_ips.split(",")
+            if entry.strip()
+        ]
+
+        if not entries:
+            raise ValueError(
+                "FORWARDED_ALLOW_IPS não pode ser vazia."
+            )
+
+        parsed_networks = []
+
+        for entry in entries:
+            if entry == "*":
+                raise ValueError(
+                    "FORWARDED_ALLOW_IPS não pode usar wildcard '*'."
+                )
+
+            try:
+                network = ip_network(entry, strict=True)
+            except ValueError as error:
+                raise ValueError(
+                    "FORWARDED_ALLOW_IPS contém entrada "
+                    f"inválida: {entry!r}."
+                ) from error
+
+            if network.prefixlen == 0:
+                raise ValueError(
+                    "FORWARDED_ALLOW_IPS não pode conter "
+                    f"rota total: {entry!r}."
+                )
+
+            parsed_networks.append(network)
+
+        if self.environment == "production":
+            if not PACKAGED_PROXY_IPS.issubset(entries):
+                raise ValueError(
+                    "FORWARDED_ALLOW_IPS em production precisa "
+                    "conter os proxies empacotados "
+                    f"({sorted(PACKAGED_PROXY_IPS)})."
+                )
+
+            if any(
+                network.is_loopback
+                for network in parsed_networks
+            ):
+                raise ValueError(
+                    "FORWARDED_ALLOW_IPS em production não pode "
+                    "conter endereços loopback."
+                )
+
+            if (
+                os.environ.get("FORWARDED_ALLOW_IPS")
+                != self.forwarded_allow_ips
+            ):
+                raise ValueError(
+                    "FORWARDED_ALLOW_IPS lida pelos Settings "
+                    "diverge do valor bruto em os.environ -- o "
+                    "processo do Uvicorn não receberia o mesmo "
+                    "valor validado."
+                )
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
@@ -605,6 +687,7 @@ class Settings(BaseSettings):
             )
 
         self._validate_cors()
+        self._validate_forwarded_allow_ips()
 
         return self
 

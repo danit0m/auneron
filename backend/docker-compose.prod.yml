@@ -102,6 +102,14 @@ services:
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-auneron_session}
       AUTH_SESSION_TTL_MINUTES: ${AUTH_SESSION_TTL_MINUTES:-480}
       AUTH_ELEVATION_TTL_MINUTES: ${AUTH_ELEVATION_TTL_MINUTES:-10}
+      # Proxies empacotados confiáveis (SEC-AUTH-1.1C): frontend/nginx na
+      # rede "app" (peer imediato) + traefik na rede "web" (aparece na
+      # cadeia X-Forwarded-For via $proxy_add_x_forwarded_for do Nginx).
+      # LB/CDN externo: acrescente o CIDR oficial mínimo do provedor a
+      # esta lista, e configure forwardedHeaders.trustedIPs do Traefik
+      # com o mesmo CIDR -- as duas mudanças são um único checklist, ver
+      # backend/docs/DEPLOYMENT.md.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.28.1.10/32,172.28.0.10/32}
 
     secrets:
       - database_url
@@ -169,8 +177,12 @@ services:
       start_period: 5s
 
     networks:
-      - app
-      - web
+      # IPs estáticos (SEC-AUTH-1.1C): o backend confia nestes endereços
+      # via FORWARDED_ALLOW_IPS -- não altere sem atualizar os dois juntos.
+      app:
+        ipv4_address: 172.28.1.10
+      web:
+        ipv4_address: 172.28.0.11
 
     labels:
       - "traefik.enable=true"
@@ -211,7 +223,8 @@ services:
       - auneron_letsencrypt:/letsencrypt
 
     networks:
-      - web
+      web:
+        ipv4_address: 172.28.0.10
 
 secrets:
   postgres_password:
@@ -242,6 +255,12 @@ networks:
   app:
     name: auneron_app_prod
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
   web:
     name: auneron_web_prod
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
