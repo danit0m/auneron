@@ -170,6 +170,36 @@ class EscalationObservationService:
             expected_assessment_code=assessment_code,
         )
 
+    def list_by_work_item(
+        self,
+        escalation_work_item_id: int,
+        *,
+        limit: int,
+        after_id: int | None = None,
+        observation_type: str | None = None,
+    ) -> list[EscalationObservation]:
+        query = self.db.query(EscalationObservation).filter(
+            EscalationObservation.escalation_work_item_id
+            == escalation_work_item_id
+        )
+
+        if after_id is not None:
+            query = query.filter(
+                EscalationObservation.id > after_id
+            )
+
+        if observation_type is not None:
+            query = query.filter(
+                EscalationObservation.observation_type
+                == observation_type
+            )
+
+        return (
+            query.order_by(EscalationObservation.id.asc())
+            .limit(limit)
+            .all()
+        )
+
     def _find_by_key(
         self, escalation_work_item_id: int, key: str
     ) -> EscalationObservation | None:

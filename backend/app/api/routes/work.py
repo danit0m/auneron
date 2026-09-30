@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -31,6 +32,12 @@ from app.core.work_observability import log_work_change
 from app.database.database import get_db
 from app.models.memory import MemoryItem
 from app.models.work import WorkItem
+from app.schemas.escalation_observation import (
+    EscalationObservationListResponse,
+)
+from app.schemas.escalation_observation import (
+    escalation_observation_response,
+)
 from app.schemas.work import MemoryRelation
 from app.schemas.work import WorkAssigneeRequest
 from app.schemas.work import WorkCommentRequest
@@ -66,6 +73,9 @@ from app.schemas.work import WorkSLAListResponse
 from app.schemas.work import WorkSLAResponse
 from app.schemas.work import WorkStatus
 from app.schemas.work import WorkStatusRequest
+from app.services.escalation_observation_service import (
+    EscalationObservationService,
+)
 from app.services.work_service import WorkActor
 from app.services.work_service import WorkCreationResult
 from app.services.work_service import WorkManagerService
@@ -86,6 +96,12 @@ def get_work_service(
     db: Session = Depends(get_db),
 ) -> WorkManagerService:
     return WorkManagerService(db)
+
+
+def get_escalation_observation_service(
+    db: Session = Depends(get_db),
+) -> EscalationObservationService:
+    return EscalationObservationService(db)
 
 
 def get_idempotency_key(
@@ -666,6 +682,66 @@ def list_work_events(
         next_cursor=(
             page[-1].id
             if len(events) > limit
+            else None
+        ),
+    )
+
+
+@router.get(
+    "/{work_item_id}/escalation-observations",
+    response_model=EscalationObservationListResponse,
+)
+def list_escalation_observations(
+    work_item_id: int,
+    observation_type: Literal[
+        "observed_fact",
+        "human_assessment",
+    ]
+    | None = Query(default=None),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=100,
+    ),
+    after_id: int | None = Query(
+        default=None,
+        gt=0,
+    ),
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("work:read")
+    ),
+    db: Session = Depends(get_db),
+    service: WorkManagerService = Depends(
+        get_work_service
+    ),
+    observation_service: EscalationObservationService = Depends(
+        get_escalation_observation_service
+    ),
+) -> EscalationObservationListResponse:
+    _get_authorized_work(
+        work_item_id,
+        operation="read",
+        db=db,
+        authenticated=authenticated,
+        service=service,
+    )
+
+    rows = observation_service.list_by_work_item(
+        work_item_id,
+        limit=limit + 1,
+        after_id=after_id,
+        observation_type=observation_type,
+    )
+
+    page = rows[:limit]
+    return EscalationObservationListResponse(
+        items=[
+            escalation_observation_response(observation)
+            for observation in page
+        ],
+        next_cursor=(
+            page[-1].id
+            if len(rows) > limit
             else None
         ),
     )
