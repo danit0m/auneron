@@ -18,6 +18,7 @@ WorkOperation = Literal[
     "comment",
     "dependency",
     "recurrence",
+    "assess_escalation",
 ]
 
 WORK_OPERATION_PERMISSIONS: dict[
@@ -30,6 +31,7 @@ WORK_OPERATION_PERMISSIONS: dict[
     "comment": "work:comment",
     "dependency": "work:manage_dependencies",
     "recurrence": "work:manage_recurrence",
+    "assess_escalation": "work:assess_escalation",
 }
 
 

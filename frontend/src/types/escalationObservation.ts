@@ -28,6 +28,10 @@ export type EscalationObservationResponse =
   | ObservedFactObservationResponse
   | HumanAssessmentObservationResponse;
 
+export interface HumanAssessmentRequest {
+  assessment_code: AssessmentCode;
+}
+
 export interface EscalationObservationListResponse {
   items: EscalationObservationResponse[];
   next_cursor: number | null;

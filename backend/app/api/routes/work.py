@@ -36,6 +36,12 @@ from app.schemas.escalation_observation import (
     EscalationObservationListResponse,
 )
 from app.schemas.escalation_observation import (
+    HumanAssessmentObservationResponse,
+)
+from app.schemas.escalation_observation import (
+    HumanAssessmentRequest,
+)
+from app.schemas.escalation_observation import (
     escalation_observation_response,
 )
 from app.schemas.work import MemoryRelation
@@ -74,7 +80,13 @@ from app.schemas.work import WorkSLAResponse
 from app.schemas.work import WorkStatus
 from app.schemas.work import WorkStatusRequest
 from app.services.escalation_observation_service import (
+    EscalationObservationConflictError,
+)
+from app.services.escalation_observation_service import (
     EscalationObservationService,
+)
+from app.services.escalation_observation_service import (
+    EscalationObservationValidationError,
 )
 from app.services.work_service import WorkActor
 from app.services.work_service import WorkCreationResult
@@ -750,6 +762,75 @@ def list_escalation_observations(
             if len(rows) > limit
             else None
         ),
+    )
+
+
+@router.post(
+    "/{work_item_id}/human-assessment",
+    response_model=HumanAssessmentObservationResponse,
+)
+def record_human_assessment(
+    work_item_id: int,
+    payload: HumanAssessmentRequest,
+    response: Response,
+    idempotency_key: str | None = Depends(
+        get_idempotency_key
+    ),
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("work:assess_escalation")
+    ),
+    db: Session = Depends(get_db),
+    service: WorkManagerService = Depends(
+        get_work_service
+    ),
+    observation_service: EscalationObservationService = Depends(
+        get_escalation_observation_service
+    ),
+) -> HumanAssessmentObservationResponse:
+    item = _get_authorized_work(
+        work_item_id,
+        operation="assess_escalation",
+        db=db,
+        authenticated=authenticated,
+        service=service,
+    )
+
+    try:
+        result = observation_service.record_human_assessment(
+            escalation_work_item=item,
+            assessment_code=payload.assessment_code,
+            actor=_actor(authenticated),
+            declared_by_role=authenticated.user.role,
+            idempotency_key=idempotency_key,
+        )
+    except EscalationObservationValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    except EscalationObservationConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+
+    response.status_code = (
+        status.HTTP_200_OK
+        if result.duplicate
+        else status.HTTP_201_CREATED
+    )
+
+    observation = result.observation
+    return HumanAssessmentObservationResponse(
+        observation_type="human_assessment",
+        id=observation.id,
+        escalation_work_item_id=(
+            observation.escalation_work_item_id
+        ),
+        created_at=observation.created_at,
+        assessment_code=observation.assessment_code,
+        declared_by_user_id=observation.declared_by_user_id,
+        declared_at=observation.declared_at,
     )
 
 

@@ -19,6 +19,7 @@ export type Permission =
   | "approval:decide"
   | "work:create"
   | "work:read"
+  | "work:assess_escalation"
   | "skill:execute"
   | "skill:execute_mutating";
 

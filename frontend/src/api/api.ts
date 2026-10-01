@@ -5,12 +5,17 @@ import type {
 } from "../types/approval";
 import type {
   EscalationObservationListResponse,
+  HumanAssessmentObservationResponse,
+  HumanAssessmentRequest,
 } from "../types/escalationObservation";
 
 export const REQUEST_ID_HEADER =
   "X-Request-ID";
 
-function createRequestId(): string {
+export const IDEMPOTENCY_KEY_HEADER =
+  "Idempotency-Key";
+
+function createOpaqueId(): string {
   if (
     typeof crypto !== "undefined" &&
     typeof crypto.randomUUID === "function"
@@ -25,6 +30,20 @@ function createRequestId(): string {
       .toString(36)
       .slice(2, 12),
   ].join("-");
+}
+
+function createRequestId(): string {
+  return createOpaqueId();
+}
+
+/**
+ * Gera uma chave de intencao para operacoes que aceitam
+ * Idempotency-Key (ex.: POST de human-assessment). Uma nova escolha do
+ * operador gera uma chave nova; um retry da MESMA intencao (timeout/
+ * falha de rede) deve reenviar a MESMA chave, nunca gerar outra.
+ */
+export function createIdempotencyKey(): string {
+  return createOpaqueId();
 }
 
 function getResponseRequestId(
@@ -54,6 +73,19 @@ function withRequestReference(
   return requestId
     ? `${message} Referência: ${requestId}.`
     : message;
+}
+
+/**
+ * Erro de rede/timeout genuino (sem resposta HTTP) -- diferente de um
+ * 4xx/409, que e uma resposta recebida com conteudo de erro. Usado
+ * para decidir quando um resultado e "ambiguo" (nao se sabe se o
+ * servidor processou antes da conexao cair) em vez de simplesmente
+ * "erro".
+ */
+export function isNetworkFailure(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) && !error.response
+  );
 }
 
 export function getApiErrorMessage(
@@ -170,6 +202,38 @@ export async function fetchEscalationObservations(
     );
 
   return response.data;
+}
+
+/**
+ * VALUE-3.2B -- registra uma declaracao humana sobre um episodio de
+ * escalonamento. idempotencyKey e obrigatorio aqui (nao opcional como
+ * no contrato HTTP) porque o chamador e sempre responsavel por decidir
+ * se esta e uma nova intencao (nova chave) ou um retry da mesma
+ * intencao (mesma chave) -- nunca deve ser esquecido por omissao.
+ */
+export async function submitHumanAssessment(
+  workItemId: number,
+  payload: HumanAssessmentRequest,
+  idempotencyKey: string,
+): Promise<{
+  observation: HumanAssessmentObservationResponse;
+  duplicate: boolean;
+}> {
+  const response =
+    await api.post<HumanAssessmentObservationResponse>(
+      `/work-items/${workItemId}/human-assessment`,
+      payload,
+      {
+        headers: {
+          [IDEMPOTENCY_KEY_HEADER]: idempotencyKey,
+        },
+      },
+    );
+
+  return {
+    observation: response.data,
+    duplicate: response.status === 200,
+  };
 }
 
 export default api;

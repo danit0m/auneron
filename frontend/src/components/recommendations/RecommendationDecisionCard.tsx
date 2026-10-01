@@ -12,8 +12,11 @@ import {
 } from "react";
 
 import api, {
+  createIdempotencyKey,
   fetchEscalationObservations,
   getApiErrorMessage,
+  isNetworkFailure,
+  submitHumanAssessment,
 } from "../../api/api";
 import { useAuth } from "../../hooks/useAuth";
 import { useWorkItemByKey } from "../../hooks/useWorkItemByKey";
@@ -22,6 +25,7 @@ import type {
   ApprovalRequestResponse,
 } from "../../types/approval";
 import type {
+  AssessmentCode,
   EscalationObservationResponse,
 } from "../../types/escalationObservation";
 import type {
@@ -281,69 +285,71 @@ export default function RecommendationDecisionCard({
   ] = useState("");
   const observationsRequestIdRef = useRef(0);
 
-  useEffect(() => {
+  async function recarregarObservations(
+    workItemId: number,
+  ) {
     const requestId =
       ++observationsRequestIdRef.current;
 
-    void (async () => {
-      if (escalationWorkItem === null) {
-        if (
-          requestId ===
-          observationsRequestIdRef.current
-        ) {
-          setObservations([]);
-          setNextCursor(null);
-          setErroObservations("");
-        }
+    setCarregandoObservations(true);
+    setErroObservations("");
+
+    try {
+      const page =
+        await fetchEscalationObservations(
+          workItemId,
+        );
+
+      if (
+        requestId !==
+        observationsRequestIdRef.current
+      ) {
         return;
       }
 
-      const workItemId = escalationWorkItem.id;
-
-      setCarregandoObservations(true);
-      setErroObservations("");
-
-      try {
-        const page =
-          await fetchEscalationObservations(
-            workItemId,
-          );
-
-        if (
-          requestId !==
-          observationsRequestIdRef.current
-        ) {
-          return;
-        }
-
-        setObservations(page.items);
-        setNextCursor(page.next_cursor);
-      } catch (error) {
-        if (
-          requestId !==
-          observationsRequestIdRef.current
-        ) {
-          return;
-        }
-
-        console.error(
-          "Erro ao buscar observations de escalonamento:",
-          error,
-        );
-        setErroObservations(
-          getApiErrorMessage(
-            error,
-            "Não foi possível carregar o histórico do escalonamento.",
-          ),
-        );
-      } finally {
-        if (
-          requestId ===
-          observationsRequestIdRef.current
-        ) {
-          setCarregandoObservations(false);
-        }
+      setObservations(page.items);
+      setNextCursor(page.next_cursor);
+    } catch (error) {
+      if (
+        requestId !==
+        observationsRequestIdRef.current
+      ) {
+        return;
       }
+
+      console.error(
+        "Erro ao buscar observations de escalonamento:",
+        error,
+      );
+      setErroObservations(
+        getApiErrorMessage(
+          error,
+          "Não foi possível carregar o histórico do escalonamento.",
+        ),
+      );
+    } finally {
+      if (
+        requestId ===
+        observationsRequestIdRef.current
+      ) {
+        setCarregandoObservations(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    void (async () => {
+      if (escalationWorkItem === null) {
+        ++observationsRequestIdRef.current;
+        setObservations([]);
+        setNextCursor(null);
+        setErroObservations("");
+        return;
+      }
+
+      await recarregarObservations(
+        escalationWorkItem.id,
+      );
     })();
   }, [escalationWorkItem]);
 
@@ -409,6 +415,115 @@ export default function RecommendationDecisionCard({
         setCarregandoMaisObservations(false);
       }
     }
+  }
+
+  const [
+    assessmentSelecionado,
+    setAssessmentSelecionado,
+  ] = useState<AssessmentCode | "">("");
+  const [assessmentStatus, setAssessmentStatus] =
+    useState<
+      | "idle"
+      | "submitting"
+      | "error"
+      | "ambiguous"
+    >("idle");
+  const [
+    assessmentErro,
+    setAssessmentErro,
+  ] = useState("");
+  // Preserva key+code da intencao em curso durante "ambiguous" --
+  // nunca gerar uma chave nova para a MESMA intencao, e a UI trava a
+  // escolha ate o operador decidir "tentar novamente" ou "cancelar".
+  // Estado (nao ref) porque precisa ser lido durante o render para
+  // mostrar qual declaracao estava sendo enviada.
+  const [
+    assessmentPendente,
+    setAssessmentPendente,
+  ] = useState<{
+    key: string;
+    code: AssessmentCode;
+  } | null>(null);
+
+  async function enviarAssessment(
+    workItemId: number,
+    key: string,
+    code: AssessmentCode,
+  ) {
+    setAssessmentStatus("submitting");
+    setAssessmentErro("");
+
+    try {
+      await submitHumanAssessment(
+        workItemId,
+        { assessment_code: code },
+        key,
+      );
+
+      setAssessmentPendente(null);
+      setAssessmentSelecionado("");
+      // Fonte da verdade continua sendo o GET -- nunca inserir o
+      // response do POST otimisticamente na lista (mesmo princípio já
+      // aplicado a mark_overdue/escalate_to_human desde o VALUE-3.1).
+      await recarregarObservations(workItemId);
+      setAssessmentStatus("idle");
+    } catch (error) {
+      if (isNetworkFailure(error)) {
+        setAssessmentPendente({
+          key,
+          code,
+        });
+        setAssessmentStatus("ambiguous");
+        return;
+      }
+
+      setAssessmentPendente(null);
+      setAssessmentStatus("error");
+      setAssessmentErro(
+        getApiErrorMessage(
+          error,
+          "Não foi possível registrar a declaração.",
+        ),
+      );
+    }
+  }
+
+  async function registrarAssessment() {
+    if (
+      escalationWorkItem === null ||
+      assessmentSelecionado === ""
+    ) {
+      return;
+    }
+
+    // Nova escolha do operador = nova intencao = nova chave.
+    await enviarAssessment(
+      escalationWorkItem.id,
+      createIdempotencyKey(),
+      assessmentSelecionado,
+    );
+  }
+
+  async function tentarNovamenteAssessment() {
+    if (
+      escalationWorkItem === null ||
+      assessmentPendente === null
+    ) {
+      return;
+    }
+
+    // Retry da MESMA intencao -- MESMA chave, MESMO codigo.
+    await enviarAssessment(
+      escalationWorkItem.id,
+      assessmentPendente.key,
+      assessmentPendente.code,
+    );
+  }
+
+  function cancelarTentativaAssessment() {
+    setAssessmentPendente(null);
+    setAssessmentStatus("idle");
+    setAssessmentSelecionado("");
   }
 
   async function solicitarEscalonamento() {
@@ -524,6 +639,15 @@ export default function RecommendationDecisionCard({
     escalationWorkItem !== null &&
     (escalationWorkItem.status === "completed" ||
       escalationWorkItem.status === "cancelled");
+
+  // WorkItem terminal nao bloqueia o registro -- o servico nao
+  // verifica status (so valida scope_type/work_key), e o precedente de
+  // add_comment (anotacao, nao mutacao estrutural) ja trata assim
+  // (VALUE-3.2A). Um cliente pode ter pago depois do escalonamento ja
+  // ter sido encerrado por outro motivo.
+  const podeRegistrarAssessment = hasPermission(
+    "work:assess_escalation",
+  );
 
   return (
     <div className="recommendation-card">
@@ -813,6 +937,123 @@ export default function RecommendationDecisionCard({
                   ? "Carregando..."
                   : "Carregar mais"}
               </button>
+            )}
+
+            {podeRegistrarAssessment && (
+              <div className="recommendation-assessment-form">
+                <label htmlFor="recommendation-assessment-select">
+                  Registrar resultado deste escalonamento
+                </label>
+
+                <div className="recommendation-assessment-controls">
+                  <select
+                    id="recommendation-assessment-select"
+                    value={assessmentSelecionado}
+                    disabled={
+                      assessmentStatus === "submitting" ||
+                      assessmentStatus === "ambiguous"
+                    }
+                    onChange={(event) =>
+                      setAssessmentSelecionado(
+                        event.target
+                          .value as AssessmentCode | "",
+                      )
+                    }
+                  >
+                    <option value="">
+                      Selecione um resultado...
+                    </option>
+                    {Object.entries(
+                      ASSESSMENT_CODE_LABELS,
+                    ).map(([code, label]) => (
+                      <option key={code} value={code}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    className="recommendation-escalate-button"
+                    disabled={
+                      assessmentSelecionado === "" ||
+                      assessmentStatus === "submitting" ||
+                      assessmentStatus === "ambiguous"
+                    }
+                    onClick={() =>
+                      void registrarAssessment()
+                    }
+                  >
+                    {assessmentStatus === "submitting"
+                      ? "Registrando..."
+                      : "Registrar resultado"}
+                  </button>
+                </div>
+
+                <p className="recommendation-assessment-help">
+                  Cada declaração é permanente e
+                  adicionada ao histórico. Para corrigir
+                  uma informação, registre uma nova
+                  declaração.
+                </p>
+
+                {assessmentStatus === "submitting" && (
+                  <span
+                    aria-live="polite"
+                    className="recommendation-mark-overdue-status"
+                  >
+                    Registrando declaração...
+                  </span>
+                )}
+
+                {assessmentStatus === "error" &&
+                  assessmentErro && (
+                    <div className="error-message recommendation-materialize-error">
+                      <AlertTriangle size={18} />
+                      <span>{assessmentErro}</span>
+                    </div>
+                  )}
+
+                {assessmentStatus === "ambiguous" &&
+                  assessmentPendente && (
+                    <div
+                      aria-live="polite"
+                      className="error-message recommendation-materialize-error recommendation-assessment-ambiguous"
+                    >
+                      <AlertTriangle size={18} />
+                      <span>
+                        Não foi possível confirmar se
+                        a declaração "
+                        {ASSESSMENT_CODE_LABELS[
+                          assessmentPendente.code
+                        ] ?? assessmentPendente.code}
+                        " foi registrada (falha de
+                        conexão). Tente novamente ou
+                        cancele esta tentativa.
+                      </span>
+                      <div className="recommendation-assessment-controls">
+                        <button
+                          type="button"
+                          className="recommendation-escalate-button"
+                          onClick={() =>
+                            void tentarNovamenteAssessment()
+                          }
+                        >
+                          Tentar novamente
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={
+                            cancelarTentativaAssessment
+                          }
+                        >
+                          Cancelar tentativa
+                        </button>
+                      </div>
+                    </div>
+                  )}
+              </div>
             )}
           </div>
         )}

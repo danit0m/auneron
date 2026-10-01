@@ -27,6 +27,10 @@ class ObservedFactObservationResponse(WorkSchema):
     observed_at: datetime
 
 
+class HumanAssessmentRequest(WorkSchema):
+    assessment_code: AssessmentCode
+
+
 class HumanAssessmentObservationResponse(WorkSchema):
     observation_type: Literal["human_assessment"]
     id: int
