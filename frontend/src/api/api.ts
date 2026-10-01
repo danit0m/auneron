@@ -3,6 +3,9 @@ import axios from "axios";
 import type {
   ApprovalPendingCountResponse,
 } from "../types/approval";
+import type {
+  EscalationObservationListResponse,
+} from "../types/escalationObservation";
 
 export const REQUEST_ID_HEADER =
   "X-Request-ID";
@@ -140,6 +143,33 @@ export async function fetchApprovalsPendingCount(): Promise<number> {
     );
 
   return response.data.count;
+}
+
+/**
+ * VALUE-2.4 -- historico de observations de um episodio de
+ * escalonamento. after_id/observationType sao opcionais; sem eles, a
+ * primeira pagina (id ASC, ordem estavel de append, nunca
+ * "cronologica") e devolvida.
+ */
+export async function fetchEscalationObservations(
+  workItemId: number,
+  params?: {
+    afterId?: number;
+    observationType?: "observed_fact" | "human_assessment";
+  },
+): Promise<EscalationObservationListResponse> {
+  const response =
+    await api.get<EscalationObservationListResponse>(
+      `/work-items/${workItemId}/escalation-observations`,
+      {
+        params: {
+          after_id: params?.afterId,
+          observation_type: params?.observationType,
+        },
+      },
+    );
+
+  return response.data;
 }
 
 export default api;

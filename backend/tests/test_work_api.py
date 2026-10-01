@@ -1,3 +1,4 @@
+from datetime import date
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -5,8 +6,11 @@ from datetime import timezone
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.models.account import Account
 from app.models.user import User
 from app.services.memory_service import MemoryService
+from app.services.work_service import WorkActor
+from app.services.work_service import WorkManagerService
 
 
 AUTHENTICATED_EMAIL = "developer.test@example.com"
@@ -159,6 +163,281 @@ def test_list_get_and_filter_work_items(
     )
     assert get_response.status_code == 200
     assert get_response.json()["id"] == first["id"]
+
+
+def _account(
+    db_session: Session,
+    *,
+    email: str,
+) -> Account:
+    account = Account(
+        cliente="Cliente Work API work_key",
+        email=email,
+        whatsapp=None,
+        valor=900,
+        vencimento=date.today(),
+        status="atrasado",
+    )
+    db_session.add(account)
+    db_session.commit()
+    db_session.refresh(account)
+    return account
+
+
+def _account_work(
+    db_session: Session,
+    *,
+    account_id: int,
+    work_key: str,
+    actor_user_id: int,
+) -> int:
+    result = WorkManagerService(db_session).create(
+        work_type="task",
+        title="Trabalho de conta -- teste work_key",
+        work_key=work_key,
+        scope_type="account",
+        account_id=account_id,
+        origin_type="system",
+        origin_reference="test:work_key_filter",
+        actor=WorkActor(
+            actor_type="user",
+            actor_reference=f"user:{actor_user_id}",
+            actor_user_id=actor_user_id,
+        ),
+    )
+    return result.work_item.id
+
+
+def test_list_work_items_filters_by_exact_work_key(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _account(
+        db_session, email="work-key-exact@example.com"
+    )
+    actor = _current_user(db_session)
+
+    target_id = _account_work(
+        db_session,
+        account_id=account.id,
+        work_key="human_escalation:v1:test:exact",
+        actor_user_id=actor.id,
+    )
+    _account_work(
+        db_session,
+        account_id=account.id,
+        work_key="human_escalation:v1:test:other",
+        actor_user_id=actor.id,
+    )
+
+    response = client.get(
+        "/work-items",
+        params={
+            "scope_type": "account",
+            "account_id": account.id,
+            "work_key": "human_escalation:v1:test:exact",
+        },
+    )
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["id"] for item in items] == [target_id]
+
+
+def test_list_work_items_work_key_not_found_returns_empty(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _account(
+        db_session, email="work-key-missing@example.com"
+    )
+
+    response = client.get(
+        "/work-items",
+        params={
+            "scope_type": "account",
+            "account_id": account.id,
+            "work_key": "human_escalation:v1:does-not-exist",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_list_work_items_work_key_respects_account_scope(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account_a = _account(
+        db_session, email="work-key-scope-a@example.com"
+    )
+    account_b = _account(
+        db_session, email="work-key-scope-b@example.com"
+    )
+    actor = _current_user(db_session)
+
+    shared_work_key = "human_escalation:v1:test:scope-check"
+    _account_work(
+        db_session,
+        account_id=account_a.id,
+        work_key=shared_work_key,
+        actor_user_id=actor.id,
+    )
+
+    # Mesmo work_key, conta diferente -- o indice unico
+    # (uq_work_items_account_key) e por (account_id, work_key), entao
+    # isso e uma combinacao legitima e distinta, nao um conflito.
+    response = client.get(
+        "/work-items",
+        params={
+            "scope_type": "account",
+            "account_id": account_b.id,
+            "work_key": shared_work_key,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_list_work_items_without_work_key_is_unaffected(
+    client: TestClient,
+) -> None:
+    first = _create_work(
+        client,
+        work_key="api.list.no_work_key_filter.normal",
+        priority="normal",
+    )
+    urgent = _create_work(
+        client,
+        work_key="api.list.no_work_key_filter.urgent",
+        priority="urgent",
+    )
+
+    response = client.get(
+        "/work-items",
+        params={
+            "scope_type": "global",
+            "priority": "urgent",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [
+        item["id"] for item in response.json()["items"]
+    ] == [urgent["id"]]
+    assert first["id"] != urgent["id"]
+
+
+def test_list_work_items_work_key_finds_item_beyond_default_page(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """
+    Prova mecanica do achado central do VALUE-3.1: sem o filtro
+    work_key, a busca por escopo de conta e limitada a 100 itens
+    ordenados por updated_at desc -- um WorkItem criado primeiro (logo,
+    o mais antigo por updated_at) fica fora dessa pagina assim que mais
+    de 100 outros existirem. O filtro work_key precisa encontra-lo de
+    qualquer forma.
+    """
+    account = _account(
+        db_session, email="work-key-beyond-page@example.com"
+    )
+    actor = _current_user(db_session)
+
+    target_key = "human_escalation:v1:test:beyond-page-100"
+    target_id = _account_work(
+        db_session,
+        account_id=account.id,
+        work_key=target_key,
+        actor_user_id=actor.id,
+    )
+
+    for i in range(105):
+        _account_work(
+            db_session,
+            account_id=account.id,
+            work_key=f"human_escalation:v1:test:filler-{i}",
+            actor_user_id=actor.id,
+        )
+
+    # Sem o filtro novo: confirma que o defeito latente e real -- o
+    # alvo (o mais antigo) fica fora da pagina de 100.
+    without_filter = client.get(
+        "/work-items",
+        params={
+            "scope_type": "account",
+            "account_id": account.id,
+            "limit": 100,
+        },
+    )
+    assert without_filter.status_code == 200
+    ids_without_filter = [
+        item["id"]
+        for item in without_filter.json()["items"]
+    ]
+    assert target_id not in ids_without_filter
+    assert len(ids_without_filter) == 100
+
+    # Com o filtro: encontra o alvo independentemente da posicao dele
+    # na ordenacao por updated_at.
+    with_filter = client.get(
+        "/work-items",
+        params={
+            "scope_type": "account",
+            "account_id": account.id,
+            "work_key": target_key,
+        },
+    )
+    assert with_filter.status_code == 200
+    assert [
+        item["id"] for item in with_filter.json()["items"]
+    ] == [target_id]
+
+
+def test_list_work_items_work_key_requires_authorization(
+    unauthenticated_client: TestClient,
+) -> None:
+    response = unauthenticated_client.get(
+        "/work-items",
+        params={
+            "scope_type": "account",
+            "account_id": 1,
+            "work_key": "human_escalation:v1:test:unauthorized",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_list_work_items_work_key_too_long_returns_422(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/work-items",
+        params={
+            "scope_type": "global",
+            "work_key": "x" * 256,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_list_work_items_work_key_empty_returns_422(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/work-items",
+        params={
+            "scope_type": "global",
+            "work_key": "",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_mutation_uses_optimistic_version_and_idempotency(

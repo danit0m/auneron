@@ -1,30 +1,34 @@
 import {
   AlertTriangle,
   Check,
+  ClipboardList,
+  FileText,
   Info,
 } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
 
 import api, {
+  fetchEscalationObservations,
   getApiErrorMessage,
 } from "../../api/api";
 import { useAuth } from "../../hooks/useAuth";
+import { useWorkItemByKey } from "../../hooks/useWorkItemByKey";
 import type {
   ApprovalDetailsResponse,
   ApprovalRequestResponse,
 } from "../../types/approval";
 import type {
-  HumanEscalationMaterializationResponse,
+  EscalationObservationResponse,
+} from "../../types/escalationObservation";
+import type {
   MarkOverdueExecutionResponse,
   MarkOverdueMaterializationResponse,
-  MarkOverdueWorkItemResponse,
   NbaDecisionEvidenceResponse,
-  WorkItemListResponse,
+  WorkItemSummaryResponse,
 } from "../../types/nba";
 import { getActionLabel } from "../../types/nba";
 
@@ -44,6 +48,50 @@ const DECISION_TYPE_LABELS: Record<
   no_action: "Nenhuma ação recomendada",
 };
 
+/**
+ * Traducao das razoes de inelegibilidade ja definidas no backend
+ * (IneligibilityReason, app/core/human_escalation_eligibility.py) --
+ * vocabulario fechado, nunca texto livre. Codigo desconhecido cai no
+ * fallback ja existente ("Sem motivo informado pelo servidor."),
+ * nunca quebra se o backend adicionar um codigo novo.
+ */
+const INELIGIBILITY_REASON_LABELS: Record<string, string> = {
+  due_date_mismatch:
+    "Data de vencimento não corresponde ao episódio atual.",
+  account_paid: "Esta conta já foi paga.",
+  lifecycle_not_overdue:
+    "Esta conta não está mais em atraso.",
+  active_escalation_exists:
+    "Este episódio já tem um escalonamento em andamento.",
+};
+
+function traduzirRazao(
+  reason: string | null,
+): string | null {
+  if (reason === null) {
+    return null;
+  }
+
+  return INELIGIBILITY_REASON_LABELS[reason] ?? reason;
+}
+
+/**
+ * Vocabulario fechado de VALUE-2.2/2.3 (ASSESSMENT_CODES,
+ * app/models/escalation_observation.py) -- so estes 5 valores existem,
+ * sem opcao de texto livre.
+ */
+const ASSESSMENT_CODE_LABELS: Record<string, string> = {
+  contact_made: "Contato realizado",
+  payment_promised: "Pagamento prometido",
+  payment_refused: "Pagamento recusado",
+  unreachable: "Cliente inalcançável",
+  partial_agreement: "Acordo parcial",
+};
+
+function formatarDataHora(valor: string): string {
+  return new Date(valor).toLocaleString("pt-BR");
+}
+
 type MarkOverdueEpisodeState =
   | "not_materialized"
   | "pending_approval"
@@ -54,7 +102,7 @@ type MarkOverdueEpisodeState =
   | "completed";
 
 function derivarEstadoMarkOverdue(
-  workItem: MarkOverdueWorkItemResponse | null,
+  workItem: WorkItemSummaryResponse | null,
   approval: ApprovalRequestResponse | null,
 ): MarkOverdueEpisodeState | null {
   if (workItem === null) {
@@ -91,10 +139,6 @@ export default function RecommendationDecisionCard({
 
   const [materializando, setMaterializando] =
     useState(false);
-  const [resultado, setResultado] =
-    useState<HumanEscalationMaterializationResponse | null>(
-      null,
-    );
   const [erroMaterializacao, setErroMaterializacao] =
     useState("");
 
@@ -109,28 +153,88 @@ export default function RecommendationDecisionCard({
       "account.mark_overdue",
     );
 
-  const workKeyEsperada =
+  const workKeyMarkOverdue =
     `account_mark_overdue:v1:${accountId}:${dueDate}`;
+  const workKeyEscalonamento =
+    `human_escalation:v1:${accountId}:${dueDate}`;
 
-  const [
-    carregandoEstadoMarkOverdue,
-    setCarregandoEstadoMarkOverdue,
-  ] = useState(false);
-  const [
-    erroEstadoMarkOverdue,
-    setErroEstadoMarkOverdue,
-  ] = useState("");
-  const [
-    markOverdueWorkItem,
-    setMarkOverdueWorkItem,
-  ] = useState<MarkOverdueWorkItemResponse | null>(
-    null,
+  const {
+    workItem: markOverdueWorkItem,
+    loading: carregandoEstadoMarkOverdue,
+    error: erroEstadoMarkOverdue,
+    refetch: refetchMarkOverdueWorkItem,
+  } = useWorkItemByKey(
+    accountId,
+    workKeyMarkOverdue,
+    markOverdueSelecionado,
   );
+
   const [
     markOverdueApproval,
     setMarkOverdueApproval,
   ] = useState<ApprovalRequestResponse | null>(
     null,
+  );
+
+  // Busca a ApprovalRequest -- preocupacao especifica de
+  // account.mark_overdue, fora do escopo do useWorkItemByKey (que so
+  // resolve o WorkItem). Encadeada a partir do WorkItem que o hook
+  // devolve.
+  useEffect(() => {
+    const approvalRequestId =
+      markOverdueWorkItem?.context_data
+        .approval_request_id;
+
+    let cancelado = false;
+
+    void (async () => {
+      if (typeof approvalRequestId !== "number") {
+        if (!cancelado) {
+          setMarkOverdueApproval(null);
+        }
+        return;
+      }
+
+      try {
+        const approvalResponse =
+          await api.get<ApprovalDetailsResponse>(
+            `/approvals/${approvalRequestId}`,
+          );
+
+        if (!cancelado) {
+          setMarkOverdueApproval(
+            approvalResponse.data.request,
+          );
+        }
+      } catch (error) {
+        if (!cancelado) {
+          console.error(
+            "Erro ao buscar aprovação de account.mark_overdue:",
+            error,
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [markOverdueWorkItem]);
+
+  // Sempre habilitado (nao condicionado a escalacaoSelecionada): uma
+  // vez que o escalonamento existe, a politica de elegibilidade (R3,
+  // active_escalation_exists) para de recomendar escalate_to_human --
+  // mas o painel persistente precisa continuar aparecendo mesmo
+  // assim, senao a UI regride exatamente para a ruptura que o
+  // VALUE-3.1 existe para corrigir.
+  const {
+    workItem: escalationWorkItem,
+    loading: carregandoEscalationWorkItem,
+    error: erroEscalationWorkItem,
+    refetch: refetchEscalationWorkItem,
+  } = useWorkItemByKey(
+    accountId,
+    workKeyEscalonamento,
   );
 
   const [
@@ -157,140 +261,167 @@ export default function RecommendationDecisionCard({
     null,
   );
 
-  // Contador de geração -- cada chamada captura o próprio requestId
-  // e só aplica o resultado se nenhuma chamada mais nova tiver
-  // começado nesse meio-tempo. Evita que uma resposta atrasada de
-  // uma busca antiga (ex.: accountId/dueDate mudou, ou o refetch
-  // pós-execute correu junto com um refetch de montagem) sobrescreva
-  // o estado de um episódio mais novo.
-  const estadoRequestIdRef = useRef(0);
+  const [
+    observations,
+    setObservations,
+  ] = useState<EscalationObservationResponse[]>([]);
+  const [nextCursor, setNextCursor] =
+    useState<number | null>(null);
+  const [
+    carregandoObservations,
+    setCarregandoObservations,
+  ] = useState(false);
+  const [
+    carregandoMaisObservations,
+    setCarregandoMaisObservations,
+  ] = useState(false);
+  const [
+    erroObservations,
+    setErroObservations,
+  ] = useState("");
+  const observationsRequestIdRef = useRef(0);
 
-  const buscarEstadoMarkOverdue =
-    useCallback(async () => {
-      const requestId =
-        ++estadoRequestIdRef.current;
+  useEffect(() => {
+    const requestId =
+      ++observationsRequestIdRef.current;
 
-      setCarregandoEstadoMarkOverdue(true);
-      setErroEstadoMarkOverdue("");
+    void (async () => {
+      if (escalationWorkItem === null) {
+        if (
+          requestId ===
+          observationsRequestIdRef.current
+        ) {
+          setObservations([]);
+          setNextCursor(null);
+          setErroObservations("");
+        }
+        return;
+      }
+
+      const workItemId = escalationWorkItem.id;
+
+      setCarregandoObservations(true);
+      setErroObservations("");
 
       try {
-        const workResponse =
-          await api.get<WorkItemListResponse>(
-            "/work-items",
-            {
-              params: {
-                scope_type: "account",
-                account_id: accountId,
-                limit: 100,
-              },
-            },
+        const page =
+          await fetchEscalationObservations(
+            workItemId,
           );
 
         if (
           requestId !==
-          estadoRequestIdRef.current
+          observationsRequestIdRef.current
         ) {
           return;
         }
 
-        const workItem =
-          workResponse.data.items.find(
-            (item) =>
-              item.work_key ===
-              workKeyEsperada,
-          ) ?? null;
-
-        setMarkOverdueWorkItem(workItem);
-
-        const approvalRequestId =
-          workItem?.context_data
-            .approval_request_id;
-
-        if (
-          typeof approvalRequestId !==
-          "number"
-        ) {
-          setMarkOverdueApproval(null);
-          return;
-        }
-
-        const approvalResponse =
-          await api.get<ApprovalDetailsResponse>(
-            `/approvals/${approvalRequestId}`,
-          );
-
-        if (
-          requestId !==
-          estadoRequestIdRef.current
-        ) {
-          return;
-        }
-
-        setMarkOverdueApproval(
-          approvalResponse.data.request,
-        );
+        setObservations(page.items);
+        setNextCursor(page.next_cursor);
       } catch (error) {
         if (
           requestId !==
-          estadoRequestIdRef.current
+          observationsRequestIdRef.current
         ) {
           return;
         }
 
         console.error(
-          "Erro ao buscar estado de account.mark_overdue:",
+          "Erro ao buscar observations de escalonamento:",
           error,
         );
-
-        setErroEstadoMarkOverdue(
+        setErroObservations(
           getApiErrorMessage(
             error,
-            "Não foi possível carregar o estado do episódio.",
+            "Não foi possível carregar o histórico do escalonamento.",
           ),
         );
       } finally {
         if (
           requestId ===
-          estadoRequestIdRef.current
+          observationsRequestIdRef.current
         ) {
-          setCarregandoEstadoMarkOverdue(
-            false,
-          );
+          setCarregandoObservations(false);
         }
       }
-    }, [accountId, workKeyEsperada]);
+    })();
+  }, [escalationWorkItem]);
 
-  useEffect(() => {
-    if (!markOverdueSelecionado) {
+  async function carregarMaisObservations() {
+    if (
+      escalationWorkItem === null ||
+      nextCursor === null ||
+      carregandoMaisObservations
+    ) {
       return;
     }
 
-    const timeoutId = window.setTimeout(
-      () => {
-        void buscarEstadoMarkOverdue();
-      },
-      0,
-    );
+    const workItemId = escalationWorkItem.id;
+    const requestId =
+      ++observationsRequestIdRef.current;
+    setCarregandoMaisObservations(true);
 
-    return () =>
-      window.clearTimeout(timeoutId);
-  }, [
-    markOverdueSelecionado,
-    buscarEstadoMarkOverdue,
-  ]);
+    try {
+      const page = await fetchEscalationObservations(
+        workItemId,
+        { afterId: nextCursor },
+      );
+
+      if (
+        requestId !==
+        observationsRequestIdRef.current
+      ) {
+        return;
+      }
+
+      // Append preserva a ordem da API (id ASC). Sem deduplicacao
+      // manual: after_id garante que a pagina seguinte so contem
+      // id > nextCursor, entao o conjunto anexado e sempre disjunto
+      // do que ja esta em `observations`.
+      setObservations((anterior) => [
+        ...anterior,
+        ...page.items,
+      ]);
+      setNextCursor(page.next_cursor);
+    } catch (error) {
+      if (
+        requestId !==
+        observationsRequestIdRef.current
+      ) {
+        return;
+      }
+
+      console.error(
+        "Erro ao carregar mais observations:",
+        error,
+      );
+      setErroObservations(
+        getApiErrorMessage(
+          error,
+          "Não foi possível carregar mais observações.",
+        ),
+      );
+    } finally {
+      if (
+        requestId ===
+        observationsRequestIdRef.current
+      ) {
+        setCarregandoMaisObservations(false);
+      }
+    }
+  }
 
   async function solicitarEscalonamento() {
     setMaterializando(true);
     setErroMaterializacao("");
 
     try {
-      const response =
-        await api.post<HumanEscalationMaterializationResponse>(
-          "/recommendations/human-escalation/" +
-            `accounts/${accountId}/episodes/${dueDate}/materialize`,
-        );
+      await api.post(
+        "/recommendations/human-escalation/" +
+          `accounts/${accountId}/episodes/${dueDate}/materialize`,
+      );
 
-      setResultado(response.data);
+      refetchEscalationWorkItem();
     } catch (error) {
       console.error(
         "Erro ao materializar escalonamento:",
@@ -313,18 +444,15 @@ export default function RecommendationDecisionCard({
     setErroMaterializacaoMarkOverdue("");
 
     try {
-      const response =
-        await api.post<MarkOverdueMaterializationResponse>(
-          "/recommendations/mark-overdue/" +
-            `accounts/${accountId}/episodes/${dueDate}/materialize`,
-        );
+      // Fotografia sempre vem de GET (refetch), nunca do corpo do
+      // POST -- mesmo padrão já usado por executarMarkOverdue, agora
+      // unificado: uma única fonte de verdade para o estado exibido.
+      await api.post<MarkOverdueMaterializationResponse>(
+        "/recommendations/mark-overdue/" +
+          `accounts/${accountId}/episodes/${dueDate}/materialize`,
+      );
 
-      setMarkOverdueWorkItem(
-        response.data.work_item,
-      );
-      setMarkOverdueApproval(
-        response.data.approval_request,
-      );
+      refetchMarkOverdueWorkItem();
     } catch (error) {
       console.error(
         "Erro ao materializar account.mark_overdue:",
@@ -360,7 +488,7 @@ export default function RecommendationDecisionCard({
       // Fotografia pós-execução vem de GET, nunca de um novo
       // materialize -- WorkItem terminal faria a revalidação de
       // eligibility falhar fechada (409 status_not_open).
-      await buscarEstadoMarkOverdue();
+      refetchMarkOverdueWorkItem();
     } catch (error) {
       console.error(
         "Erro ao executar account.mark_overdue:",
@@ -391,6 +519,11 @@ export default function RecommendationDecisionCard({
       "skill:execute_mutating",
       "clients.manage",
     ]);
+
+  const escalonamentoTerminal =
+    escalationWorkItem !== null &&
+    (escalationWorkItem.status === "completed" ||
+      escalationWorkItem.status === "cancelled");
 
   return (
     <div className="recommendation-card">
@@ -426,7 +559,7 @@ export default function RecommendationDecisionCard({
                       className="recommendation-escalate-button"
                       disabled={
                         materializando ||
-                        resultado !== null
+                        escalationWorkItem !== null
                       }
                       onClick={() =>
                         void solicitarEscalonamento()
@@ -554,19 +687,135 @@ export default function RecommendationDecisionCard({
         </div>
       )}
 
-      {resultado && (
-        <div className="recommendation-materialize-result">
-          <Check size={18} />
-          <span>
-            {resultado.created
-              ? "Escalonamento criado."
-              : "Escalonamento já existente."}
-            {" "}
-            Status atual do trabalho:{" "}
-            {resultado.work_item.status}.
+      {carregandoEscalationWorkItem && (
+        <div className="recomendacoes-detail-loading">
+          <div className="loading-spinner" />
+          <span aria-live="polite">
+            Carregando estado do escalonamento...
           </span>
         </div>
       )}
+
+      {!carregandoEscalationWorkItem &&
+        erroEscalationWorkItem && (
+          <div className="error-message recommendation-materialize-error">
+            <AlertTriangle size={18} />
+            <span>{erroEscalationWorkItem}</span>
+          </div>
+        )}
+
+      {!carregandoEscalationWorkItem &&
+        !erroEscalationWorkItem &&
+        escalationWorkItem !== null && (
+          <div className="recommendation-escalation-panel">
+            <div className="recommendation-materialize-result">
+              <Check size={18} />
+              <span>
+                Escalonamento{" "}
+                {escalonamentoTerminal
+                  ? "encerrado"
+                  : "em andamento"}
+                {" "}-- status: {escalationWorkItem.status}.
+              </span>
+            </div>
+
+            {carregandoObservations && (
+              <div className="recomendacoes-detail-loading">
+                <div className="loading-spinner" />
+                <span aria-live="polite">
+                  Carregando histórico...
+                </span>
+              </div>
+            )}
+
+            {!carregandoObservations &&
+              erroObservations && (
+                <div className="error-message recommendation-materialize-error">
+                  <AlertTriangle size={18} />
+                  <span>{erroObservations}</span>
+                </div>
+              )}
+
+            {!carregandoObservations &&
+              !erroObservations &&
+              observations.length === 0 && (
+                <p className="recommendation-observations-empty">
+                  Nenhuma observação registrada
+                  ainda.
+                </p>
+              )}
+
+            {!carregandoObservations &&
+              !erroObservations &&
+              observations.length > 0 && (
+                <ul className="recommendation-observations-list">
+                  {observations.map(
+                    (observation) => (
+                      <li
+                        key={observation.id}
+                        className="recommendation-observation-item"
+                      >
+                        {observation.observation_type ===
+                        "observed_fact" ? (
+                          <>
+                            <FileText
+                              size={16}
+                              aria-hidden="true"
+                            />
+                            <span>
+                              Pagamento registrado
+                              em{" "}
+                              {formatarDataHora(
+                                observation.observed_at,
+                              )}
+                              .
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <ClipboardList
+                              size={16}
+                              aria-hidden="true"
+                            />
+                            <span>
+                              {ASSESSMENT_CODE_LABELS[
+                                observation
+                                  .assessment_code
+                              ] ??
+                                observation.assessment_code}
+                              {" "}
+                              em{" "}
+                              {formatarDataHora(
+                                observation.declared_at,
+                              )}
+                              .
+                            </span>
+                          </>
+                        )}
+                      </li>
+                    ),
+                  )}
+                </ul>
+              )}
+
+            {nextCursor !== null && (
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={
+                  carregandoMaisObservations
+                }
+                onClick={() =>
+                  void carregarMaisObservations()
+                }
+              >
+                {carregandoMaisObservations
+                  ? "Carregando..."
+                  : "Carregar mais"}
+              </button>
+            )}
+          </div>
+        )}
 
       {markOverdueSelecionado &&
         erroEstadoMarkOverdue && (
@@ -630,7 +879,7 @@ export default function RecommendationDecisionCard({
               <span className="recommendation-evidence-reason">
                 {action.system_recommendable
                   ? "Recomendável."
-                  : action.reason ??
+                  : traduzirRazao(action.reason) ??
                     "Sem motivo informado pelo servidor."}
               </span>
             </li>

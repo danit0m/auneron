@@ -117,7 +117,7 @@ export interface HumanEscalationMaterializationResponse {
  * escrito por HumanAccountMarkOverdueMaterializationService, nunca
  * pelo cliente.
  */
-export interface MarkOverdueWorkItemResponse {
+export interface WorkItemSummaryResponse {
   id: number;
   work_key: string | null;
   status: string;
@@ -130,11 +130,11 @@ export interface MarkOverdueWorkItemResponse {
 }
 
 export interface WorkItemListResponse {
-  items: MarkOverdueWorkItemResponse[];
+  items: WorkItemSummaryResponse[];
 }
 
 export interface MarkOverdueMaterializationResponse {
-  work_item: MarkOverdueWorkItemResponse;
+  work_item: WorkItemSummaryResponse;
   approval_request: ApprovalRequestResponse;
   created: boolean;
   duplicate: boolean;

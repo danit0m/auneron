@@ -200,3 +200,47 @@
 .recommendation-evidence-reason {
   color: var(--text-subtle);
 }
+
+.recommendation-escalation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recommendation-observations-empty {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+/*
+ * Lista de observations: deliberadamente neutra -- nenhuma cor de
+ * sucesso/fracasso, observed_fact e human_assessment usam o mesmo
+ * estilo de linha, só o ícone muda (VALUE-3.1: sem inferência causal).
+ */
+.recommendation-observations-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recommendation-observation-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.recommendation-observation-item svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--text-subtle);
+}

@@ -488,6 +488,11 @@ def list_work_items(
         default=None,
         gt=0,
     ),
+    work_key: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=255,
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -526,6 +531,7 @@ def list_work_items(
                 else None
             ),
             assignee_user_id=assignee_user_id,
+            work_key=work_key,
             limit=limit,
         )
     except WorkError as error:

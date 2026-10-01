@@ -818,6 +818,7 @@ class WorkManagerService:
         statuses: tuple[str, ...] | None = None,
         priorities: tuple[str, ...] | None = None,
         assignee_user_id: int | None = None,
+        work_key: str | None = None,
         limit: int = 50,
     ) -> tuple[WorkItem, ...]:
         normalized_scope = _normalized_choice(
@@ -898,6 +899,7 @@ class WorkManagerService:
                 statuses=normalized_statuses,
                 priorities=normalized_priorities,
                 assignee_user_id=normalized_assignee,
+                work_key=work_key,
                 limit=normalized_limit,
             )
         )

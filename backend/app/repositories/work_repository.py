@@ -87,6 +87,7 @@ class WorkRepository:
         statuses: tuple[str, ...] | None,
         priorities: tuple[str, ...] | None,
         assignee_user_id: int | None,
+        work_key: str | None,
         limit: int,
     ) -> list[WorkItem]:
         statement = select(WorkItem).where(
@@ -123,6 +124,11 @@ class WorkRepository:
             statement = statement.where(
                 WorkItem.assignee_user_id
                 == assignee_user_id
+            )
+
+        if work_key is not None:
+            statement = statement.where(
+                WorkItem.work_key == work_key
             )
 
         statement = statement.order_by(
