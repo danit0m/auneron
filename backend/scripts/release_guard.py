@@ -9,6 +9,7 @@ DIST_ROOT = FRONTEND_ROOT / "dist"
 
 ALLOWED_ENV_FILES = {
     "backend/.env.example",
+    "backend/.env.recovery-smoke.example",
     "backend/.env.test.example",
     "frontend/.env.example",
 }
