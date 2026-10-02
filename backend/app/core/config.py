@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from decimal import Decimal
 from functools import lru_cache
 from ipaddress import ip_network
@@ -9,6 +10,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field
 from pydantic import SecretStr
+from pydantic import field_validator
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -270,6 +272,34 @@ class Settings(BaseSettings):
         le=1000,
     )
 
+    escalation_payment_observation_interval_seconds: int = Field(
+        default=60,
+        validation_alias=(
+            "ESCALATION_PAYMENT_OBSERVATION_INTERVAL_SECONDS"
+        ),
+        ge=30,
+        le=3600,
+    )
+    escalation_payment_observation_batch_size: int = Field(
+        default=100,
+        validation_alias=(
+            "ESCALATION_PAYMENT_OBSERVATION_BATCH_SIZE"
+        ),
+        ge=1,
+        le=1000,
+    )
+    # None = recurso DESABILITADO (nunca "sem limite temporal"): sem um
+    # floor explicito o worker nao processa nenhum candidato, para que
+    # um erro operacional nao transforme o primeiro startup em backfill.
+    escalation_payment_observation_activation_floor: (
+        datetime | None
+    ) = Field(
+        default=None,
+        validation_alias=(
+            "ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR"
+        ),
+    )
+
     approval_request_ttl_minutes: int = Field(
         default=1440,
         validation_alias="APPROVAL_REQUEST_TTL_MINUTES",
@@ -525,6 +555,23 @@ class Settings(BaseSettings):
                     "processo do Uvicorn não receberia o mesmo "
                     "valor validado."
                 )
+
+    @field_validator(
+        "escalation_payment_observation_activation_floor"
+    )
+    @classmethod
+    def validate_activation_floor_timezone(
+        cls, value: datetime | None
+    ) -> datetime | None:
+        # Um floor sem fuso e ambiguo contra AccountEvent.occurred_at
+        # (timestamptz) -- falha no startup, nunca interpretacao silenciosa.
+        if value is not None and value.tzinfo is None:
+            raise ValueError(
+                "ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR "
+                "exige fuso horario explicito (ex.: "
+                "2026-10-02T00:00:00+00:00)."
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:

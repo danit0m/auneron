@@ -90,6 +90,10 @@ from app.core.policy_account_mark_overdue_trigger_maintenance import (
     policy_account_mark_overdue_trigger_maintenance_loop,
     run_policy_account_mark_overdue_trigger_async,
 )
+from app.core.escalation_payment_observation_maintenance import (
+    escalation_payment_observation_maintenance_loop,
+    run_escalation_payment_observation_recovery_async,
+)
 from app.database.database import (
     check_database_connection,
     engine,
@@ -162,6 +166,7 @@ async def lifespan(_: FastAPI):
             await run_receivables_monitor_async()
             await run_business_effect_verification_recovery_async()
             await run_policy_account_mark_overdue_trigger_async()
+            await run_escalation_payment_observation_recovery_async()
             await check_production_developer_roles_async()
 
         maintenance_tasks = (
@@ -200,6 +205,9 @@ async def lifespan(_: FastAPI):
             ),
             asyncio.create_task(
                 policy_account_mark_overdue_trigger_maintenance_loop()
+            ),
+            asyncio.create_task(
+                escalation_payment_observation_maintenance_loop()
             ),
         )
     else:
