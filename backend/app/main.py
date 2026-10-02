@@ -166,7 +166,6 @@ async def lifespan(_: FastAPI):
             await run_receivables_monitor_async()
             await run_business_effect_verification_recovery_async()
             await run_policy_account_mark_overdue_trigger_async()
-            await run_escalation_payment_observation_recovery_async()
             await check_production_developer_roles_async()
 
         maintenance_tasks = (
@@ -206,12 +205,38 @@ async def lifespan(_: FastAPI):
             asyncio.create_task(
                 policy_account_mark_overdue_trigger_maintenance_loop()
             ),
+        )
+    else:
+        maintenance_tasks = ()
+
+    # Evidence worker: gate DEDICADO (activation_floor), fora e depois do
+    # bloco global. floor=None => nao agendado; floor valido => somente
+    # a coleta, independentemente de MAINTENANCE_ENABLED.
+    if (
+        settings.escalation_payment_observation_activation_floor
+        is not None
+    ):
+        if database_online:
+            try:
+                await run_escalation_payment_observation_recovery_async()
+            except Exception:
+                application_logger.exception(
+                    "escalation_payment_observation_startup_failed",
+                    extra={
+                        "event": "application_lifecycle",
+                        "state": "evidence_startup_failed",
+                    },
+                )
+
+        evidence_tasks = (
             asyncio.create_task(
                 escalation_payment_observation_maintenance_loop()
             ),
         )
     else:
-        maintenance_tasks = ()
+        evidence_tasks = ()
+
+    background_tasks = maintenance_tasks + evidence_tasks
 
     application_logger.info(
         "application_started",
@@ -228,14 +253,14 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        for maintenance_task in maintenance_tasks:
-            maintenance_task.cancel()
+        for background_task in background_tasks:
+            background_task.cancel()
 
-        for maintenance_task in maintenance_tasks:
+        for background_task in background_tasks:
             with suppress(
                 asyncio.CancelledError
             ):
-                await maintenance_task
+                await background_task
 
         engine.dispose()
 

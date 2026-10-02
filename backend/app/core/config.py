@@ -557,6 +557,23 @@ class Settings(BaseSettings):
                 )
 
     @field_validator(
+        "escalation_payment_observation_activation_floor",
+        mode="before",
+    )
+    @classmethod
+    def normalize_blank_activation_floor(
+        cls, value: object
+    ) -> object:
+        # Compose/shell podem materializar a variavel como "" ou so
+        # espacos (ex.: `VAR=` em .env). Somente vazio/whitespace vira
+        # None (= recurso desabilitado); qualquer valor nao vazio segue
+        # sujeito a validacao de datetime com fuso -- malformado continua
+        # falhando no startup, nunca desabilita em silencio.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator(
         "escalation_payment_observation_activation_floor"
     )
     @classmethod

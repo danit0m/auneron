@@ -18,16 +18,20 @@ proprias entidades, nunca sobre contagens globais.
 
 from __future__ import annotations
 
+import ast
 import inspect
+import re
 import threading
 import time
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app import main as main_module
@@ -38,6 +42,7 @@ from app.core.escalation_payment_observation_maintenance import (
     run_escalation_payment_observation_recovery,
 )
 from app.database.database import SessionLocal
+from app.database.database import engine
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.escalation_observation import EscalationObservation
@@ -862,3 +867,498 @@ def test_worker_is_registered_in_lifespan() -> None:
     assert (
         "escalation_payment_observation_maintenance_loop" in source
     )
+
+
+# ---------------------------------------------------------------------
+# 18 -- VALUE-3.4B: normalizacao estreita do floor ("" / whitespace)
+# ---------------------------------------------------------------------
+
+_FLOOR_ENV_NAME = "ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR"
+
+
+@pytest.mark.parametrize(
+    "blank_value", ["", " ", "   ", "\t", "\n", " \t\r\n "]
+)
+def test_settings_blank_floor_argument_is_normalized_to_none(
+    blank_value: str,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="test",
+        DATABASE_URL=TEST_URL,
+        ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR=blank_value,
+    )
+
+    assert (
+        settings.escalation_payment_observation_activation_floor
+        is None
+    )
+
+
+@pytest.mark.parametrize("blank_value", ["", "   ", "\t\n"])
+def test_settings_blank_floor_from_environment_is_none(
+    monkeypatch: pytest.MonkeyPatch, blank_value: str
+) -> None:
+    # Compose/shell/.env podem materializar a variavel vazia (ver
+    # Design Freeze VALUE-3.4B): precisa desabilitar, nao derrubar o
+    # import dos Settings.
+    monkeypatch.setenv(_FLOOR_ENV_NAME, blank_value)
+
+    settings = Settings(
+        _env_file=None, APP_ENV="test", DATABASE_URL=TEST_URL
+    )
+
+    assert (
+        settings.escalation_payment_observation_activation_floor
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "malformed_value",
+    [
+        "not-a-date",
+        "amanha",
+        "2030-01-01T00:00:00",  # naive
+        "2030-01-01",  # so data
+        " 2030-01-01T00:00:00+00:00 ",  # nao vazio: sem trim
+    ],
+)
+def test_settings_non_blank_malformed_floor_still_fails_startup(
+    malformed_value: str,
+) -> None:
+    # A normalizacao NAO pode mascarar configuracao malformada:
+    # valores nao vazios continuam sob a validacao existente.
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            APP_ENV="test",
+            DATABASE_URL=TEST_URL,
+            ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR=(
+                malformed_value
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "valid_value",
+    [
+        "2030-01-01T00:00:00+00:00",
+        "2030-01-01T00:00:00Z",
+        "2030-01-01T00:00:00-03:00",
+    ],
+)
+def test_settings_tz_aware_floor_is_still_accepted(
+    valid_value: str,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="test",
+        DATABASE_URL=TEST_URL,
+        ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR=valid_value,
+    )
+
+    floor = settings.escalation_payment_observation_activation_floor
+    assert floor is not None and floor.tzinfo is not None
+
+
+# ---------------------------------------------------------------------
+# 19 -- VALUE-3.4B: unico destino de escrita em runtime
+# ---------------------------------------------------------------------
+
+_WRITE_STATEMENT = re.compile(
+    r"^\s*(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+\"?(\w+)\"?",
+    re.IGNORECASE,
+)
+
+
+def _capture_statements(run) -> list[str]:
+    statements: list[str] = []
+
+    def listener(
+        conn, cursor, statement, parameters, context, executemany
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        run()
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    return statements
+
+
+def _write_targets(statements: list[str]) -> dict[str, set[str]]:
+    targets: dict[str, set[str]] = {}
+    for statement in statements:
+        match = _WRITE_STATEMENT.match(statement)
+        if match:
+            verb = match.group(1).split()[0].upper()
+            targets.setdefault(verb, set()).add(match.group(2))
+    return targets
+
+
+def test_worker_writes_only_escalation_observations_and_replay_is_silent(
+    db_session: Session,
+) -> None:
+    account, _, _ = _setup_escalation(db_session)
+    floor = _unique_floor()
+    _payment_event(
+        db_session,
+        account=account,
+        occurred_at=floor + timedelta(seconds=1),
+    )
+    summaries = []
+
+    first = _capture_statements(
+        lambda: summaries.append(
+            run_escalation_payment_observation_recovery(
+                activation_floor=floor
+            )
+        )
+    )
+
+    assert summaries[0].created_count == 1
+    assert summaries[0].failure_count == 0
+    # TODO SQL de escrita emitido pelo worker tem como unico alvo
+    # escalation_observations (nenhum UPDATE/DELETE em lugar nenhum).
+    assert _write_targets(first) == {
+        "INSERT": {"escalation_observations"}
+    }
+    assert not any(
+        re.search(r"FOR\s+UPDATE", statement, re.IGNORECASE)
+        for statement in first
+    )
+
+    replay = _capture_statements(
+        lambda: summaries.append(
+            run_escalation_payment_observation_recovery(
+                activation_floor=floor
+            )
+        )
+    )
+
+    assert summaries[1].created_count == 0
+    assert _write_targets(replay) == {}
+
+
+# ---------------------------------------------------------------------
+# 20 -- VALUE-3.4B: boundary AST/import do evidence worker
+# ---------------------------------------------------------------------
+
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+_WORKER_PATH = (
+    "app/core/escalation_payment_observation_maintenance.py"
+)
+_SERVICE_PATH = "app/services/escalation_observation_service.py"
+
+# modulo -> nomes permitidos (None = `import modulo` inteiro).
+_ALLOWED_IMPORTS = {
+    _WORKER_PATH: {
+        "__future__": None,
+        "asyncio": None,
+        "logging": None,
+        "dataclasses": {"dataclass"},
+        "datetime": {"datetime"},
+        "typing": {"Callable"},
+        "sqlalchemy": {"and_", "exists", "or_", "select"},
+        "sqlalchemy.orm": {"Session"},
+        "app.core.config": {"settings"},
+        "app.core.human_escalation_eligibility": {
+            "work_key_for_episode"
+        },
+        "app.database.database": {"SessionLocal"},
+        "app.models.account": {"Account"},
+        "app.models.account_event": {"AccountEvent"},
+        "app.models.escalation_observation": {"EscalationObservation"},
+        "app.models.work": {"WorkItem"},
+        "app.services.escalation_observation_service": {
+            "WORK_KEY_PREFIX",
+            "EscalationObservationConflictError",
+            "EscalationObservationService",
+            "EscalationObservationValidationError",
+        },
+    },
+    _SERVICE_PATH: {
+        "__future__": {"annotations"},
+        "dataclasses": {"dataclass"},
+        "datetime": {"datetime", "timezone"},
+        "sqlalchemy.exc": {"IntegrityError"},
+        "sqlalchemy.orm": {"Session"},
+        "app.models.account_event": {"AccountEvent"},
+        "app.models.escalation_observation": {
+            "ASSESSMENT_CODES",
+            "EscalationObservation",
+        },
+        "app.models.work": {"WorkItem"},
+        "app.services.work_service": {"WorkActor"},
+    },
+}
+
+_WRITE_CALLS = frozenset(
+    {
+        "add",
+        "add_all",
+        "commit",
+        "delete",
+        "merge",
+        "flush",
+        "bulk_save_objects",
+        "bulk_insert_mappings",
+        "bulk_update_mappings",
+        "update",
+        "insert",
+        "executemany",
+        "begin",
+    }
+)
+
+
+def _boundary_problems(
+    relative_path: str, source: bytes | None = None
+) -> list[str]:
+    raw = (
+        source
+        if source is not None
+        else (_BACKEND_DIR / relative_path).read_bytes()
+    )
+    tree = ast.parse(raw)
+    allowed = _ALLOWED_IMPORTS[relative_path]
+    problems: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = ("." * node.level) + (node.module or "")
+            names = {alias.name for alias in node.names}
+            if module not in allowed:
+                problems.append(f"import fora da allowlist: {module}")
+            elif allowed[module] is not None and not names <= allowed[
+                module
+            ]:
+                problems.append(
+                    f"nomes fora da allowlist em {module}: "
+                    f"{sorted(names - allowed[module])}"
+                )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name not in allowed:
+                    problems.append(
+                        f"import fora da allowlist: {alias.name}"
+                    )
+
+    attribute_calls = [
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+    ]
+
+    if relative_path == _WORKER_PATH:
+        forbidden = sorted(set(attribute_calls) & _WRITE_CALLS)
+        if forbidden:
+            problems.append(
+                f"worker chama operacao de escrita: {forbidden}"
+            )
+    else:
+        forbidden = sorted(
+            set(attribute_calls) & (_WRITE_CALLS - {"add", "commit"})
+        )
+        if forbidden:
+            problems.append(
+                f"servico chama escrita nao permitida: {forbidden}"
+            )
+        built = {
+            target.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "EscalationObservation"
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add"
+            ):
+                argument = node.args[0] if node.args else None
+                is_observation = (
+                    isinstance(argument, ast.Name)
+                    and argument.id in built | {"observation"}
+                ) or (
+                    isinstance(argument, ast.Call)
+                    and getattr(argument.func, "id", "")
+                    == "EscalationObservation"
+                )
+                if not is_observation:
+                    problems.append(
+                        "add() de algo que nao e EscalationObservation: "
+                        f"{ast.unparse(node)}"
+                    )
+    return problems
+
+
+@pytest.mark.parametrize(
+    "relative_path", [_WORKER_PATH, _SERVICE_PATH]
+)
+def test_evidence_worker_and_service_respect_the_boundary(
+    relative_path: str,
+) -> None:
+    assert _boundary_problems(relative_path) == []
+
+
+@pytest.mark.parametrize(
+    "relative_path,appended,expected_fragment",
+    [
+        (
+            _WORKER_PATH,
+            "\nfrom app.services.approval_service import "
+            "ApprovalService\n",
+            "import fora da allowlist",
+        ),
+        (
+            _WORKER_PATH,
+            "\nfrom app.services.overdue_detection_service import "
+            "OverdueDetectionService\n",
+            "import fora da allowlist",
+        ),
+        (
+            _WORKER_PATH,
+            "\nfrom sqlalchemy import update\n",
+            "nomes fora da allowlist",
+        ),
+        (
+            _WORKER_PATH,
+            "\ndef _x(db):\n    db.delete(object())\n",
+            "operacao de escrita",
+        ),
+        (
+            _WORKER_PATH,
+            "\ndef _x(db):\n    db.commit()\n",
+            "operacao de escrita",
+        ),
+        (
+            _SERVICE_PATH,
+            "\ndef _x(self):\n    self.db.add(Account())\n",
+            "nao e EscalationObservation",
+        ),
+        (
+            _SERVICE_PATH,
+            "\ndef _x(self):\n    self.db.delete(object())\n",
+            "escrita nao permitida",
+        ),
+        (
+            _SERVICE_PATH,
+            "\nfrom app.services.approval_service import "
+            "ApprovalService\n",
+            "import fora da allowlist",
+        ),
+    ],
+)
+def test_boundary_guard_is_sensitive_to_forbidden_changes(
+    relative_path: str, appended: str, expected_fragment: str
+) -> None:
+    original = (_BACKEND_DIR / relative_path).read_bytes()
+    mutated = original + appended.encode("utf-8")
+
+    problems = _boundary_problems(relative_path, mutated)
+
+    assert any(expected_fragment in problem for problem in problems), (
+        problems
+    )
+
+
+# ---------------------------------------------------------------------
+# 21 -- VALUE-3.4B: repasse nulo do floor no docker-compose.yml (DEV)
+# ---------------------------------------------------------------------
+
+_COMPOSE_PATH = _BACKEND_DIR / "docker-compose.yml"
+
+
+def _compose_floor_problems(text: str) -> list[str]:
+    # Sem PyYAML (nao e dependencia do projeto): analise textual dos
+    # blocos de servico de primeiro nivel.
+    text = text.replace("\r\n", "\n")
+    services = re.search(
+        r"^services:\n(.*?)(?=^\S)", text, re.DOTALL | re.MULTILINE
+    )
+    assert services is not None, "docker-compose.yml sem `services:`"
+    parts = re.split(
+        r"^  (\w[\w-]*):\n", services.group(1), flags=re.MULTILINE
+    )
+    blocks = {
+        parts[index]: parts[index + 1]
+        for index in range(1, len(parts), 2)
+    }
+
+    problems: list[str] = []
+    backend_lines = [
+        line
+        for line in blocks.get("backend", "").splitlines()
+        if _FLOOR_ENV_NAME in line
+        and not line.lstrip().startswith("#")
+    ]
+    if backend_lines != [f"      {_FLOOR_ENV_NAME}:"]:
+        problems.append(
+            f"servico 'backend' deve declarar exatamente "
+            f"'{_FLOOR_ENV_NAME}:' (repasse nulo); achado={backend_lines}"
+        )
+    for name, block in blocks.items():
+        if name == "backend":
+            continue
+        if any(
+            _FLOOR_ENV_NAME in line
+            and not line.lstrip().startswith("#")
+            for line in block.splitlines()
+        ):
+            problems.append(
+                f"servico '{name}' nao deve repassar o floor"
+            )
+    return problems
+
+
+def test_compose_passes_floor_as_null_passthrough_only_to_backend() -> (
+    None
+):
+    assert _compose_floor_problems(
+        _COMPOSE_PATH.read_text(encoding="utf-8")
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "mutation_name",
+    [
+        "valor_fixo",
+        "default_vazio",
+        "servico_migration",
+        "removido_do_backend",
+    ],
+)
+def test_compose_floor_guard_is_sensitive_to_forbidden_forms(
+    mutation_name: str,
+) -> None:
+    text = _COMPOSE_PATH.read_text(encoding="utf-8").replace(
+        "\r\n", "\n"
+    )
+    line = f"      {_FLOOR_ENV_NAME}:"
+    assert line in text
+
+    mutated = {
+        "valor_fixo": text.replace(
+            line, f"{line} '2030-01-01T00:00:00+00:00'"
+        ),
+        "default_vazio": text.replace(
+            line, f"{line} ${{{_FLOOR_ENV_NAME}:-}}"
+        ),
+        "servico_migration": text.replace(
+            "      DATABASE_APPLICATION_NAME: auneron-migration\n",
+            "      DATABASE_APPLICATION_NAME: auneron-migration\n"
+            f"{line}\n",
+        ),
+        "removido_do_backend": text.replace(line + "\n", ""),
+    }[mutation_name]
+    assert mutated != text
+
+    assert _compose_floor_problems(mutated) != []

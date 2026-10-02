@@ -1,20 +1,39 @@
 """
-P2 -- MAINTENANCE_ENABLED gate. Prova a propriedade de seguranca
-central do Application Recovery Smoke: com `maintenance_enabled=False`,
-nenhuma das 11 operacoes recovery-once e chamada e nenhuma das 10
-maintenance tasks e criada. O teste com `True` e so contraste/regressao
-do comportamento ja existente -- a prova do `False` e que fecha P2.
+P2 / VALUE-3.4B -- fronteira de ativacao do lifespan().
+
+Dois gates independentes governam o lifespan() de app.main:
+
+* MAINTENANCE_ENABLED -- gate GLOBAL: 13 acoes de recovery-once no
+  startup + 12 loops periodicos (25 operacoes, nominais abaixo).
+* ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR -- gate DEDICADO do
+  evidence worker (observed_fact): floor=None => nao agendado; floor
+  valido => somente a coleta (1 recovery-once + 1 loop), independente
+  de MAINTENANCE_ENABLED. O evidence worker NAO pertence ao conjunto
+  global.
+
+A garantia principal NAO e uma contagem: (a) as operacoes descobertas
+por AST no lifespan sao exatamente a uniao nominal GLOBAL + EVIDENCE
+(operacao nova sem classificacao => falha); (b) o corpo de
+`if settings.maintenance_enabled` contem EXATAMENTE o conjunto global e
+nenhuma operacao do evidence worker; (c) a matriz 2x2 prova, por caso,
+quais operacoes rodam (sem duplicatas), que todas as tasks sao
+canceladas no shutdown, que nada vaza e que o shutdown nao pendura.
 
 Alvo e o proprio `lifespan()` de app.main, nunca os modulos individuais
-de manutencao (nenhum deles e alterado por este gate). Mesmo idioma
-assincrono ja usado em test_maintenance_loop_resilience.py: teste
-sincrono dirigindo uma funcao interna `async def exercise()` via
-asyncio.run(), sem pytest-asyncio/anyio.
+(nenhum e alterado por este gate). Idioma assincrono ja usado em
+test_maintenance_loop_resilience.py: teste sincrono dirigindo uma
+`async def` interna via asyncio.run(), sem pytest-asyncio/anyio.
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import timezone
 
 import pytest
 
@@ -22,18 +41,18 @@ from app import main as main_module
 from app.core.config import settings as global_settings
 
 
-# As 11 chamadas reais dentro do bloco `if database_online:` do
-# lifespan() -- corrigido apos contagem mecanica do codigo atual (nao
-# sao 10; check_production_developer_roles_async e a 11a). As duas
-# primeiras sao chamadas via `asyncio.to_thread(func)` -- funcoes
-# SINCRONAS no codigo real, nunca corrotinas; as demais 9 sao
-# `await func()` diretamente.
-SYNC_RECOVERY_ONCE_NAMES = (
+# ---------------------------------------------------------------------
+# Classificacao NOMINAL das operacoes do lifespan
+# ---------------------------------------------------------------------
+
+# Chamadas SINCRONAS via `asyncio.to_thread(func)` no bloco global.
+GLOBAL_RECOVERY_SYNC = (
     "run_auth_session_cleanup",
     "run_skill_invocation_recovery",
 )
 
-ASYNC_RECOVERY_ONCE_NAMES = (
+# `await func()` diretamente no bloco global.
+GLOBAL_RECOVERY_ASYNC = (
     "run_work_skill_execution_recovery_async",
     "run_work_outcome_evaluation_recovery_async",
     "run_pilot_mutation_recovery_async",
@@ -42,14 +61,12 @@ ASYNC_RECOVERY_ONCE_NAMES = (
     "run_client_behavior_memory_recalculation_async",
     "run_client_classification_recalculation_async",
     "run_receivables_monitor_async",
+    "run_business_effect_verification_recovery_async",
+    "run_policy_account_mark_overdue_trigger_async",
     "check_production_developer_roles_async",
 )
 
-RECOVERY_ONCE_NAMES = (
-    SYNC_RECOVERY_ONCE_NAMES + ASYNC_RECOVERY_ONCE_NAMES
-)
-
-MAINTENANCE_LOOP_NAMES = (
+GLOBAL_LOOPS = (
     "auth_session_maintenance_loop",
     "skill_invocation_maintenance_loop",
     "work_skill_execution_maintenance_loop",
@@ -60,93 +77,362 @@ MAINTENANCE_LOOP_NAMES = (
     "client_behavior_memory_maintenance_loop",
     "client_classification_maintenance_loop",
     "receivables_monitor_maintenance_loop",
+    "business_effect_verification_maintenance_loop",
+    "policy_account_mark_overdue_trigger_maintenance_loop",
 )
 
+EVIDENCE_RECOVERY = (
+    "run_escalation_payment_observation_recovery_async",
+)
+EVIDENCE_LOOPS = (
+    "escalation_payment_observation_maintenance_loop",
+)
 
-def _install_fakes(monkeypatch, calls: list[str]) -> None:
-    def make_sync_recovery_once(name: str):
+GLOBAL_OPERATIONS = frozenset(
+    GLOBAL_RECOVERY_SYNC + GLOBAL_RECOVERY_ASYNC + GLOBAL_LOOPS
+)
+EVIDENCE_OPERATIONS = frozenset(EVIDENCE_RECOVERY + EVIDENCE_LOOPS)
+
+FLOOR = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+# Tempo maximo tolerado para o lifespan() sair: um task nao cancelado
+# faz o `await` do finally pendurar -- aqui isso vira falha, nao hang.
+SHUTDOWN_BUDGET_SECONDS = 2.0
+HARD_TIMEOUT_SECONDS = 10.0
+
+
+# ---------------------------------------------------------------------
+# Prova ESTATICA (AST do lifespan real)
+# ---------------------------------------------------------------------
+
+
+def _lifespan_tree() -> ast.AST:
+    return ast.parse(inspect.getsource(main_module.lifespan))
+
+
+def _called_operations(node: ast.AST) -> set[str]:
+    operations: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        if isinstance(func, ast.Name) and (
+            func.id.startswith(("run_", "check_"))
+            or func.id.endswith("_loop")
+        ):
+            operations.add(func.id)
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "to_thread"
+            and child.args
+            and isinstance(child.args[0], ast.Name)
+        ):
+            operations.add(child.args[0].id)
+    operations.discard("check_database_connection")
+    return operations
+
+
+def _maintenance_gate_block() -> ast.If:
+    for node in ast.walk(_lifespan_tree()):
+        if (
+            isinstance(node, ast.If)
+            and ast.unparse(node.test)
+            == "settings.maintenance_enabled"
+        ):
+            return node
+    raise AssertionError(
+        "lifespan() nao possui `if settings.maintenance_enabled`."
+    )
+
+
+def test_every_lifespan_operation_is_classified() -> None:
+    discovered = _called_operations(_lifespan_tree())
+
+    assert discovered == GLOBAL_OPERATIONS | EVIDENCE_OPERATIONS, (
+        "Operacao(oes) do lifespan sem classificacao nominal "
+        "(GLOBAL ou EVIDENCE) -- nao classificadas: "
+        f"{sorted(discovered - GLOBAL_OPERATIONS - EVIDENCE_OPERATIONS)}"
+        "; classificadas mas ausentes: "
+        f"{sorted((GLOBAL_OPERATIONS | EVIDENCE_OPERATIONS) - discovered)}"
+    )
+
+
+def test_global_gate_contains_exactly_the_global_operations() -> None:
+    inside_global_gate = _called_operations(_maintenance_gate_block())
+
+    assert inside_global_gate == GLOBAL_OPERATIONS
+
+
+def test_evidence_worker_is_outside_the_global_gate() -> None:
+    inside_global_gate = _called_operations(_maintenance_gate_block())
+
+    assert inside_global_gate.isdisjoint(EVIDENCE_OPERATIONS)
+    assert (
+        _called_operations(_lifespan_tree()) & EVIDENCE_OPERATIONS
+        == EVIDENCE_OPERATIONS
+    )
+
+
+def test_nominal_classes_are_disjoint_and_complete() -> None:
+    assert GLOBAL_OPERATIONS.isdisjoint(EVIDENCE_OPERATIONS)
+    # sem duplicata dentro das tuplas nominais
+    for group in (
+        GLOBAL_RECOVERY_SYNC,
+        GLOBAL_RECOVERY_ASYNC,
+        GLOBAL_LOOPS,
+        EVIDENCE_RECOVERY,
+        EVIDENCE_LOOPS,
+    ):
+        assert len(group) == len(set(group))
+
+
+# ---------------------------------------------------------------------
+# Prova DINAMICA (fakes + lifespan real)
+# ---------------------------------------------------------------------
+
+
+@dataclass
+class _Outcome:
+    calls: list[str]
+    cancelled: set[str]
+    leaked_tasks: int
+    shutdown_seconds: float
+    logged_exceptions: list[str]
+
+
+def _install_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[str],
+    cancelled: set[str],
+    *,
+    database_online: bool,
+    evidence_recovery_raises: bool,
+    logged_exceptions: list[str],
+) -> None:
+    def make_sync(name: str):
         def fake(*args, **kwargs):
             calls.append(name)
 
         return fake
 
-    for name in SYNC_RECOVERY_ONCE_NAMES:
-        monkeypatch.setattr(
-            main_module, name, make_sync_recovery_once(name)
-        )
-
-    def make_async_recovery_once(name: str):
+    def make_async(name: str):
         async def fake(*args, **kwargs):
             calls.append(name)
+            if evidence_recovery_raises and name in EVIDENCE_RECOVERY:
+                raise RuntimeError("falha simulada do evidence worker")
 
         return fake
-
-    for name in ASYNC_RECOVERY_ONCE_NAMES:
-        monkeypatch.setattr(
-            main_module, name, make_async_recovery_once(name)
-        )
 
     def make_loop(name: str):
         async def fake_loop():
             calls.append(name)
-            # nunca completa sozinho -- so cancelado pelo finally do
-            # lifespan(); prova que a task foi de fato agendada sem
-            # depender de um sleep real longo.
-            await asyncio.Event().wait()
+            try:
+                # nunca completa sozinho -- so cancelado pelo finally
+                # do lifespan(); prova que a task foi agendada e depois
+                # cancelada, sem depender de sleep real.
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.add(name)
+                raise
 
         return fake_loop
 
-    for name in MAINTENANCE_LOOP_NAMES:
-        monkeypatch.setattr(
-            main_module, name, make_loop(name)
-        )
+    for name in GLOBAL_RECOVERY_SYNC:
+        monkeypatch.setattr(main_module, name, make_sync(name))
+    for name in GLOBAL_RECOVERY_ASYNC + EVIDENCE_RECOVERY:
+        monkeypatch.setattr(main_module, name, make_async(name))
+    for name in GLOBAL_LOOPS + EVIDENCE_LOOPS:
+        monkeypatch.setattr(main_module, name, make_loop(name))
 
     monkeypatch.setattr(
         main_module,
         "check_database_connection",
-        lambda: True,
+        lambda: database_online,
+    )
+    monkeypatch.setattr(
+        main_module.application_logger,
+        "exception",
+        lambda message, *args, **kwargs: logged_exceptions.append(
+            str(message)
+        ),
     )
 
 
-def _run_lifespan_once() -> None:
+def _run_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    maintenance_enabled: bool,
+    floor: datetime | None,
+    database_online: bool = True,
+    evidence_recovery_raises: bool = False,
+) -> _Outcome:
+    calls: list[str] = []
+    cancelled: set[str] = set()
+    logged_exceptions: list[str] = []
+    _install_fakes(
+        monkeypatch,
+        calls,
+        cancelled,
+        database_online=database_online,
+        evidence_recovery_raises=evidence_recovery_raises,
+        logged_exceptions=logged_exceptions,
+    )
+    monkeypatch.setattr(
+        global_settings, "maintenance_enabled", maintenance_enabled
+    )
+    monkeypatch.setattr(
+        global_settings,
+        "escalation_payment_observation_activation_floor",
+        floor,
+    )
+
+    result: dict[str, object] = {}
+
     async def exercise() -> None:
+        baseline = set(asyncio.all_tasks())
         async with main_module.lifespan(main_module.app):
             # cede o loop uma vez para as tasks criadas rodarem seu
             # primeiro passo (append em calls) antes do cleanup.
             await asyncio.sleep(0)
+            exit_started = time.monotonic()
+        result["shutdown_seconds"] = time.monotonic() - exit_started
 
-    asyncio.run(exercise())
+        # Apos sair do lifespan NENHUMA task criada por ele pode
+        # continuar viva.
+        leaked = [
+            task
+            for task in asyncio.all_tasks()
+            if task not in baseline
+            and task is not asyncio.current_task()
+            and not task.done()
+        ]
+        result["leaked"] = len(leaked)
+        for task in leaked:
+            task.cancel()
+        await asyncio.gather(*leaked, return_exceptions=True)
+
+    asyncio.run(
+        asyncio.wait_for(exercise(), timeout=HARD_TIMEOUT_SECONDS)
+    )
+
+    return _Outcome(
+        calls=calls,
+        cancelled=cancelled,
+        leaked_tasks=int(result["leaked"]),
+        shutdown_seconds=float(result["shutdown_seconds"]),
+        logged_exceptions=logged_exceptions,
+    )
 
 
-def test_maintenance_disabled_runs_zero_of_21_operations(
+@pytest.mark.parametrize(
+    "maintenance_enabled,floor",
+    [
+        (False, None),
+        (False, FLOOR),
+        (True, None),
+        (True, FLOOR),
+    ],
+    ids=[
+        "maintenance=false/floor=None",
+        "maintenance=false/floor=valid",
+        "maintenance=true/floor=None",
+        "maintenance=true/floor=valid",
+    ],
+)
+def test_activation_contract_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+    maintenance_enabled: bool,
+    floor: datetime | None,
+) -> None:
+    outcome = _run_lifespan(
+        monkeypatch,
+        maintenance_enabled=maintenance_enabled,
+        floor=floor,
+    )
+
+    expected_global = (
+        GLOBAL_OPERATIONS if maintenance_enabled else frozenset()
+    )
+    expected_evidence = (
+        EVIDENCE_OPERATIONS if floor is not None else frozenset()
+    )
+
+    # classe GLOBAL: tudo ou nada, conforme MAINTENANCE_ENABLED
+    assert set(outcome.calls) & GLOBAL_OPERATIONS == expected_global
+    # classe EVIDENCE: tudo ou nada, conforme o floor
+    assert set(outcome.calls) & EVIDENCE_OPERATIONS == expected_evidence
+    # nada fora das duas classes e nenhuma operacao em duplicidade
+    # ("exatamente uma vez")
+    assert set(outcome.calls) <= GLOBAL_OPERATIONS | EVIDENCE_OPERATIONS
+    assert len(outcome.calls) == len(set(outcome.calls))
+
+    # todas as tasks agendadas foram canceladas no shutdown
+    expected_cancelled = (
+        set(GLOBAL_LOOPS) if maintenance_enabled else set()
+    ) | (set(EVIDENCE_LOOPS) if floor is not None else set())
+    assert outcome.cancelled == expected_cancelled
+    assert outcome.leaked_tasks == 0
+    assert outcome.shutdown_seconds < SHUTDOWN_BUDGET_SECONDS
+
+
+def test_evidence_worker_alone_never_starts_a_global_operation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
-    _install_fakes(monkeypatch, calls)
-    monkeypatch.setattr(
-        global_settings, "maintenance_enabled", False
+    outcome = _run_lifespan(
+        monkeypatch, maintenance_enabled=False, floor=FLOOR
     )
 
-    _run_lifespan_once()
-
-    assert calls == []
-    assert len(RECOVERY_ONCE_NAMES) + len(
-        MAINTENANCE_LOOP_NAMES
-    ) == 21
+    assert set(outcome.calls) == EVIDENCE_OPERATIONS
+    assert set(outcome.calls).isdisjoint(GLOBAL_OPERATIONS)
 
 
-def test_maintenance_enabled_runs_all_21_operations(
+def test_evidence_worker_without_database_schedules_loop_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
-    _install_fakes(monkeypatch, calls)
-    monkeypatch.setattr(
-        global_settings, "maintenance_enabled", True
+    # Mesma semantica do bloco global: sem banco online o pass de
+    # startup e pulado; o loop periodico continua agendado.
+    outcome = _run_lifespan(
+        monkeypatch,
+        maintenance_enabled=False,
+        floor=FLOOR,
+        database_online=False,
     )
 
-    _run_lifespan_once()
+    assert set(outcome.calls) == set(EVIDENCE_LOOPS)
+    assert outcome.cancelled == set(EVIDENCE_LOOPS)
+    assert outcome.leaked_tasks == 0
 
-    assert set(calls) == set(RECOVERY_ONCE_NAMES) | set(
-        MAINTENANCE_LOOP_NAMES
+
+def test_evidence_startup_failure_is_logged_not_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # D5: falha na coleta (capacidade opcional) nao pode abortar o
+    # startup nem vazar as tasks globais ja criadas; o except apenas
+    # registra -- sem retry e sem recovery.
+    outcome = _run_lifespan(
+        monkeypatch,
+        maintenance_enabled=True,
+        floor=FLOOR,
+        evidence_recovery_raises=True,
     )
-    assert len(calls) == 21
+
+    assert outcome.logged_exceptions == [
+        "escalation_payment_observation_startup_failed"
+    ]
+    # exatamente uma tentativa (sem retry)
+    assert outcome.calls.count(EVIDENCE_RECOVERY[0]) == 1
+    # o loop do evidence segue agendado e o bloco global fica intacto
+    assert set(outcome.calls) == GLOBAL_OPERATIONS | EVIDENCE_OPERATIONS
+    assert outcome.cancelled == set(GLOBAL_LOOPS) | set(EVIDENCE_LOOPS)
+    assert outcome.leaked_tasks == 0
+    assert outcome.shutdown_seconds < SHUTDOWN_BUDGET_SECONDS
+
+
+def test_evidence_startup_success_logs_no_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = _run_lifespan(
+        monkeypatch, maintenance_enabled=False, floor=FLOOR
+    )
+
+    assert outcome.logged_exceptions == []
