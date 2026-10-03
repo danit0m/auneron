@@ -109,6 +109,10 @@ services:
       AUTH_SESSION_CLEANUP_INTERVAL_SECONDS: ${AUTH_SESSION_CLEANUP_INTERVAL_SECONDS:-3600}
       AUTH_REVOKED_SESSION_RETENTION_HOURS: ${AUTH_REVOKED_SESSION_RETENTION_HOURS:-24}
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+      # VALUE-3.4D-1: default DEV fail-closed e versionado. `true` so por env
+      # explicito (MAINTENANCE_ENABLED=true). Producao usa docker-compose.prod.yml
+      # (independente) e proibe false em validate_environment.
+      MAINTENANCE_ENABLED: ${MAINTENANCE_ENABLED:-false}
       # Evidence worker (VALUE-3.4B): gate dedicado. Repasse nulo: ausente => nao definida no container.
       ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR:
 

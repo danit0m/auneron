@@ -19,6 +19,9 @@ nenhuma operacao do evidence worker; (c) a matriz 2x2 prova, por caso,
 quais operacoes rodam (sem duplicatas), que todas as tasks sao
 canceladas no shutdown, que nada vaza e que o shutdown nao pendura.
 
+VALUE-3.4D-1: a linha `application_started` expoe o estado AUDITAVEL dos
+dois gates (somente escalares tecnicos, sem segredo/PII).
+
 Alvo e o proprio `lifespan()` de app.main, nunca os modulos individuais
 (nenhum e alterado por este gate). Idioma assincrono ja usado em
 test_maintenance_loop_resilience.py: teste sincrono dirigindo uma
@@ -30,6 +33,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -39,6 +43,8 @@ import pytest
 
 from app import main as main_module
 from app.core.config import settings as global_settings
+from app.core.evidence_floor_contract import canonical_utc
+from app.core.observability import _is_sensitive_key
 
 
 # ---------------------------------------------------------------------
@@ -198,6 +204,7 @@ class _Outcome:
     leaked_tasks: int
     shutdown_seconds: float
     logged_exceptions: list[str]
+    started_extras: list[dict]
 
 
 def _install_fakes(
@@ -208,6 +215,7 @@ def _install_fakes(
     database_online: bool,
     evidence_recovery_raises: bool,
     logged_exceptions: list[str],
+    started_extras: list[dict],
 ) -> None:
     def make_sync(name: str):
         def fake(*args, **kwargs):
@@ -257,6 +265,14 @@ def _install_fakes(
         ),
     )
 
+    def spy_info(message, *args, extra=None, **kwargs) -> None:
+        if message == "application_started":
+            started_extras.append(dict(extra or {}))
+
+    monkeypatch.setattr(
+        main_module.application_logger, "info", spy_info
+    )
+
 
 def _run_lifespan(
     monkeypatch: pytest.MonkeyPatch,
@@ -269,6 +285,7 @@ def _run_lifespan(
     calls: list[str] = []
     cancelled: set[str] = set()
     logged_exceptions: list[str] = []
+    started_extras: list[dict] = []
     _install_fakes(
         monkeypatch,
         calls,
@@ -276,6 +293,7 @@ def _run_lifespan(
         database_online=database_online,
         evidence_recovery_raises=evidence_recovery_raises,
         logged_exceptions=logged_exceptions,
+        started_extras=started_extras,
     )
     monkeypatch.setattr(
         global_settings, "maintenance_enabled", maintenance_enabled
@@ -321,6 +339,7 @@ def _run_lifespan(
         leaked_tasks=int(result["leaked"]),
         shutdown_seconds=float(result["shutdown_seconds"]),
         logged_exceptions=logged_exceptions,
+        started_extras=started_extras,
     )
 
 
@@ -436,3 +455,181 @@ def test_evidence_startup_success_logs_no_exception(
     )
 
     assert outcome.logged_exceptions == []
+
+
+# ---------------------------------------------------------------------
+# VALUE-3.4D-1 -- `application_started`: estado auditavel dos gates
+# ---------------------------------------------------------------------
+
+LEGACY_STARTED_KEYS = frozenset(
+    {
+        "event",
+        "state",
+        "environment",
+        "version",
+        "database_online",
+        "forwarded_allow_ips",
+    }
+)
+GATE_STARTED_KEYS = frozenset(
+    {
+        "maintenance_enabled",
+        "evidence_worker_enabled",
+        "evidence_floor",
+        "evidence_floor_state",
+        "evidence_floor_age_seconds",
+        "evidence_interval_seconds",
+        "evidence_batch_size",
+    }
+)
+
+
+def _started_extra(outcome: _Outcome) -> dict:
+    assert len(outcome.started_extras) == 1, (
+        "application_started deve ser emitido exatamente uma vez"
+    )
+    return outcome.started_extras[0]
+
+
+def test_application_started_exposes_exactly_the_allowlisted_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=FLOOR
+        )
+    )
+
+    assert set(extra) == LEGACY_STARTED_KEYS | GATE_STARTED_KEYS
+
+
+def test_application_started_keys_are_never_sensitive_or_identifying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=True, floor=FLOOR
+        )
+    )
+
+    assert [key for key in extra if _is_sensitive_key(key)] == []
+    # nenhum identificador de conta/cliente/episodio
+    for key in extra:
+        assert not any(
+            part in key
+            for part in ("account", "client", "customer", "email", "episode", "work_item")
+        ), key
+    # somente escalares serializaveis
+    assert all(
+        value is None or isinstance(value, (str, int, float, bool))
+        for value in extra.values()
+    )
+    json.dumps(extra)
+
+
+def test_application_started_never_carries_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret_database_url = (
+        "postgresql+psycopg://leak_user:LEAK_SENTINEL_DB@leak-host/leakdb"
+    )
+    monkeypatch.setattr(
+        global_settings, "database_url", secret_database_url
+    )
+    monkeypatch.setattr(
+        global_settings, "api_key", "LEAK_SENTINEL_API_KEY", raising=False
+    )
+
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=True, floor=FLOOR
+        )
+    )
+
+    serialized = json.dumps(extra)
+    assert "LEAK_SENTINEL" not in serialized
+    assert "leak_user" not in serialized
+    assert "leak-host" not in serialized
+
+
+@pytest.mark.parametrize("maintenance_enabled", [False, True])
+def test_application_started_with_absent_floor_keeps_worker_disarmed(
+    monkeypatch: pytest.MonkeyPatch, maintenance_enabled: bool
+) -> None:
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch,
+            maintenance_enabled=maintenance_enabled,
+            floor=None,
+        )
+    )
+
+    assert extra["maintenance_enabled"] is maintenance_enabled
+    assert extra["evidence_worker_enabled"] is False
+    assert extra["evidence_floor"] is None
+    assert extra["evidence_floor_state"] == "unset"
+    assert extra["evidence_floor_age_seconds"] is None
+    assert extra["evidence_interval_seconds"] is None
+    assert extra["evidence_batch_size"] is None
+
+
+def test_application_started_reports_an_armed_floor_in_canonical_utc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import timedelta
+
+    armed_floor = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=armed_floor
+        )
+    )
+
+    assert extra["maintenance_enabled"] is False
+    assert extra["evidence_worker_enabled"] is True
+    assert extra["evidence_floor"] == canonical_utc(armed_floor)
+    assert extra["evidence_floor"].endswith("Z")
+    assert extra["evidence_floor_state"] == "armed"
+    assert 295 <= extra["evidence_floor_age_seconds"] <= 330
+    assert (
+        extra["evidence_interval_seconds"]
+        == global_settings.escalation_payment_observation_interval_seconds
+    )
+    assert (
+        extra["evidence_batch_size"]
+        == global_settings.escalation_payment_observation_batch_size
+    )
+
+
+def test_application_started_flags_a_future_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=FLOOR
+        )
+    )
+
+    assert extra["evidence_floor_state"] == "future"
+    assert extra["evidence_floor_age_seconds"] < 0
+    assert extra["evidence_floor"] == canonical_utc(FLOOR)
+
+
+def test_application_started_keeps_the_legacy_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=None
+        )
+    )
+
+    assert extra["event"] == "application_lifecycle"
+    assert extra["state"] == "started"
+    assert extra["environment"] == global_settings.environment
+    assert extra["version"] == global_settings.app_version
+    assert extra["database_online"] is True
+    assert extra["forwarded_allow_ips"] == (
+        global_settings.forwarded_allow_ips
+    )

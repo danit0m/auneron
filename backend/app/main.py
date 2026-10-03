@@ -2,6 +2,8 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from contextlib import suppress
+from datetime import datetime
+from datetime import timezone
 
 from fastapi import Depends
 from fastapi import FastAPI
@@ -21,6 +23,9 @@ from app.core.authentication import (
 )
 from app.core.authentication import require_permission
 from app.core.config import settings
+from app.core.evidence_floor_contract import canonical_utc
+from app.core.evidence_floor_contract import floor_age_seconds
+from app.core.evidence_floor_contract import floor_state
 from app.core.http_security import (
     SecurityHeadersMiddleware,
 )
@@ -238,6 +243,14 @@ async def lifespan(_: FastAPI):
 
     background_tasks = maintenance_tasks + evidence_tasks
 
+    # Estado AUDITAVEL dos dois gates (VALUE-3.4D-1): somente escalares
+    # tecnicos -- nenhum segredo, identificador de conta/cliente ou URL.
+    started_at = datetime.now(timezone.utc)
+    evidence_floor = (
+        settings.escalation_payment_observation_activation_floor
+    )
+    evidence_enabled = evidence_floor is not None
+
     application_logger.info(
         "application_started",
         extra={
@@ -247,6 +260,29 @@ async def lifespan(_: FastAPI):
             "version": settings.app_version,
             "database_online": database_online,
             "forwarded_allow_ips": settings.forwarded_allow_ips,
+            "maintenance_enabled": settings.maintenance_enabled,
+            "evidence_worker_enabled": evidence_enabled,
+            "evidence_floor": (
+                canonical_utc(evidence_floor)
+                if evidence_enabled
+                else None
+            ),
+            "evidence_floor_state": floor_state(
+                evidence_floor, started_at
+            ),
+            "evidence_floor_age_seconds": floor_age_seconds(
+                evidence_floor, started_at
+            ),
+            "evidence_interval_seconds": (
+                settings.escalation_payment_observation_interval_seconds
+                if evidence_enabled
+                else None
+            ),
+            "evidence_batch_size": (
+                settings.escalation_payment_observation_batch_size
+                if evidence_enabled
+                else None
+            ),
         },
     )
 
