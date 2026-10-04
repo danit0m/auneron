@@ -13,6 +13,7 @@ from datetime import timedelta
 from app.core.human_escalation_eligibility import (
     get_human_escalation_eligibility,
 )
+from app.core.receivable_lifecycle import business_today
 from app.models.account import Account
 from app.models.work import WorkItem
 
@@ -84,7 +85,7 @@ def _make_work_item(
 
 
 def _overdue_date() -> date:
-    return date.today() - timedelta(days=10)
+    return business_today() - timedelta(days=10)
 
 
 # ---------------------------------------------------------------------
@@ -113,7 +114,7 @@ def test_reason_is_account_paid_when_status_is_pago(
 def test_reason_is_lifecycle_not_overdue_when_not_yet_due(
     db_session,
 ) -> None:
-    due_date = date.today() + timedelta(days=30)
+    due_date = business_today() + timedelta(days=30)
     account = _make_account(db_session, vencimento=due_date)
 
     result = get_human_escalation_eligibility(
@@ -204,7 +205,7 @@ def test_reason_precedence_due_date_mismatch_wins_over_account_paid(
 def test_reason_precedence_due_date_mismatch_wins_over_lifecycle_not_overdue(
     db_session,
 ) -> None:
-    requested_due_date = date.today() + timedelta(days=30)
+    requested_due_date = business_today() + timedelta(days=30)
     actual_vencimento = requested_due_date - timedelta(days=100)
     account = _make_account(
         db_session, vencimento=actual_vencimento
@@ -476,7 +477,7 @@ def test_absence_of_optional_signals_never_blocks_eligibility(
 def test_overdue_open_account_without_work_item_is_eligible(
     db_session,
 ) -> None:
-    due_date = date.today() - timedelta(days=42)
+    due_date = business_today() - timedelta(days=42)
     account = _make_account(
         db_session, vencimento=due_date, status="aberto"
     )

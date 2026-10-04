@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.receivable_lifecycle import business_today
 from app.models.account import Account
 from app.models.user import User
 
@@ -59,7 +60,7 @@ def test_nba_returns_200_with_frozen_shape(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
     response = client.get(
@@ -123,7 +124,7 @@ def test_nba_no_action_shape(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    due_date = date.today() + timedelta(days=30)
+    due_date = business_today() + timedelta(days=30)
     account = _make_account(db_session, vencimento=due_date)
 
     response = client.get(
@@ -143,7 +144,7 @@ def test_nba_requires_approval_read_permission(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
     _set_role(db_session, "viewer")
@@ -180,7 +181,7 @@ def test_nba_get_has_no_business_side_effects(
     test_nba_get_persists_exactly_one_recommendation_snapshot, nunca
     nesta lista.
     """
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
     tables = (
@@ -230,7 +231,7 @@ def test_nba_get_persists_exactly_one_recommendation_snapshot(
     exceto pela identidade HTTP recommendation_snapshot_id (que so
     existe depois do snapshot ja persistido).
     """
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
     before = db_session.execute(

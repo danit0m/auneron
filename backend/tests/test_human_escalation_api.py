@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.receivable_lifecycle import business_today
 from app.models.account import Account
 from app.models.user import User
 
@@ -58,7 +59,7 @@ def test_human_escalation_returns_200_with_frozen_shape(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
     response = client.get(
@@ -102,7 +103,7 @@ def test_human_escalation_ineligible_shape_has_no_support_evidence(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    due_date = date.today() - timedelta(days=5)
+    due_date = business_today() - timedelta(days=5)
     account = _make_account(
         db_session, vencimento=due_date, status="pago"
     )
@@ -124,7 +125,7 @@ def test_human_escalation_requires_approval_read_permission(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
     _set_role(db_session, "viewer")
@@ -158,7 +159,7 @@ def test_human_escalation_get_performs_zero_writes(
     depois, mesmo padrao ja usado em Outcome V1.
     """
 
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(db_session, vencimento=due_date)
 
     tables = ("work_items", "accounts", "knowledge")

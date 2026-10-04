@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.nba_policy import ESCALATE_TO_HUMAN_ACTION_KEY
 from app.core.nba_policy import MARK_OVERDUE_ACTION_KEY
 from app.core.nba_policy import get_nba_decision
+from app.core.receivable_lifecycle import business_today
 from app.models.account import Account
 from app.models.memory import MemoryItem
 
@@ -96,7 +97,7 @@ def _overdue_account(
     valor: Decimal | float,
     email: str | None = "cliente.nba@example.com",
 ) -> tuple[Account, date]:
-    due_date = date.today() - timedelta(days=days_overdue)
+    due_date = business_today() - timedelta(days=days_overdue)
     account = _make_account(
         db_session, vencimento=due_date, valor=valor, email=email
     )
@@ -109,7 +110,7 @@ def _overdue_account(
 
 
 def test_r0_no_action_when_nothing_recommendable(db_session) -> None:
-    due_date = date.today() + timedelta(days=30)
+    due_date = business_today() + timedelta(days=30)
     account = _make_account(db_session, vencimento=due_date)
 
     result = get_nba_decision(
@@ -177,7 +178,7 @@ def test_r1_single_action_mark_overdue_only(db_session) -> None:
 def test_r2_single_action_escalate_only(db_session) -> None:
     # status ja "atrasado" -> mark_overdue sai de recommendable_actions
     # via V1.C (status_not_open), sem nenhuma logica nova do NBA.
-    due_date = date.today() - timedelta(days=10)
+    due_date = business_today() - timedelta(days=10)
     account = _make_account(
         db_session, vencimento=due_date, status="atrasado"
     )
@@ -445,7 +446,7 @@ def test_selected_actions_is_always_subset_of_recommendable_actions(
     ]
 
     for index, (days_overdue, valor, status) in enumerate(scenarios):
-        due_date = date.today() - timedelta(days=days_overdue)
+        due_date = business_today() - timedelta(days=days_overdue)
         account = _make_account(
             db_session,
             vencimento=due_date,
