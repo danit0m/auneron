@@ -30,9 +30,50 @@ registrada fora deste arquivo.
 | Contrato estrito do floor + preflight (`scripts/evidence_floor_preflight.py`) | **Disponível (D-1)** |
 | Log `application_started` com estado dos dois gates | **Disponível (D-1)** |
 | Build de ativação em worktree limpo + verificação de proveniência (SHA, conteúdo, `extras == 0`, image ID) | **Depende de D-2 — ATIVAÇÃO BLOQUEADA até D-2 aplicado e verificado** |
-| Verificação de proveniência no CI | Depende de D-2 |
+| Identidade de build verificável (`AUNERON_GIT_SHA/DIRTY`, `source_digest` `sd1`) e verificação no CI | **Disponível (D-2a)** — apenas identidade; **não** é proveniência persistente |
 | Venue com evidência operacional real | **NÃO VERIFICADO.** DEV serve **somente** a ensaio mecânico; não se fabricam pagamentos nem escalonamentos para satisfazer critérios |
 | Autorização do PO para a janela | Obrigatória, caso a caso |
+
+## 2.1 Identidade de build (D-2a) — o que prova e o que NÃO prova
+
+Cadeia: o processo de build fornece **alegações** (`GIT_SHA`, `GIT_DIRTY`) →
+`ARG` → `LABEL` + `ENV AUNERON_GIT_SHA` / `AUNERON_GIT_DIRTY` → o processo
+valida o formato e **mede** o `source_digest` (algoritmo `sd1`: `app/**/*.py`,
+`migrations/**/*.py` e `requirements.txt`; caminhos ASCII, `\r\n` → `\n`,
+symlink rejeitado). A cadeia é **conjuntiva**: SHA com 40 hex minúsculos,
+`dirty` exatamente `false` e digest calculável. O digest nunca resgata um SHA
+`unknown`/inválido nem `dirty=true`.
+
+- Sem alegação (build manual com `docker compose build` e nenhuma variável):
+  `GIT_SHA=unknown` e `GIT_DIRTY=unknown` → a imagem constrói e executa, mas a
+  identidade é **inválida** (`identity_sha_invalid`) — jamais uma identidade
+  limpa fabricada. O default de `dirty` **nunca** é `false`.
+- Alegações de um checkout real: `python scripts/verify_build_identity.py
+  claims` (`dirty` considera o repositório inteiro, `--untracked-files=all`).
+  Esta worktree de trabalho tem arquivos não rastreados → `dirty=true`; o build
+  de ativação exige um worktree limpo do `<SHA>`.
+- Verificação independente (CI e, depois, preflight): `python
+  scripts/verify_build_identity.py verify --image <tag> --git-rev <SHA>
+  --require-clean` recompõe o `sd1` a partir dos **objetos do commit** e o
+  compara com o digest medido **dentro** da imagem (C1–C5). O valor reportado
+  pela própria imagem nunca é usado como esperado.
+- O `application_started` registra o diagnóstico (`build_identity_state`,
+  `build_identity_code`, `build_git_sha`, `build_git_dirty`,
+  `build_source_digest`, `build_source_digest_algorithm`). **Somente
+  diagnóstico:** identidade inválida **não** bloqueia o startup nem altera
+  nenhum worker.
+
+**Limites declarados (não entregues em D-2a):**
+
+1. O runtime só valida o **formato** da alegação; uma alegação falsa só é
+   detectada pela verificação externa (digest do commit × digest da imagem).
+2. `extras != 0` da imagem inteira (arquivos fora do escopo do `sd1`) e a
+   verificação do container (image ID == tag verificada; ENV do container ==
+   ENV da imagem) continuam itens do procedimento de ativação.
+3. O `sd1` não cobre dependências transitivas, imagem base nem arquivos fora
+   do escopo.
+4. Nenhuma proveniência persistente (D-2b) nem fail-closed do produtor
+   automático: **ATIVAÇÃO BLOQUEADA até D-2 completo (D-2a + D-2b)**.
 
 ## 3. Os dois gates (independentes)
 

@@ -42,6 +42,7 @@ from datetime import timezone
 import pytest
 
 from app import main as main_module
+from app.core import build_identity
 from app.core.config import settings as global_settings
 from app.core.evidence_floor_contract import canonical_utc
 from app.core.observability import _is_sensitive_key
@@ -482,6 +483,17 @@ GATE_STARTED_KEYS = frozenset(
         "evidence_batch_size",
     }
 )
+# VALUE-3.4D-2a -- diagnostico de identidade de build (somente escalares).
+BUILD_STARTED_KEYS = frozenset(
+    {
+        "build_identity_state",
+        "build_identity_code",
+        "build_git_sha",
+        "build_git_dirty",
+        "build_source_digest",
+        "build_source_digest_algorithm",
+    }
+)
 
 
 def _started_extra(outcome: _Outcome) -> dict:
@@ -500,7 +512,9 @@ def test_application_started_exposes_exactly_the_allowlisted_keys(
         )
     )
 
-    assert set(extra) == LEGACY_STARTED_KEYS | GATE_STARTED_KEYS
+    assert set(extra) == (
+        LEGACY_STARTED_KEYS | GATE_STARTED_KEYS | BUILD_STARTED_KEYS
+    )
 
 
 def test_application_started_keys_are_never_sensitive_or_identifying(
@@ -633,3 +647,193 @@ def test_application_started_keeps_the_legacy_fields(
     assert extra["forwarded_allow_ips"] == (
         global_settings.forwarded_allow_ips
     )
+
+
+# ---------------------------------------------------------------------
+# VALUE-3.4D-2a -- identidade de build no `application_started`:
+# SOMENTE diagnostico (nunca bloqueia startup nem altera worker algum)
+# ---------------------------------------------------------------------
+
+VALID_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+@pytest.fixture
+def identity_isolated(monkeypatch: pytest.MonkeyPatch):
+    """Isola a memoizacao por processo do diagnostico de identidade."""
+    build_identity.reset_process_build_identity()
+    monkeypatch.delenv(build_identity.ENV_GIT_SHA, raising=False)
+    monkeypatch.delenv(build_identity.ENV_GIT_DIRTY, raising=False)
+    yield
+    build_identity.reset_process_build_identity()
+
+
+def test_application_started_reports_invalid_identity_without_claims(
+    monkeypatch: pytest.MonkeyPatch, identity_isolated
+) -> None:
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=None
+        )
+    )
+
+    assert extra["build_identity_state"] == "invalid"
+    assert extra["build_identity_code"] == "identity_sha_invalid"
+    assert extra["build_git_sha"] is None
+    assert extra["build_git_dirty"] is None
+    assert extra["build_source_digest_algorithm"] == "sd1"
+    # o digest e medido mesmo com a alegacao invalida (so diagnostico)
+    assert isinstance(extra["build_source_digest"], str)
+    assert len(extra["build_source_digest"]) == 64
+
+
+def test_application_started_reports_valid_identity(
+    monkeypatch: pytest.MonkeyPatch, identity_isolated
+) -> None:
+    monkeypatch.setenv(build_identity.ENV_GIT_SHA, VALID_SHA)
+    monkeypatch.setenv(build_identity.ENV_GIT_DIRTY, "false")
+
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=None
+        )
+    )
+
+    assert extra["build_identity_state"] == "valid"
+    assert extra["build_identity_code"] is None
+    assert extra["build_git_sha"] == VALID_SHA
+    assert extra["build_git_dirty"] == "false"
+
+
+def test_application_started_never_echoes_arbitrary_identity_env(
+    monkeypatch: pytest.MonkeyPatch, identity_isolated
+) -> None:
+    monkeypatch.setenv(
+        build_identity.ENV_GIT_SHA, "LEAK_SENTINEL_SECRET: token=abc"
+    )
+    monkeypatch.setenv(build_identity.ENV_GIT_DIRTY, "LEAK sentinel/2")
+
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=None
+        )
+    )
+
+    serialized = json.dumps(extra)
+    assert "LEAK" not in serialized
+    assert "token=abc" not in serialized
+    assert extra["build_git_sha"] == "<invalid>"
+    assert extra["build_git_dirty"] == "<invalid>"
+    assert extra["build_identity_state"] == "invalid"
+
+
+@pytest.mark.parametrize(
+    "sha,dirty",
+    [
+        ("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456", "false"),
+        ("z" * 40, "false"),
+        (VALID_SHA, "my_api_token_123456789"),
+        ("tok-en.with-dash.and.dot_1234567890", "unknown"),
+    ],
+    ids=["token_sha", "forty_z", "token_dirty", "dash_dot_token"],
+)
+def test_startup_log_never_carries_an_invalid_raw_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    identity_isolated,
+    sha: str,
+    dirty: str,
+) -> None:
+    monkeypatch.setenv(build_identity.ENV_GIT_SHA, sha)
+    monkeypatch.setenv(build_identity.ENV_GIT_DIRTY, dirty)
+
+    extra = _started_extra(
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=None
+        )
+    )
+
+    serialized = json.dumps(extra)
+    sha_valid = sha == VALID_SHA
+    if not sha_valid:
+        assert extra["build_git_sha"] == "<invalid>"
+        assert sha not in serialized
+    if dirty not in ("true", "false"):
+        assert extra["build_git_dirty"] == "<invalid>"
+        if dirty != "unknown":
+            assert dirty not in serialized
+    assert extra["build_identity_state"] == "invalid"
+
+
+@pytest.mark.parametrize("maintenance_enabled", [False, True])
+@pytest.mark.parametrize("floor_present", [False, True])
+def test_invalid_identity_never_changes_gates_or_scheduling(
+    monkeypatch: pytest.MonkeyPatch,
+    identity_isolated,
+    maintenance_enabled: bool,
+    floor_present: bool,
+) -> None:
+    floor = FLOOR if floor_present else None
+    baseline = _run_lifespan(
+        monkeypatch, maintenance_enabled=maintenance_enabled, floor=floor
+    )
+    # identidade invalida (sem alegacao) x valida: mesmos efeitos
+    monkeypatch.setenv(build_identity.ENV_GIT_SHA, VALID_SHA)
+    monkeypatch.setenv(build_identity.ENV_GIT_DIRTY, "false")
+    build_identity.reset_process_build_identity()
+    valid = _run_lifespan(
+        monkeypatch, maintenance_enabled=maintenance_enabled, floor=floor
+    )
+
+    assert _started_extra(baseline)["build_identity_state"] == "invalid"
+    assert _started_extra(valid)["build_identity_state"] == "valid"
+    assert baseline.calls == valid.calls
+    assert baseline.cancelled == valid.cancelled
+    assert baseline.leaked_tasks == valid.leaked_tasks == 0
+    assert (
+        _started_extra(baseline)["evidence_worker_enabled"]
+        == _started_extra(valid)["evidence_worker_enabled"]
+        == floor_present
+    )
+
+
+def test_startup_survives_a_failing_identity_diagnosis(
+    monkeypatch: pytest.MonkeyPatch, identity_isolated
+) -> None:
+    def explode() -> None:
+        raise RuntimeError("diagnostico quebrado")
+
+    monkeypatch.setattr(
+        main_module, "process_build_identity_diagnosis", explode
+    )
+
+    outcome = _run_lifespan(
+        monkeypatch, maintenance_enabled=True, floor=FLOOR
+    )
+
+    extra = _started_extra(outcome)
+    assert extra["build_identity_state"] == "diagnosis_failed"
+    assert extra["build_source_digest"] is None
+    # o startup completou e todos os loops/gates seguem intactos
+    assert set(outcome.calls) == GLOBAL_OPERATIONS | EVIDENCE_OPERATIONS
+    assert outcome.leaked_tasks == 0
+
+
+def test_identity_diagnosis_is_computed_once_per_process(
+    monkeypatch: pytest.MonkeyPatch, identity_isolated
+) -> None:
+    computed: list[int] = []
+    real = build_identity.diagnose_build_identity
+
+    def counting(*args, **kwargs):
+        computed.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        build_identity, "diagnose_build_identity", counting
+    )
+
+    for _ in range(3):
+        _run_lifespan(
+            monkeypatch, maintenance_enabled=False, floor=None
+        )
+
+    assert len(computed) == 1

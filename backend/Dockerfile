@@ -22,6 +22,17 @@ COPY --chown=auneron:auneron backend/ ./
 
 RUN mkdir -p /app/uploads && chown auneron:auneron /app/uploads
 
+# Identidade de build (VALUE-3.4D-2a): ALEGACAO fornecida pelo processo de
+# build (CI / `scripts/verify_build_identity.py claims`). O default
+# `unknown` NUNCA vira identidade limpa; a prova e o source_digest,
+# verificado fora da imagem contra os objetos do commit.
+ARG GIT_SHA=unknown
+ARG GIT_DIRTY=unknown
+LABEL org.opencontainers.image.revision="${GIT_SHA}" \
+      org.auneron.build.dirty="${GIT_DIRTY}"
+ENV AUNERON_GIT_SHA="${GIT_SHA}" \
+    AUNERON_GIT_DIRTY="${GIT_DIRTY}"
+
 USER auneron
 
 EXPOSE 8000

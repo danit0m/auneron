@@ -117,9 +117,36 @@ jobs:
       - name: Validar Docker Compose
         run: docker compose -f docker-compose.yml config --quiet
 
+      # VALUE-3.4D-2a: a identidade de build nasce do checkout REAL (nunca
+      # de valores constantes) e e verificada de forma independente contra
+      # os objetos do commit.
+      - name: Alegação de identidade de build
+        id: build_claims
+        run: python scripts/verify_build_identity.py claims >> "$GITHUB_OUTPUT"
+
       - name: Build da imagem backend
         working-directory: ${{ github.workspace }}
-        run: docker build -f backend/Dockerfile -t auneron-backend:ci .
+        env:
+          GIT_SHA: ${{ steps.build_claims.outputs.GIT_SHA }}
+          GIT_DIRTY: ${{ steps.build_claims.outputs.GIT_DIRTY }}
+        run: >-
+          docker build -f backend/Dockerfile -t auneron-backend:ci
+          --build-arg GIT_SHA="$GIT_SHA"
+          --build-arg GIT_DIRTY="$GIT_DIRTY" .
+
+      - name: Verificar identidade de build (imagem x commit)
+        run: >-
+          python scripts/verify_build_identity.py verify
+          --image auneron-backend:ci
+          --git-rev "$(git rev-parse HEAD)"
+          --require-clean
+
+      - name: Controle negativo (build sem identidade não é apto)
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker build -f backend/Dockerfile -t auneron-backend:ci-noidentity .
+          python backend/scripts/verify_build_identity.py verify \
+            --image auneron-backend:ci-noidentity --expect-invalid
 
       - name: Build da imagem frontend
         working-directory: ${{ github.workspace }}

@@ -35,6 +35,9 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        GIT_DIRTY: ${GIT_DIRTY:-unknown}
 
     environment:
       APP_ENV: development
@@ -76,6 +79,9 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        GIT_DIRTY: ${GIT_DIRTY:-unknown}
 
     container_name: auneron-backend
     restart: unless-stopped

@@ -22,6 +22,10 @@ from app.core.authentication import (
     check_production_developer_roles_async,
 )
 from app.core.authentication import require_permission
+from app.core.build_identity import SOURCE_DIGEST_ALGORITHM
+from app.core.build_identity import (
+    process_build_identity_diagnosis,
+)
 from app.core.config import settings
 from app.core.evidence_floor_contract import canonical_utc
 from app.core.evidence_floor_contract import floor_age_seconds
@@ -147,6 +151,48 @@ application_logger = logging.getLogger(
 )
 
 
+async def _build_identity_log_fields() -> dict[str, object]:
+    """
+    Diagnostico de identidade de build (VALUE-3.4D-2a) para o log de
+    startup: SOMENTE escalares tecnicos, nunca conteudo arbitrario do
+    ambiente. Identidade invalida NAO bloqueia o startup nem altera
+    qualquer worker -- o fail-closed do produtor automatico e do D-2b.
+    """
+    try:
+        diagnosis = await asyncio.to_thread(
+            process_build_identity_diagnosis
+        )
+    except Exception:
+        application_logger.exception(
+            "build_identity_diagnosis_failed",
+            extra={
+                "event": "application_lifecycle",
+                "state": "build_identity_diagnosis_failed",
+            },
+        )
+        return {
+            "build_identity_state": "diagnosis_failed",
+            "build_identity_code": None,
+            "build_git_sha": None,
+            "build_git_dirty": None,
+            "build_source_digest": None,
+            "build_source_digest_algorithm": SOURCE_DIGEST_ALGORITHM,
+        }
+
+    return {
+        "build_identity_state": diagnosis.state,
+        "build_identity_code": diagnosis.code,
+        "build_git_sha": diagnosis.git_sha,
+        "build_git_dirty": diagnosis.git_dirty,
+        "build_source_digest": (
+            diagnosis.source_digest.digest
+            if diagnosis.source_digest is not None
+            else None
+        ),
+        "build_source_digest_algorithm": SOURCE_DIGEST_ALGORITHM,
+    }
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     database_online = (
@@ -245,6 +291,7 @@ async def lifespan(_: FastAPI):
 
     # Estado AUDITAVEL dos dois gates (VALUE-3.4D-1): somente escalares
     # tecnicos -- nenhum segredo, identificador de conta/cliente ou URL.
+    build_identity_fields = await _build_identity_log_fields()
     started_at = datetime.now(timezone.utc)
     evidence_floor = (
         settings.escalation_payment_observation_activation_floor
@@ -283,6 +330,7 @@ async def lifespan(_: FastAPI):
                 if evidence_enabled
                 else None
             ),
+            **build_identity_fields,
         },
     )
 
