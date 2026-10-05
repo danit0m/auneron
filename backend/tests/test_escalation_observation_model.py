@@ -15,6 +15,8 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from evidence_provenance_helpers import provenance_columns
+
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.escalation_observation import EscalationObservation
@@ -122,6 +124,7 @@ def test_observed_fact_valid_row_inserts(db_session: Session) -> None:
     observation = EscalationObservation(
         escalation_work_item_id=work_item.id,
         observation_type="observed_fact",
+        **provenance_columns(),
         linked_account_event_id=account_event.id,
         observed_at=account_event.occurred_at,
         idempotency_key=f"test:observed_fact:{account_event.id}",
@@ -176,6 +179,7 @@ def test_mixed_fields_across_categories_violates_disjoint_check(
     observation = EscalationObservation(
         escalation_work_item_id=work_item.id,
         observation_type="observed_fact",
+        **provenance_columns(),
         linked_account_event_id=account_event.id,
         observed_at=account_event.occurred_at,
         assessment_code="contact_made",  # nao deveria coexistir
@@ -333,6 +337,7 @@ def test_deleting_account_event_referenced_by_observed_fact_is_restricted(
     observation = EscalationObservation(
         escalation_work_item_id=work_item.id,
         observation_type="observed_fact",
+        **provenance_columns(),
         linked_account_event_id=account_event.id,
         observed_at=account_event.occurred_at,
         idempotency_key=f"test:restrict:{account_event.id}",

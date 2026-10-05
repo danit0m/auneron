@@ -43,6 +43,7 @@ import pytest
 
 from app import main as main_module
 from app.core import build_identity
+from app.core import evidence_producer_spec
 from app.core.config import settings as global_settings
 from app.core.evidence_floor_contract import canonical_utc
 from app.core.observability import _is_sensitive_key
@@ -483,6 +484,14 @@ GATE_STARTED_KEYS = frozenset(
         "evidence_batch_size",
     }
 )
+# VALUE-3.4D-2b -- diagnostico do produtor automatico (somente escalares).
+PRODUCER_STARTED_KEYS = frozenset(
+    {
+        "producer_spec",
+        "producer_fingerprint",
+        "producer_fingerprint_state",
+    }
+)
 # VALUE-3.4D-2a -- diagnostico de identidade de build (somente escalares).
 BUILD_STARTED_KEYS = frozenset(
     {
@@ -513,7 +522,10 @@ def test_application_started_exposes_exactly_the_allowlisted_keys(
     )
 
     assert set(extra) == (
-        LEGACY_STARTED_KEYS | GATE_STARTED_KEYS | BUILD_STARTED_KEYS
+        LEGACY_STARTED_KEYS
+        | GATE_STARTED_KEYS
+        | BUILD_STARTED_KEYS
+        | PRODUCER_STARTED_KEYS
     )
 
 
@@ -837,3 +849,97 @@ def test_identity_diagnosis_is_computed_once_per_process(
         )
 
     assert len(computed) == 1
+
+
+# ---------------------------------------------------------------------
+# VALUE-3.4D-2b -- diagnostico do produtor no `application_started`:
+# SOMENTE diagnostico (nunca bloqueia startup nem altera gate/worker)
+# ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def producer_isolated():
+    evidence_producer_spec.reset_process_producer_fingerprint()
+    yield
+    evidence_producer_spec.reset_process_producer_fingerprint()
+
+
+def test_application_started_reports_the_producer_fingerprint(
+    monkeypatch: pytest.MonkeyPatch, producer_isolated
+) -> None:
+    extra = _started_extra(
+        _run_lifespan(monkeypatch, maintenance_enabled=False, floor=None)
+    )
+
+    assert extra["producer_spec"] == "escalation_payment_observation:v1"
+    assert extra["producer_fingerprint_state"] == "valid"
+    assert (
+        extra["producer_fingerprint"]
+        == evidence_producer_spec.PINNED_PRODUCER_FINGERPRINT
+    )
+
+
+def test_a_fingerprint_mismatch_is_only_a_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, producer_isolated
+) -> None:
+    monkeypatch.setattr(
+        evidence_producer_spec, "PINNED_PRODUCER_FINGERPRINT", "0" * 64
+    )
+
+    outcome = _run_lifespan(
+        monkeypatch, maintenance_enabled=True, floor=FLOOR
+    )
+
+    extra = _started_extra(outcome)
+    assert extra["producer_fingerprint_state"] == (
+        "producer_fingerprint_mismatch"
+    )
+    assert extra["producer_fingerprint"] is not None
+    # o startup completou: gates e loops intactos
+    assert set(outcome.calls) == GLOBAL_OPERATIONS | EVIDENCE_OPERATIONS
+    assert outcome.leaked_tasks == 0
+
+
+def test_startup_survives_a_failing_producer_diagnosis(
+    monkeypatch: pytest.MonkeyPatch, producer_isolated
+) -> None:
+    def explode():
+        raise RuntimeError("diagnostico quebrado")
+
+    monkeypatch.setattr(
+        main_module, "process_producer_fingerprint_diagnosis", explode
+    )
+
+    outcome = _run_lifespan(
+        monkeypatch, maintenance_enabled=True, floor=FLOOR
+    )
+
+    extra = _started_extra(outcome)
+    assert extra["producer_fingerprint_state"] == "diagnosis_failed"
+    assert extra["producer_fingerprint"] is None
+    assert extra["producer_spec"] == "escalation_payment_observation:v1"
+    assert set(outcome.calls) == GLOBAL_OPERATIONS | EVIDENCE_OPERATIONS
+    assert outcome.leaked_tasks == 0
+
+
+def test_producer_fields_never_alter_gates_or_scheduling(
+    monkeypatch: pytest.MonkeyPatch, producer_isolated
+) -> None:
+    valid = _run_lifespan(
+        monkeypatch, maintenance_enabled=False, floor=FLOOR
+    )
+    evidence_producer_spec.reset_process_producer_fingerprint()
+    monkeypatch.setattr(
+        evidence_producer_spec, "PINNED_PRODUCER_FINGERPRINT", "0" * 64
+    )
+    invalid = _run_lifespan(
+        monkeypatch, maintenance_enabled=False, floor=FLOOR
+    )
+
+    assert valid.calls == invalid.calls
+    assert valid.cancelled == invalid.cancelled
+    assert (
+        _started_extra(valid)["evidence_worker_enabled"]
+        == _started_extra(invalid)["evidence_worker_enabled"]
+        is True
+    )

@@ -29,6 +29,7 @@ from app.models.account_event import AccountEvent
 from app.models.escalation_observation import ASSESSMENT_CODES
 from app.models.escalation_observation import EscalationObservation
 from app.models.work import WorkItem
+from app.services.evidence_provenance_service import ProvenanceBinding
 from app.services.work_service import WorkActor
 
 
@@ -84,9 +85,18 @@ class EscalationObservationService:
         *,
         escalation_work_item: WorkItem,
         account_event: AccountEvent,
+        provenance: ProvenanceBinding,
         idempotency_key: str | None = None,
     ) -> EscalationObservationResult:
         self._validate_escalation_work_item(escalation_work_item)
+
+        # VALUE-3.4D-2b: todo observed_fact AUTOMATICO nasce com proveniencia
+        # (contexto + pass); sem ela nada e escrito (o banco tambem exige).
+        if not isinstance(provenance, ProvenanceBinding):
+            raise EscalationObservationValidationError(
+                "observed_fact exige uma proveniencia valida "
+                "(contexto + pass)."
+            )
 
         if account_event.account_id != escalation_work_item.account_id:
             raise EscalationObservationValidationError(
@@ -124,6 +134,8 @@ class EscalationObservationService:
             linked_account_event_id=account_event.id,
             observed_at=account_event.occurred_at,
             idempotency_key=key,
+            provenance_context_id=provenance.context_id,
+            producer_pass_id=provenance.pass_id,
         )
 
         return self._insert_or_reconcile(

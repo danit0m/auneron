@@ -75,6 +75,50 @@ symlink rejeitado). A cadeia é **conjuntiva**: SHA com 40 hex minúsculos,
 4. Nenhuma proveniência persistente (D-2b) nem fail-closed do produtor
    automático: **ATIVAÇÃO BLOQUEADA até D-2 completo (D-2a + D-2b)**.
 
+## 2.2 Proveniência persistente (D-2b) — mecanismo, não ativação
+
+Todo **novo** `observed_fact` produzido pelo worker automático referencia um
+`EvidenceProvenanceContext` (`provenance_context_id`: *sob qual contexto
+verificável este Auneron interpretou a evidência*) e carrega
+`producer_pass_id` (*em qual passagem do worker foi materializado*). O contexto
+é imutável e endereçado por conteúdo (`epc1`) e reúne: SHA e `dirty=false` do
+build, `source_digest` (`sd1`), `producer_spec`
+(`escalation_payment_observation:v1`), fingerprint do produtor (`pf1`), floor
+efetivo canônico (UTC) e as revisões de schema **esperada** (código) e **real**
+(banco).
+
+**Fail-closed do produtor.** Identidade de build inválida/`dirty`, fingerprint
+indisponível ou divergente do pin, floor sem fuso, revisão esperada/real
+ausente ou divergente, ou falha ao gravar/validar o contexto ⇒ o worker
+**abstém**: nenhuma `observed_fact` é escrita, a aplicação/API continuam no ar
+e um código diagnóstico estável é emitido (`escalation_payment_observation.
+provenance_blocked`). Isso é independente dos gates (`MAINTENANCE_ENABLED` e
+floor) e **não** ativa nada.
+
+**Legado.** `observed_fact` anterior ao D-2b permanece com proveniência `NULL`
+(sem backfill, sem sentinela); `human_assessment` nunca recebe proveniência
+automática. O `CHECK` correspondente é criado `NOT VALID`: vale para toda linha
+nova, tolera o legado. **Não** execute `VALIDATE CONSTRAINT` fora da preparação
+de ativação, depois de conhecer o legado real.
+
+**Auditoria (somente leitura):**
+
+```bash
+python scripts/evidence_provenance_report.py report --limit 20
+```
+
+Mostra revisão esperada × real, fingerprint medido × pin, contextos com
+verificação de integridade (`epc1` armazenado == recomputado), contagem de
+observations/passes por contexto e a contagem de `observed_fact` legado. Saídas:
+0 = íntegro, 2 = integridade violada, 3 = banco indisponível. O script não
+corrige, não faz backfill, não valida constraint, não altera floor, não ativa
+worker e não migra banco.
+
+**Pré-condição de ativação (somente com autorização do PO):** a contagem de
+`observed_fact` legado é conhecida e decidida, a migration está aplicada no
+alvo, e o relatório de auditoria está íntegro. Esta seção descreve mecanismo:
+**ATIVAÇÃO BLOQUEADA** até o PO autorizar a janela.
+
 ## 3. Os dois gates (independentes)
 
 | `MAINTENANCE_ENABLED` | floor | efeito |

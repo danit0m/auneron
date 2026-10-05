@@ -28,6 +28,7 @@ from app.models.work_outcome_evaluation import WorkOutcomeEvaluation
 from app.models.account_event import AccountEvent
 from app.models.account_vencimento_change import AccountVencimentoChange
 from app.models.escalation_observation import EscalationObservation
+from app.models.evidence_provenance_context import EvidenceProvenanceContext
 from app.models.business_effect_verification import (
     BusinessEffectVerification,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "AccountEvent",
     "AccountVencimentoChange",
     "EscalationObservation",
+    "EvidenceProvenanceContext",
     "BusinessEffectVerification",
     "NbaRecommendationSnapshot",
     "PolicyAuthorityConsumption",

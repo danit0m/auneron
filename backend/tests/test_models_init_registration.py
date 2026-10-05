@@ -79,6 +79,10 @@ def test_escalation_observation_table_in_base_metadata() -> None:
             "PolicyAuthorityGrant",
             "app.models.policy_authority_grant",
         ),
+        (
+            "EvidenceProvenanceContext",
+            "app.models.evidence_provenance_context",
+        ),
     ],
 )
 def test_ops_ci_models_are_exported_from_app_models(
@@ -116,3 +120,24 @@ def test_import_app_models_alone_registers_every_mapped_table() -> None:
             for table in missing
         )
     )
+
+
+def test_evidence_provenance_context_table_in_base_metadata() -> None:
+    # VALUE-3.4D-2b: sem isto `alembic check` veria a tabela como "a remover".
+    assert "evidence_provenance_contexts" in Base.metadata.tables
+
+    table = Base.metadata.tables["evidence_provenance_contexts"]
+    assert {column.name for column in table.columns} >= {
+        "id",
+        "context_digest",
+        "git_sha",
+        "git_dirty",
+        "source_digest",
+        "producer_fingerprint",
+        "activation_floor",
+        "expected_schema_revision",
+        "actual_database_revision",
+    }
+    observations = Base.metadata.tables["escalation_observations"]
+    assert observations.c.provenance_context_id.nullable is True
+    assert observations.c.producer_pass_id.nullable is True

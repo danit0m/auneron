@@ -57,6 +57,8 @@ from app.services.human_escalation_materialization_service import (
 from app.services.work_service import WorkActor
 from app.services.work_service import WorkManagerService
 
+from evidence_provenance_helpers import make_service
+
 
 TEST_URL = (
     "postgresql+psycopg://"
@@ -65,6 +67,24 @@ TEST_URL = (
 )
 
 _COUNTER = {"n": 0}
+
+
+@pytest.fixture(autouse=True)
+def _valid_provenance(monkeypatch: pytest.MonkeyPatch):
+    """VALUE-3.4D-2b: o worker so materializa com proveniencia valida.
+    Estes testes (VALUE-3.3B) provam a semantica de coleta; a proveniencia
+    e injetada com fontes VALIDAS (o fail-closed e provado em
+    test_evidence_provenance_worker.py). Sem `conftest`."""
+    import app.core.escalation_payment_observation_maintenance as worker
+
+    worker.reset_blocked_log_state()
+    monkeypatch.setattr(
+        worker,
+        "_provenance_service_for",
+        lambda session_factory: make_service(session_factory),
+    )
+    yield
+    worker.reset_blocked_log_state()
 
 
 def _unique_floor() -> datetime:
@@ -761,10 +781,17 @@ def test_invalid_limit_is_rejected(bad_limit: object) -> None:
 
 
 def test_naive_floor_argument_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        run_escalation_payment_observation_recovery(
-            activation_floor=datetime(2026, 10, 2)
-        )
+    # VALUE-3.4D-2b (D-b6): antes `ValueError`; agora ABSTENCAO TIPADA
+    # (sem excecao, sem escrita, codigo estavel). Nunca coleta com floor
+    # sem fuso explicito.
+    summary = run_escalation_payment_observation_recovery(
+        activation_floor=datetime(2026, 10, 2)
+    )
+
+    assert summary.provenance_blocked is True
+    assert summary.provenance_code == "floor_not_timezone_aware"
+    assert summary.candidate_count == 0
+    assert summary.created_count == 0
 
 
 # ---------------------------------------------------------------------
@@ -1022,8 +1049,13 @@ def test_worker_writes_only_escalation_observations_and_replay_is_silent(
     assert summaries[0].failure_count == 0
     # TODO SQL de escrita emitido pelo worker tem como unico alvo
     # escalation_observations (nenhum UPDATE/DELETE em lugar nenhum).
+    # VALUE-3.4D-2b: no 1o pass com floor novo o contexto de proveniencia
+    # tambem e criado (INSERT); nenhum UPDATE/DELETE em lugar nenhum.
     assert _write_targets(first) == {
-        "INSERT": {"escalation_observations"}
+        "INSERT": {
+            "escalation_observations",
+            "evidence_provenance_contexts",
+        }
     }
     assert not any(
         re.search(r"FOR\s+UPDATE", statement, re.IGNORECASE)
@@ -1078,6 +1110,11 @@ _ALLOWED_IMPORTS = {
             "EscalationObservationService",
             "EscalationObservationValidationError",
         },
+        "uuid": {"uuid4"},
+        "app.services.evidence_provenance_service": {
+            "CODE_FLOOR_NOT_TIMEZONE_AWARE",
+            "EvidenceProvenanceService",
+        },
     },
     _SERVICE_PATH: {
         "__future__": {"annotations"},
@@ -1092,6 +1129,9 @@ _ALLOWED_IMPORTS = {
         },
         "app.models.work": {"WorkItem"},
         "app.services.work_service": {"WorkActor"},
+        "app.services.evidence_provenance_service": {
+            "ProvenanceBinding"
+        },
     },
 }
 

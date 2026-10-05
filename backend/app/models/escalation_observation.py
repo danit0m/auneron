@@ -7,6 +7,7 @@ from sqlalchemy import Index
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import UniqueConstraint
+from sqlalchemy import Uuid
 from sqlalchemy import func
 
 from app.database.database import Base
@@ -42,6 +43,15 @@ class EscalationObservation(Base):
     Nao ha coluna `linkage`: com um unico produtor de observed_fact
     hoje, o valor ('correlated') e uma constante de codigo, nunca
     campo gravavel (VALUE-2.2, pergunta extra).
+
+    VALUE-3.4D-2b -- proveniencia do PRODUTOR automatico: todo NOVO
+    observed_fact referencia um EvidenceProvenanceContext
+    (`provenance_context_id`, "sob qual contexto o produtor interpretou
+    a evidencia") e carrega `producer_pass_id` ("em qual passagem do
+    worker foi materializado"). human_assessment nao recebe nenhum dos
+    dois. observed_fact LEGADO (pre-D-2b) segue NULL/NULL, sem backfill:
+    o CHECK ck_escalation_observations_provenance_by_type foi criado
+    NOT VALID (impoe a regra a toda linha nova, tolera o legado).
     """
 
     __tablename__ = "escalation_observations"
@@ -94,6 +104,18 @@ class EscalationObservation(Base):
             "escalation_work_item_id",
             "idempotency_key",
             name="uq_escalation_observations_work_item_idempotency",
+        ),
+        CheckConstraint(
+            "("
+            "observation_type = 'observed_fact' "
+            "AND provenance_context_id IS NOT NULL "
+            "AND producer_pass_id IS NOT NULL"
+            ") OR ("
+            "observation_type = 'human_assessment' "
+            "AND provenance_context_id IS NULL "
+            "AND producer_pass_id IS NULL"
+            ")",
+            name="ck_escalation_observations_provenance_by_type",
         ),
     )
 
@@ -168,6 +190,24 @@ class EscalationObservation(Base):
         nullable=True,
     )
 
+    provenance_context_id = Column(
+        BigInteger,
+        ForeignKey(
+            "evidence_provenance_contexts.id",
+            name=(
+                "fk_escalation_observations_provenance_context_id_"
+                "contexts"
+            ),
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+
+    producer_pass_id = Column(
+        Uuid,
+        nullable=True,
+    )
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -180,4 +220,14 @@ Index(
     EscalationObservation.escalation_work_item_id,
     EscalationObservation.created_at,
     EscalationObservation.id,
+)
+
+Index(
+    "ix_escalation_observations_provenance_context",
+    EscalationObservation.provenance_context_id,
+)
+
+Index(
+    "ix_escalation_observations_producer_pass",
+    EscalationObservation.producer_pass_id,
 )

@@ -34,6 +34,8 @@ from app.services.human_escalation_materialization_service import (
 from app.services.work_service import WorkActor
 from app.services.work_service import WorkManagerService
 
+from evidence_provenance_helpers import make_binding
+
 
 AUTHENTICATED_EMAIL = "developer.test@example.com"
 
@@ -168,6 +170,7 @@ def _record_observed_fact(
     result = EscalationObservationService(db_session).record_observed_fact(
         escalation_work_item=work_item,
         account_event=event,
+        provenance=make_binding(),
     )
     return result.observation
 

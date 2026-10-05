@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
+from uuid import uuid4
 
 from sqlalchemy import and_
 from sqlalchemy import exists
@@ -47,6 +48,12 @@ from app.services.escalation_observation_service import (
 from app.services.escalation_observation_service import (
     EscalationObservationValidationError,
 )
+from app.services.evidence_provenance_service import (
+    CODE_FLOOR_NOT_TIMEZONE_AWARE,
+)
+from app.services.evidence_provenance_service import (
+    EvidenceProvenanceService,
+)
 
 maintenance_loop_logger = logging.getLogger(
     "auneron.escalation_payment_observation_maintenance"
@@ -61,6 +68,76 @@ class EscalationPaymentObservationRecoverySummary:
     abstained_count: int
     failure_count: int
     disabled: bool = False
+    # VALUE-3.4D-2b: proveniencia invalida => o pass ABSTEM (nenhuma
+    # observation escrita), com codigo estavel.
+    provenance_blocked: bool = False
+    provenance_code: str | None = None
+    provenance_context_id: int | None = None
+
+
+class _BlockedLogState:
+    """Log por TRANSICAO (ok->bloqueado) e por mudanca de codigo, para nao
+    inundar o log a cada pass (60 s). Estado de processo, resetavel."""
+
+    def __init__(self) -> None:
+        self._last_code: str | None = None
+
+    def should_log(self, code: str) -> bool:
+        changed = code != self._last_code
+        self._last_code = code
+        return changed
+
+    def clear(self) -> None:
+        self._last_code = None
+
+
+_BLOCKED_LOG_STATE = _BlockedLogState()
+
+
+def reset_blocked_log_state() -> None:
+    """Reset controlado do estado de log (uso de testes)."""
+    _BLOCKED_LOG_STATE.clear()
+
+
+def _provenance_service_for(
+    session_factory: Callable[[], Session],
+) -> EvidenceProvenanceService:
+    return EvidenceProvenanceService(session_factory)
+
+
+def _log_provenance_blocked(code: str, resolution) -> None:
+    """Diagnostico de bloqueio: so codigo e revisoes SANITIZADAS."""
+    if not _BLOCKED_LOG_STATE.should_log(code):
+        return
+    extra = {
+        "event": "escalation_payment_observation.provenance_blocked",
+        "provenance_code": code,
+    }
+    if resolution is not None:
+        extra["expected_schema_revision"] = resolution.expected_revision
+        extra["actual_database_revision"] = resolution.actual_revision
+    maintenance_loop_logger.warning(
+        "escalation_payment_observation_provenance_blocked",
+        extra=extra,
+    )
+
+
+def _resolve_episode_work_item(db: Session, account: Account):
+    """
+    WorkItem de escalonamento do episodio (conta, vencimento); None quando
+    nao existe (abstencao). Extracao NEUTRA do bloco inline original:
+    mesma consulta, mesmo `work_key`, mesma selecao, mesmo resultado.
+    """
+    return (
+        db.query(WorkItem)
+        .filter(
+            WorkItem.account_id == account.id,
+            WorkItem.scope_type == "account",
+            WorkItem.work_key
+            == work_key_for_episode(account.id, account.vencimento),
+        )
+        .one_or_none()
+    )
 
 
 def _list_candidates(
@@ -128,6 +205,7 @@ def run_escalation_payment_observation_recovery(
     limit: int | None = None,
     activation_floor: datetime | None = None,
     session_factory: Callable[[], Session] = SessionLocal,
+    provenance_service: EvidenceProvenanceService | None = None,
 ) -> EscalationPaymentObservationRecoverySummary:
     effective_limit = (
         settings.escalation_payment_observation_batch_size
@@ -168,9 +246,28 @@ def run_escalation_payment_observation_recovery(
         )
 
     if effective_floor.tzinfo is None:
-        raise ValueError(
-            "activation_floor exige fuso horario explicito."
+        # D-b6: abstencao TIPADA (antes: ValueError). Nenhuma escrita.
+        _log_provenance_blocked(CODE_FLOOR_NOT_TIMEZONE_AWARE, None)
+        return EscalationPaymentObservationRecoverySummary(
+            candidate_count=0,
+            created_count=0,
+            duplicate_count=0,
+            abstained_count=0,
+            failure_count=0,
+            provenance_blocked=True,
+            provenance_code=CODE_FLOOR_NOT_TIMEZONE_AWARE,
         )
+
+    # "em qual passagem concreta do worker?": gerado na entrada, so e
+    # persistido se alguma observation for materializada neste pass.
+    pass_id = uuid4()
+    provenance = (
+        provenance_service
+        if provenance_service is not None
+        else _provenance_service_for(session_factory)
+    )
+    binding = None
+    blocked_code: str | None = None
 
     candidate_count = 0
     created_count = 0
@@ -216,25 +313,34 @@ def run_escalation_payment_observation_recovery(
                         abstained_count += 1
                         continue
 
-                    work_item = (
-                        db.query(WorkItem)
-                        .filter(
-                            WorkItem.account_id == account.id,
-                            WorkItem.scope_type == "account",
-                            WorkItem.work_key
-                            == work_key_for_episode(
-                                account.id, account.vencimento
-                            ),
-                        )
-                        .one_or_none()
+                    work_item = _resolve_episode_work_item(
+                        db, account
                     )
                     if work_item is None:
                         abstained_count += 1
                         continue
 
+                    if binding is None:
+                        # RESOLUCAO PREGUICOSA: so aqui, imediatamente
+                        # antes da PRIMEIRA materializacao do pass.
+                        # `resolve()` nunca levanta.
+                        resolution = provenance.resolve(
+                            activation_floor=effective_floor,
+                            pass_id=pass_id,
+                        )
+                        if resolution.binding is None:
+                            blocked_code = str(resolution.code)
+                            _log_provenance_blocked(
+                                blocked_code, resolution
+                            )
+                            break
+                        binding = resolution.binding
+                        _BLOCKED_LOG_STATE.clear()
+
                     result = service.record_observed_fact(
                         escalation_work_item=work_item,
                         account_event=account_event,
+                        provenance=binding,
                     )
                     if result.created:
                         created_count += 1
@@ -261,6 +367,9 @@ def run_escalation_payment_observation_recovery(
                         },
                     )
 
+            if blocked_code is not None:
+                break
+
             if len(candidates) < effective_limit:
                 break
 
@@ -270,6 +379,11 @@ def run_escalation_payment_observation_recovery(
             duplicate_count=duplicate_count,
             abstained_count=abstained_count,
             failure_count=failure_count,
+            provenance_blocked=blocked_code is not None,
+            provenance_code=blocked_code,
+            provenance_context_id=(
+                binding.context_id if binding is not None else None
+            ),
         )
         maintenance_loop_logger.info(
             "escalation_payment_observation_recovery_completed",
@@ -283,6 +397,11 @@ def run_escalation_payment_observation_recovery(
                 "duplicate_count": summary.duplicate_count,
                 "abstained_count": summary.abstained_count,
                 "failure_count": summary.failure_count,
+                "provenance_blocked": summary.provenance_blocked,
+                "provenance_code": summary.provenance_code,
+                "provenance_context_id": (
+                    summary.provenance_context_id
+                ),
             },
         )
         return summary

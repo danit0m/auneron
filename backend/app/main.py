@@ -27,6 +27,10 @@ from app.core.build_identity import (
     process_build_identity_diagnosis,
 )
 from app.core.config import settings
+from app.core.evidence_producer_spec import PRODUCER_SPEC
+from app.core.evidence_producer_spec import (
+    process_producer_fingerprint_diagnosis,
+)
 from app.core.evidence_floor_contract import canonical_utc
 from app.core.evidence_floor_contract import floor_age_seconds
 from app.core.evidence_floor_contract import floor_state
@@ -193,6 +197,41 @@ async def _build_identity_log_fields() -> dict[str, object]:
     }
 
 
+async def _producer_log_fields() -> dict[str, object]:
+    """
+    Diagnostico do produtor automatico (VALUE-3.4D-2b) para o log de
+    startup: somente escalares tecnicos, sem DB. Fingerprint invalido NAO
+    bloqueia o startup; ele faz o PRODUTOR abster (por pass).
+    """
+    try:
+        diagnosis = await asyncio.to_thread(
+            process_producer_fingerprint_diagnosis
+        )
+    except Exception:
+        application_logger.exception(
+            "producer_fingerprint_diagnosis_failed",
+            extra={
+                "event": "application_lifecycle",
+                "state": "producer_fingerprint_diagnosis_failed",
+            },
+        )
+        return {
+            "producer_spec": PRODUCER_SPEC,
+            "producer_fingerprint": None,
+            "producer_fingerprint_state": "diagnosis_failed",
+        }
+
+    return {
+        "producer_spec": PRODUCER_SPEC,
+        "producer_fingerprint": (
+            diagnosis.measured.digest
+            if diagnosis.measured is not None
+            else None
+        ),
+        "producer_fingerprint_state": diagnosis.state,
+    }
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     database_online = (
@@ -292,6 +331,7 @@ async def lifespan(_: FastAPI):
     # Estado AUDITAVEL dos dois gates (VALUE-3.4D-1): somente escalares
     # tecnicos -- nenhum segredo, identificador de conta/cliente ou URL.
     build_identity_fields = await _build_identity_log_fields()
+    producer_fields = await _producer_log_fields()
     started_at = datetime.now(timezone.utc)
     evidence_floor = (
         settings.escalation_payment_observation_activation_floor
@@ -331,6 +371,7 @@ async def lifespan(_: FastAPI):
                 else None
             ),
             **build_identity_fields,
+            **producer_fields,
         },
     )
 

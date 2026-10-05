@@ -29,6 +29,8 @@ from app.services.human_escalation_materialization_service import (
 )
 from app.services.work_service import WorkActor
 
+from evidence_provenance_helpers import make_binding
+
 
 def _account(
     db_session: Session,
@@ -132,6 +134,7 @@ def test_record_observed_fact_success(db_session: Session) -> None:
 
     service = EscalationObservationService(db_session)
     result = service.record_observed_fact(
+        provenance=make_binding(),
         escalation_work_item=work_item,
         account_event=account_event,
     )
@@ -165,6 +168,7 @@ def test_record_observed_fact_rejects_wrong_account(
     service = EscalationObservationService(db_session)
     with pytest.raises(EscalationObservationValidationError):
         service.record_observed_fact(
+            provenance=make_binding(),
             escalation_work_item=work_item,
             account_event=account_event,
         )
@@ -185,6 +189,7 @@ def test_record_observed_fact_rejects_event_before_work_item(
     service = EscalationObservationService(db_session)
     with pytest.raises(EscalationObservationValidationError):
         service.record_observed_fact(
+            provenance=make_binding(),
             escalation_work_item=work_item,
             account_event=account_event,
         )
@@ -206,6 +211,7 @@ def test_record_observed_fact_rejects_disallowed_new_status(
     service = EscalationObservationService(db_session)
     with pytest.raises(EscalationObservationValidationError):
         service.record_observed_fact(
+            provenance=make_binding(),
             escalation_work_item=work_item,
             account_event=account_event,
         )
@@ -223,9 +229,11 @@ def test_record_observed_fact_called_twice_for_same_event_is_idempotent(
 
     service = EscalationObservationService(db_session)
     first = service.record_observed_fact(
+        provenance=make_binding(),
         escalation_work_item=work_item, account_event=account_event
     )
     second = service.record_observed_fact(
+        provenance=make_binding(),
         escalation_work_item=work_item, account_event=account_event
     )
 
@@ -390,6 +398,7 @@ def test_multiple_observations_over_time_all_preserved(
         db_session, account=account, occurred_at=datetime.now(timezone.utc)
     )
     paid = service.record_observed_fact(
+        provenance=make_binding(),
         escalation_work_item=work_item, account_event=account_event
     )
 
