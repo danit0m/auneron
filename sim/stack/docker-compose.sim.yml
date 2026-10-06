@@ -1,0 +1,112 @@
+# SIM-1.4 -- stack DESCARTAVEL e ISOLADO auneron_sim (Design Freeze V1.1).
+# Projeto, rede, volumes, imagens, containers e portas proprios. Nada e
+# compartilhado com DEV/TEST/prod. So e operado pelo harness `sim.stack.lab`,
+# que aplica a guarda externa antes de qualquer comando.
+#
+# Invariantes:
+#   SIM-CLOCK-1  relogio em volume Docker NATIVO (nunca bind mount)
+#   SIM-CLOCK-2  FAKETIME_NO_CACHE=1
+#   SIM-MAINT-1  MAINTENANCE_ENABLED=true SOMENTE neste stack
+# Segredos (${SIM_*}) vem do ambiente do harness, gerados por instancia e
+# guardados fora do repositorio.
+name: auneron-sim
+
+x-faketime: &faketime
+  FAKETIME_TIMESTAMP_FILE: /sim_clock/now
+  FAKETIME_NO_CACHE: "1"
+  FAKETIME_DONT_FAKE_MONOTONIC: "1"
+  TZ: America/Sao_Paulo
+
+x-backend-env: &backend-env
+  <<: *faketime
+  LD_PRELOAD: /usr/lib/x86_64-linux-gnu/faketime/libfaketimeMT.so.1
+  APP_ENV: production
+  DATABASE_URL: postgresql+psycopg://sim:${SIM_DB_PASSWORD:?SIM_DB_PASSWORD}@sim-postgres:5432/auneron_sim
+  EXPECTED_DATABASE_NAME: auneron_sim
+  EXPECTED_DATABASE_HOST: sim-postgres
+  API_KEY: ${SIM_API_KEY:?SIM_API_KEY}
+  MAINTENANCE_ENABLED: "true"
+  CORS_ORIGINS: https://sim.nova-horizonte.example.com
+  FORWARDED_ALLOW_IPS: 172.28.1.10/32,172.28.0.10/32
+  BUSINESS_TIMEZONE: America/Sao_Paulo
+  LOG_LEVEL: INFO
+  WORK_SKILL_RECOVERY_INTERVAL_SECONDS: "30"
+  SKILL_RECOVERY_INTERVAL_SECONDS: "30"
+  ESCALATION_PAYMENT_OBSERVATION_INTERVAL_SECONDS: "30"
+  CLIENT_BEHAVIOR_RECALCULATION_INTERVAL_SECONDS: "60"
+  CLIENT_CLASSIFICATION_RECALCULATION_INTERVAL_SECONDS: "60"
+  RECEIVABLES_MONITOR_INTERVAL_SECONDS: "60"
+  AUTH_SESSION_CLEANUP_INTERVAL_SECONDS: "3600"
+  ESCALATION_PAYMENT_OBSERVATION_ACTIVATION_FLOOR: ${SIM_EVIDENCE_FLOOR:-}
+
+services:
+  sim-clock:
+    image: auneron-sim-postgres:${SIM_IMAGE_TAG:?SIM_IMAGE_TAG}
+    container_name: auneron-sim-clock
+    entrypoint: ["sh", "-c", "test -f /sim_clock/now || printf '+0' > /sim_clock/now; exec sleep infinity"]
+    volumes:
+      - auneron_sim_clock:/sim_clock
+    network_mode: none
+
+  sim-postgres:
+    image: auneron-sim-postgres:${SIM_IMAGE_TAG:?SIM_IMAGE_TAG}
+    container_name: auneron-sim-postgres
+    environment:
+      <<: *faketime
+      LD_PRELOAD: /usr/lib/faketime/libfaketimeMT.so.1
+      POSTGRES_DB: auneron_sim
+      POSTGRES_USER: sim
+      POSTGRES_PASSWORD: ${SIM_DB_PASSWORD:?SIM_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - auneron_sim_pgdata:/var/lib/postgresql/data
+      - auneron_sim_clock:/sim_clock:ro
+    depends_on:
+      sim-clock: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sim -d auneron_sim"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    networks: [auneron_sim_internal]
+
+  sim-migration:
+    image: auneron-sim-backend:${SIM_IMAGE_TAG:?SIM_IMAGE_TAG}
+    container_name: auneron-sim-migration
+    environment:
+      <<: *backend-env
+      DATABASE_APPLICATION_NAME: auneron-sim-migration
+    volumes:
+      - auneron_sim_clock:/sim_clock:ro
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    depends_on:
+      sim-postgres: {condition: service_healthy}
+    restart: "no"
+    networks: [auneron_sim_internal]
+
+  sim-backend:
+    image: auneron-sim-backend:${SIM_IMAGE_TAG:?SIM_IMAGE_TAG}
+    container_name: auneron-sim-backend
+    environment:
+      <<: *backend-env
+      DATABASE_APPLICATION_NAME: auneron-sim-api
+    volumes:
+      - auneron_sim_clock:/sim_clock:ro
+    ports:
+      - "127.0.0.1:8100:8000"
+    depends_on:
+      sim-postgres: {condition: service_healthy}
+      sim-migration: {condition: service_completed_successfully}
+    networks: [auneron_sim_internal]
+
+volumes:
+  auneron_sim_pgdata:
+    name: auneron_sim_pgdata
+  auneron_sim_clock:
+    name: auneron_sim_clock
+
+networks:
+  auneron_sim_internal:
+    name: auneron_sim_internal
+    driver: bridge

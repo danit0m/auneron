@@ -1,0 +1,104 @@
+# SIM-1.4 -- configuracao CONGELADA do laboratorio auneron_sim
+# (Design Freeze V1.1 aprovado). Qualquer mudanca de valor exige nova
+# versao deste arquivo e aparece no manifesto/relatorio de cada execucao.
+
+schema: sim.lab.v1
+version: 1
+
+target:
+  commit: d100ce23462989dd1047ceabf0a30dc7e5b0d62d
+  alembic_head: 5c1e7a90d2b4
+
+docker:
+  project: auneron-sim
+  compose_file: sim/stack/docker-compose.sim.yml
+  required_prefix_container: auneron-sim-
+  required_prefix_volume: auneron_sim_
+  network: auneron_sim_internal
+  images:
+    base: auneron-sim-base
+    backend: auneron-sim-backend
+    postgres: auneron-sim-postgres
+  postgres_base_image: postgres:17-alpine
+
+http:
+  base_url: http://127.0.0.1:8100
+  allowed_hosts: ["127.0.0.1:8100"]
+  forbidden_ports: [8000, 8080, 5432, 5433]
+
+database:
+  name: auneron_sim
+  user: sim
+  host: sim-postgres
+
+backend_profile:
+  APP_ENV: production
+  EXPECTED_DATABASE_NAME: auneron_sim
+  EXPECTED_DATABASE_HOST: sim-postgres
+  MAINTENANCE_ENABLED: "true"        # SIM-MAINT-1: so no auneron_sim
+  CORS_ORIGINS: https://sim.nova-horizonte.example.com
+  FORWARDED_ALLOW_IPS: 172.28.1.10/32,172.28.0.10/32
+  BUSINESS_TIMEZONE: America/Sao_Paulo
+  TZ: America/Sao_Paulo
+
+intervals:
+  WORK_SKILL_RECOVERY_INTERVAL_SECONDS: 30
+  SKILL_RECOVERY_INTERVAL_SECONDS: 30
+  ESCALATION_PAYMENT_OBSERVATION_INTERVAL_SECONDS: 30
+  CLIENT_BEHAVIOR_RECALCULATION_INTERVAL_SECONDS: 60
+  CLIENT_CLASSIFICATION_RECALCULATION_INTERVAL_SECONDS: 60
+  RECEIVABLES_MONITOR_INTERVAL_SECONDS: 60
+  AUTH_SESSION_CLEANUP_INTERVAL_SECONDS: 3600
+
+quiescence:
+  event_wait_timeout_s: 300
+  time_floor_s: 120
+  stability_gap_s: 60
+  stability_max_attempts: 3
+  hard_timeout_s: 600
+  events_before_floor:
+    - overdue.detection.completed
+    - receivables_monitor.completed
+    - work.skill_execution.recovery_completed
+    - work.outcome_evaluation.recovery_completed
+    - business_effect_verification.recovery_completed
+    - skill_invocation_recovery_completed
+    - policy.trigger.completed
+  events_after_floor_extra:
+    - escalation_payment_observation.recovery_completed
+  workers_without_signal:   # GAP registrado (S4-7)
+    - client_behavior_memory
+    - client_classification
+    - advisory_dispatch
+    - pilot_mutation
+
+startup:
+  ready_timeout_s: 180
+
+clock:
+  max_skew_s: 3
+  d0: "2026-01-05"
+  utc_offset_minutes: -180
+  floor_day: 14
+  floor_at: "08:00"
+
+personas:
+  - {user: sim-faturamento, name: "[SIM] Faturamento", role: analyst}
+  - {user: sim-receber, name: "[SIM] Contas a Receber", role: analyst}
+  - {user: sim-cobranca-1, name: "[SIM] Cobranca 1", role: analyst}
+  - {user: sim-cobranca-2, name: "[SIM] Cobranca 2", role: analyst}
+  - {user: sim-cobranca-3, name: "[SIM] Cobranca 3", role: analyst}
+  - {user: sim-gerente-fin, name: "[SIM] Gerente Financeiro", role: manager}
+  - {user: sim-coordenador-fin, name: "[SIM] Coordenador Financeiro", role: manager}
+  - {user: sim-controller, name: "[SIM] Controller", role: viewer}
+  - {user: sim-admin, name: "[SIM] Admin", role: administrator}
+probe:
+  user: sim-harness-probe
+  name: "[SIM-HARNESS] probe"
+  role: analyst
+email_domain: nova-horizonte.example.com
+
+skills:
+  - {key: account.mark_overdue, script: scripts.register_account_mark_overdue_skill}
+  - {key: account.mark_paid, script: scripts.register_account_mark_paid_skill}
+forbidden_principal_email: sistema.vencimentos@auneron.core
