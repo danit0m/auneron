@@ -4,6 +4,11 @@ CLI do gerador SIM-1.2.
     python -m sim.generator.cli generate --variant nh-standard --seed 340001
     python -m sim.generator.cli verify sim/scenarios/nh-standard-s340001
     python -m sim.generator.cli hashes --variant nh-small --seed 340001
+    python -m sim.generator.cli generate --variant nh-standard --scenario-version v2
+
+`--scenario-version` (default v1): v1 = cenario historico imutavel do
+SIM-1.2 (sempre byte-identico); v2 = corredores reais do SIM-1.3, com saida
+em `<variant>-v2-s<seed>/` (nunca sobrescreve a v1).
 
 `generate` grava `<out>/<variant>-s<seed>/` com manifest + 3 artefatos.
 `hashes` gera em memoria e imprime os hashes (prova de determinismo entre
@@ -168,6 +173,95 @@ def generate(variant: str, seed: int) -> tuple[str, dict, dict]:
     return scenario_id, files, summary
 
 
+V2_SCHEMA_VERSION = "sim.scenario.v2"
+V2_GENERATOR_VERSION = "sim-1.3.0"
+
+
+def world_artifact_v2(world, scenario_id: str) -> dict:
+    document = world_artifact(world, scenario_id)
+    document["schema"] = V2_SCHEMA_VERSION
+    reconciled = world.reconciled
+    for title in document["titles"]:
+        title["reconciled_at"] = _instant(reconciled.get(title["rec_ref"]))
+    return document
+
+
+def generate_v2(variant: str, seed: int) -> tuple[str, dict, dict]:
+    """sim.scenario.v2 em memoria. Retorna (scenario_id, {nome: bytes}, resumo)."""
+    from sim.generator.cases_v2 import InjectorV2
+    from sim.generator.cases_v2 import inject_agenda_v2
+    from sim.generator.cases_v2 import restart_in_flight_v2
+    from sim.generator.cases_v2 import tag_cases_v2
+    from sim.generator.agenda import PUBLIC_OP_KEYS_V2
+    from sim.generator.agenda import PUBLIC_OPS_V2
+    from sim.generator.config import load_inputs_v2
+    from sim.generator.world_v2 import SimulatorV2
+    from sim.oracle.expectations_v2 import KIND_SOURCES
+    from sim.oracle.expectations_v2 import build_expectations_v2
+    from sim.oracle.rules_v2 import RULE_VERSIONS_V2
+
+    inputs = load_inputs_v2()
+    spec = inputs.variant(variant)
+    scenario_id = f"{variant}-v2-s{seed}"
+    injector = InjectorV2(inputs, variant, seed)
+    simulator = SimulatorV2(inputs, variant, seed, injector, scenario_id)
+    world = simulator.run()
+    agenda_cases = inject_agenda_v2(world, inputs, int(spec["min_case_instances"]))
+    world.replayed = set(agenda_cases.get("C-ADV-2", []))
+    world.duplicate_settled = set(agenda_cases.get("C-ADV-1", []) + agenda_cases.get("C-ADV-3", []))
+    world.restart_in_flight = restart_in_flight_v2(world, inputs)
+    expectations, labels = build_expectations_v2(world, inputs)
+    case_instances = tag_cases_v2(world, inputs, agenda_cases, labels)
+    for case in inputs.cases["cases"]:
+        case_instances.setdefault(case, [])
+    oracle = oracle_artifact(scenario_id, expectations, case_instances, inputs)
+    oracle["rule_versions"] = RULE_VERSIONS_V2
+    oracle["kind_sources"] = KIND_SOURCES
+    oracle["authority_chains"] = inputs.company["authority_chains"]
+    oracle["reserved_kinds"] = {"work_outcome_evaluated": "RESERVED/GAP (no public exposure)"}
+    oracle["out_of_scope"] = {"F1": "OUT/GAP (G-SIM-17)", "L3": "OUT (G-SIM-4)"}
+    oracle["invalidation_rules"] = oracle["invalidation_rules"] + [
+        "authority choreography violation outside C-AUTH-2 => scenario INVALID",
+    ]
+    world_doc = world_artifact_v2(world, scenario_id)
+    agenda = build_public_agenda(world, scenario_id, keys=PUBLIC_OP_KEYS_V2, allowed_ops=PUBLIC_OPS_V2)
+    problems = separation_violations(agenda, oracle, world_doc,
+                                     keys=PUBLIC_OP_KEYS_V2, allowed_ops=PUBLIC_OPS_V2)
+    if problems:
+        raise RuntimeError("cenario INVALID (separacao do Oracle): " + "; ".join(problems[:5]))
+    files = {
+        "public_agenda.json": canonical_bytes(agenda),
+        "world.json": canonical_bytes(world_doc),
+        "oracle.json": canonical_bytes(oracle),
+    }
+    manifest = {
+        "artifact": "manifest",
+        "scenario_id": scenario_id,
+        "variant": variant,
+        "seed": seed,
+        "schema_version": V2_SCHEMA_VERSION,
+        "generator_version": V2_GENERATOR_VERSION,
+        "claim": CLAIM,
+        "d0": inputs.calendar.iso(0),
+        "days": inputs.calendar.days,
+        "inputs": dict(sorted(inputs.hashes.items())),
+        "artifacts": {name: sha256_bytes(data) for name, data in sorted(files.items())},
+        "supersedes_for_execution": [f"{variant}-s{seed}"],
+        "world_seed_shared_with_v1": True,
+    }
+    files["manifest.json"] = canonical_bytes(manifest)
+    summary = {
+        "customers": len(world.customers),
+        "titles": len(world.titles),
+        "agenda_ops": len(agenda["ops"]),
+        "world_events": len(world_doc["events"]),
+        "expectations": len(expectations),
+        "semantics": oracle["semantics_counts"],
+        "case_instances": {k: len(v) for k, v in case_instances.items()},
+    }
+    return scenario_id, files, summary
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sim.generator.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -175,9 +269,11 @@ def main(argv: list[str] | None = None) -> int:
     gen.add_argument("--variant", required=True)
     gen.add_argument("--seed", type=int, default=DEFAULT_SEED)
     gen.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    gen.add_argument("--scenario-version", choices=("v1", "v2"), default="v1")
     hsh = sub.add_parser("hashes")
     hsh.add_argument("--variant", required=True)
     hsh.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    hsh.add_argument("--scenario-version", choices=("v1", "v2"), default="v1")
     ver = sub.add_parser("verify")
     ver.add_argument("scenario_dir", type=Path)
     args = parser.parse_args(argv)
@@ -189,7 +285,8 @@ def main(argv: list[str] | None = None) -> int:
             print(" -", reason)
         return 0 if result["status"] == "VALID" else 2
 
-    scenario_id, files, summary = generate(args.variant, args.seed)
+    builder = generate_v2 if args.scenario_version == "v2" else generate
+    scenario_id, files, summary = builder(args.variant, args.seed)
     if args.command == "hashes":
         print(scenario_id)
         for name in sorted(files):

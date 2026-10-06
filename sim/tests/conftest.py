@@ -43,3 +43,33 @@ def generated():
 @pytest.fixture(scope="session", params=VARIANTS)
 def scenario(request, generated):
     return generated[request.param]
+
+
+# --- sim.scenario.v2 (SIM-1.3) --------------------------------------------
+class GeneratedV2(Generated):
+    def __init__(self, variant: str) -> None:
+        from sim.generator.cli import generate_v2
+
+        self.variant = variant
+        self.scenario_id, self.files, self.summary = generate_v2(variant, DEFAULT_SEED)
+        self.agenda = json.loads(self.files["public_agenda.json"])
+        self.world = json.loads(self.files["world.json"])
+        self.oracle = json.loads(self.files["oracle.json"])
+        self.manifest = json.loads(self.files["manifest.json"])
+
+
+@pytest.fixture(scope="session")
+def inputs_v2():
+    from sim.generator.config import load_inputs_v2
+
+    return load_inputs_v2()
+
+
+@pytest.fixture(scope="session")
+def generated_v2():
+    return {variant: GeneratedV2(variant) for variant in VARIANTS}
+
+
+@pytest.fixture(scope="session", params=VARIANTS)
+def scenario_v2(request, generated_v2):
+    return generated_v2[request.param]

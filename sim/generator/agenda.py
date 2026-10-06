@@ -29,19 +29,29 @@ PUBLIC_OPS = frozenset({
     "materialize_escalation", "record_assessment", "decide_mark_overdue",
     "restart_backend",
 })
+# sim.scenario.v2 (SIM-1.3): corredores governados reais. Sem
+# `settle_receivable` (G-SIM-14) e sem decisao de aprovacao F1 (G-SIM-17).
+PUBLIC_OP_KEYS_V2 = PUBLIC_OP_KEYS | frozenset({"ref", "expected_status", "idempotency_key"})
+PUBLIC_OPS_V2 = frozenset({
+    "create_receivable", "change_due_date", "consult_nba",
+    "materialize_escalation", "record_assessment",
+    "request_mark_paid", "decide_mark_paid", "execute_mark_paid",
+    "materialize_mark_overdue", "decide_mark_overdue", "execute_mark_overdue",
+    "restart_backend",
+})
 
 
 class SeparationViolation(RuntimeError):
     """Violacao da separacao do Oracle: o cenario e INVALID (secao 8.5)."""
 
 
-def build_public_agenda(world, scenario_id: str) -> dict:
+def build_public_agenda(world, scenario_id: str, *, keys=PUBLIC_OP_KEYS, allowed_ops=PUBLIC_OPS) -> dict:
     ordered = sorted(world.ops, key=lambda item: (item[0], item[1], item[2]))
     ops = []
     for seq, (day, minute, _, record) in enumerate(ordered, start=1):
         op = {"seq": seq, "day": day, "at": to_hhmm(minute), **record}
-        unknown = set(op) - PUBLIC_OP_KEYS
-        if unknown or op["op"] not in PUBLIC_OPS:
+        unknown = set(op) - keys
+        if unknown or op["op"] not in allowed_ops:
             raise SeparationViolation(f"campo/op nao publico na agenda: {sorted(unknown)} {op['op']}")
         ops.append(op)
     return {

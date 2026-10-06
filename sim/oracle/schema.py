@@ -13,7 +13,9 @@ from pathlib import Path
 from sim.generator.agenda import MANIFEST_FILE
 from sim.generator.agenda import PUBLIC_FILE
 from sim.generator.agenda import PUBLIC_OP_KEYS
+from sim.generator.agenda import PUBLIC_OP_KEYS_V2
 from sim.generator.agenda import PUBLIC_OPS
+from sim.generator.agenda import PUBLIC_OPS_V2
 from sim.generator.canonical import read_json
 from sim.generator.canonical import sha256_bytes
 
@@ -33,6 +35,13 @@ EXPECTATION_KINDS = frozenset({
     "must_not_exist", "http_status", "no_duplicate_effect",
     "not_representable",
 })
+EXPECTATION_KINDS_V2 = (EXPECTATION_KINDS - frozenset({
+    "approval_request_exists", "approval_decided", "approval_expired",
+})) | frozenset({
+    "governed_request_exists", "governed_decision", "governed_execution",
+    "effective_expiry", "authority_violation_rejected",
+    "business_effect_verified", "behavior_pattern_present", "nba_applied_rules",
+})
 # Tokens que so existem no mundo/Oracle; nunca podem aparecer na agenda.
 WORLD_ONLY_KEYS = frozenset({
     "profile", "profile_at_issue", "segment", "plan", "fact", "fact_at", "evidence",
@@ -41,7 +50,8 @@ WORLD_ONLY_KEYS = frozenset({
 })
 
 
-def separation_violations(agenda: dict, oracle: dict, world: dict) -> list:
+def separation_violations(agenda: dict, oracle: dict, world: dict, *,
+                          keys=PUBLIC_OP_KEYS, allowed_ops=PUBLIC_OPS) -> list:
     problems = []
     case_ids = set(oracle.get("case_instances", {}))
     profiles = {f"P{n}" for n in range(1, 11)}
@@ -49,12 +59,12 @@ def separation_violations(agenda: dict, oracle: dict, world: dict) -> list:
     forbidden_values = case_ids | profiles | world_event_types
     previous = (-1, "")
     for index, op in enumerate(agenda.get("ops", [])):
-        keys = set(op)
-        if keys - PUBLIC_OP_KEYS:
-            problems.append(f"op {index}: chaves nao publicas {sorted(keys - PUBLIC_OP_KEYS)}")
-        if keys & WORLD_ONLY_KEYS:
-            problems.append(f"op {index}: chaves do mundo/Oracle {sorted(keys & WORLD_ONLY_KEYS)}")
-        if op.get("op") not in PUBLIC_OPS:
+        op_keys = set(op)
+        if op_keys - keys:
+            problems.append(f"op {index}: chaves nao publicas {sorted(op_keys - keys)}")
+        if op_keys & WORLD_ONLY_KEYS:
+            problems.append(f"op {index}: chaves do mundo/Oracle {sorted(op_keys & WORLD_ONLY_KEYS)}")
+        if op.get("op") not in allowed_ops:
             problems.append(f"op {index}: operacao nao publica {op.get('op')}")
         for key, value in op.items():
             if isinstance(value, str) and value in forbidden_values:
@@ -78,10 +88,16 @@ def validate_scenario(scenario_dir: Path) -> dict:
         if sha256_bytes(raw) != manifest["artifacts"].get(name):
             reasons.append(f"hash divergente: {name}")
         data[name] = json.loads(raw.decode("utf-8"))
-    problems = separation_violations(data[PUBLIC_FILE], data["oracle.json"], data["world.json"])
+    v2 = manifest.get("schema_version") == "sim.scenario.v2"
+    problems = separation_violations(
+        data[PUBLIC_FILE], data["oracle.json"], data["world.json"],
+        keys=PUBLIC_OP_KEYS_V2 if v2 else PUBLIC_OP_KEYS,
+        allowed_ops=PUBLIC_OPS_V2 if v2 else PUBLIC_OPS,
+    )
     reasons.extend(f"separacao: {p}" for p in problems)
+    kinds = EXPECTATION_KINDS_V2 if v2 else EXPECTATION_KINDS
     for item in data["oracle.json"]["expectations"]:
-        if item["semantics"] not in SEMANTICS or item["kind"] not in EXPECTATION_KINDS:
+        if item["semantics"] not in SEMANTICS or item["kind"] not in kinds:
             reasons.append(f"expectativa invalida: {item['exp_id']}")
             break
     return {"status": "VALID" if not reasons else "INVALID", "reasons": reasons}

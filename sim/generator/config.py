@@ -55,6 +55,36 @@ class Inputs:
         return variants[name]
 
 
+V2_DIR = COMPANY_DIR / "v2"
+# Entradas da v2: arquivos PROPRIOS em v2/ + populacao e gramatica de nomes
+# compartilhadas com a v1 (lidas, nunca copiadas nem alteradas).
+V2_INPUT_FILES = (
+    ("v2/company.yaml", V2_DIR / "company.yaml"),
+    ("population.yaml", COMPANY_DIR / "population.yaml"),
+    ("v2/calendar.yaml", V2_DIR / "calendar.yaml"),
+    ("v2/cases.yaml", V2_DIR / "cases.yaml"),
+    ("names_grammar.yaml", COMPANY_DIR / "names_grammar.yaml"),
+)
+
+
+def load_inputs_v2() -> Inputs:
+    loaded: dict[str, dict] = {}
+    hashes: dict[str, str] = {}
+    for name, path in V2_INPUT_FILES:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded[name] = data
+        hashes[name] = sha256_of(data)
+    return Inputs(
+        company=loaded["v2/company.yaml"],
+        population=loaded["population.yaml"],
+        calendar_raw=loaded["v2/calendar.yaml"],
+        cases=loaded["v2/cases.yaml"],
+        names=loaded["names_grammar.yaml"],
+        calendar=calendar_from_config(loaded["v2/calendar.yaml"]),
+        hashes=hashes,
+    )
+
+
 def load_inputs(directory: Path = COMPANY_DIR) -> Inputs:
     loaded: dict[str, dict] = {}
     hashes: dict[str, str] = {}

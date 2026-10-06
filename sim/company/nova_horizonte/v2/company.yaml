@@ -1,0 +1,108 @@
+# SIM-1.3 -- Nova Horizonte, cenario sim.scenario.v2 (Design Freeze V1).
+# Entradas PROPRIAS da v2; as entradas v1 (../*.yaml) sao imutaveis.
+# Diferencas normativas da v2:
+#   * baixa = corredor governado mark_paid (request -> decision -> execution);
+#   * atraso = corredor HUMANO de mark_overdue (F1 OUT/GAP);
+#   * expiracao derivada de expires_at; mark_overdue humano expirado ou
+#     rejeitado = episodio sem saida (sem retry);
+#   * personas v2 com sim-coordenador-fin (2o manager).
+# Resultado: scenario artifacts VERIFIED / deterministic; nunca
+# OPERATIONALLY OBSERVED.
+
+schema: sim.company.v2
+company:
+  name: "Nova Horizonte Distribuidora (ficticia)"
+  identifier: NHD-SIM-0001
+  activity: >-
+    Distribuicao B2B de mercearia seca, bebidas nao alcoolicas, limpeza e
+    descartaveis
+  region: "Regiao Horizonte (ficticia)"
+  routes: [Norte, Sul, Leste, Centro]
+  currency: BRL
+  email_domain: nova-horizonte.example.com
+  whatsapp_prefix: "+55 00 0000-"
+  name_marker: "[SIM]"
+
+payment_methods:
+  pix:
+    any_day: true
+    window: ["07:00", "22:00"]
+    evidence: same_instant
+  boleto:
+    any_day: true
+    window: ["08:00", "20:00"]
+    evidence: next_business_day
+    evidence_at: "07:00"
+  ted:
+    any_day: false
+    window: ["09:00", "16:00"]
+    evidence: same_instant
+
+# Personas v2 (Design Freeze V1, secao 2). `authority` lista os passos
+# governados que a persona PODE executar no mundo (subconjunto do que o
+# RBAC real permite).
+personas:
+  - user: sim-faturamento
+    role: analyst
+    function: billing
+    authority: []
+  - user: sim-receber
+    role: analyst
+    function: receivables
+    # Conciliacao do retorno bancario (MUNDO). Nao move a baixa no Auneron.
+    capacity_per_slot: 80
+    queue_delay_bps: 500
+    authority: []
+  - user: sim-cobranca-1
+    role: analyst
+    function: collections
+    contacts_per_day: 12
+    authority: [human_assessment]
+  - user: sim-cobranca-2
+    role: analyst
+    function: collections
+    contacts_per_day: 12
+    authority: [human_assessment]
+  - user: sim-cobranca-3
+    role: analyst
+    function: collections
+    contacts_per_day: 12
+    authority: [human_assessment]
+  - user: sim-gerente-fin
+    role: manager
+    function: approvals
+    authority: [request, decide, execute]
+    absences:
+      - {from_day: 61, to_day: 65, planned: true}
+  - user: sim-coordenador-fin
+    role: manager
+    function: coordination
+    authority: [request, decide, execute, escalate, consult]
+    absences:
+      # ausencia NAO planejada: no 1o dia o gerente ainda nao sabe.
+      - {from_day: 100, to_day: 102, planned: false}
+  - user: sim-controller
+    role: viewer
+    function: read_only
+    authority: []
+  - user: sim-admin
+    role: administrator
+    function: provisioning_only
+    authority: []
+
+# Cadeias de autoridade (secao 3). Padrao e reserva; nenhuma outra.
+authority_chains:
+  standard: {requester: sim-gerente-fin, decider: sim-coordenador-fin, executor: sim-gerente-fin}
+  reserve: {requester: sim-coordenador-fin, decider: sim-gerente-fin, executor: sim-coordenador-fin}
+
+approval_ttl_minutes: 1440
+
+collections_policy:
+  reminder_days_before_due: 3
+  escalate_at_days_overdue: 5
+  recontact_after_business_days: 3
+  max_contacts_per_episode: 4
+  renegotiation_offer_day: 15
+  block_new_orders_after_days_overdue: 30
+  protest_after_days_overdue: 45
+  loss_provision_after_days_overdue: 90

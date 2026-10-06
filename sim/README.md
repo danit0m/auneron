@@ -65,6 +65,26 @@ Rodar o gate T-1..T-10:
 sim/.venv/Scripts/python -m pytest sim/tests -q
 ```
 
+## Cenários v1 e v2
+
+| Versão | Diretórios | Situação |
+|---|---|---|
+| `sim.scenario.v1` (SIM-1.2) | `scenarios/nh-*-s340001/` | **Histórico e imutável.** Presume `PUT status` e o F1, e a Discovery do SIM-1.3 mostrou que isso não é executável contra o produto (G-SIM-14, G-SIM-17). Continua sendo gerado byte a byte idêntico (T-16). |
+| `sim.scenario.v2` (SIM-1.3) | `scenarios/nh-*-v2-s340001/` | Corredores públicos reais (detalhes abaixo). Entradas próprias em `company/nova_horizonte/v2/`. |
+
+O que muda no v2:
+- a baixa usa `mark_paid` governado: o gerente pede, o coordenador decide e o gerente executa;
+- o atraso usa o corredor humano de `mark_overdue`; o F1 fica OUT/GAP;
+- a expiração é derivada de `expires_at`;
+- um `mark_overdue` expirado ou rejeitado deixa o episódio sem saída.
+
+```bash
+sim/.venv/Scripts/python -m sim.generator.cli generate --variant nh-standard --scenario-version v2
+sim/.venv/Scripts/python -m sim.generator.cli hashes --variant nh-small --scenario-version v2
+```
+
+Claim atual: *scenario artifacts VERIFIED / deterministic*. *SIMULATION VERIFIED* só vale depois de o Auneron executar o mundo, e nunca é *OPERATIONALLY OBSERVED*.
+
 ## Mudanças de regra
 
 O mundo e as regras replicadas estão congelados no Design Freeze v2. Qualquer mudança relevante exige uma revisão explícita do design ou da versão do cenário. Nunca se ajusta o gerador em silêncio.
