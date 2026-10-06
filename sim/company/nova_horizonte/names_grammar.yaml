@@ -1,0 +1,51 @@
+# SIM-1.2 -- gramatica LOCAL de nomes ficticios (nunca IA, nunca nomes
+# reais de pessoas). Nome = marcador + tipo do segmento + nucleo +
+# qualificador. O par (nucleo, qualificador) e escolhido por um mapeamento
+# deterministico e injetivo do indice do cliente (unico enquanto
+# indice < len(cores) * len(qualifiers)).
+
+schema: sim.names.v1
+segment_types:
+  supermercado_bairro: [Mercadinho, Emporio, Mercearia]
+  restaurante_bar: [Cantina, Bistro, Lanchonete]
+  hotel_pousada: [Pousada, Hotel]
+  condominio_facilities: [Residencial, Condominio]
+  revenda_atacarejo: [Atacarejo, Revenda]
+cores:
+  - Alvorada Sintetica
+  - Bruma Clara
+  - Cascalho Azul
+  - Duna Serena
+  - Esteio Novo
+  - Faisca Verde
+  - Gruta Dourada
+  - Horta Larga
+  - Ilhota Mansa
+  - Jardim Quartzo
+  - Lagoa Fina
+  - Mirante Calmo
+  - Nascente Leve
+  - Orla Branca
+  - Planalto Sereno
+  - Quintal Amplo
+  - Recanto Brando
+  - Serra Lisa
+  - Trilha Nova
+  - Umbral Claro
+  - Vale Sutil
+  - Varanda Alta
+  - Xisto Fino
+  - Zenite Doce
+qualifiers:
+  - do Norte SIM
+  - do Sul SIM
+  - do Leste SIM
+  - do Centro SIM
+  - Primeiro SIM
+  - Segundo SIM
+  - Terceiro SIM
+  - Quarto SIM
+  - Quinto SIM
+  - Sexto SIM
+  - Setimo SIM
+  - Oitavo SIM

@@ -1,0 +1,92 @@
+# SIM-1.2 -- Nova Horizonte Distribuidora (FICTICIA).
+# Empresa, pessoas e identificadores 100% ficticios. Zero PII real.
+# Resultado de qualquer execucao: SIMULATION VERIFIED, nunca
+# OPERATIONALLY OBSERVED.
+
+schema: sim.company.v1
+company:
+  name: "Nova Horizonte Distribuidora (ficticia)"
+  identifier: NHD-SIM-0001
+  activity: >-
+    Distribuicao B2B de mercearia seca, bebidas nao alcoolicas, limpeza e
+    descartaveis
+  region: "Regiao Horizonte (ficticia)"
+  routes: [Norte, Sul, Leste, Centro]
+  currency: BRL
+  email_domain: nova-horizonte.example.com
+  whatsapp_prefix: "+55 00 0000-"
+  name_marker: "[SIM]"
+
+# Formas de pagamento do mundo (secao 3.2). Janelas em hora local.
+payment_methods:
+  pix:
+    any_day: true
+    window: ["07:00", "22:00"]
+    evidence: same_instant
+  boleto:
+    any_day: true
+    window: ["08:00", "20:00"]
+    evidence: next_business_day
+    evidence_at: "07:00"
+  ted:
+    any_day: false
+    window: ["09:00", "16:00"]
+    evidence: same_instant
+
+# Equipe do financeiro (secao 3.3). Papeis = papeis reais do Auneron.
+personas:
+  - user: sim-faturamento
+    role: analyst
+    function: billing
+    slots: ["09:00", "15:00"]
+  - user: sim-receber
+    role: analyst
+    function: receivables
+    slots: ["10:00", "16:00"]
+    capacity_per_slot: 80
+    # Fila: fracao (em pontos-base) de baixas que perdem o primeiro slot.
+    queue_delay_bps: 500
+  - user: sim-cobranca-1
+    role: analyst
+    function: collections
+    slots: ["11:00", "14:30"]
+    contacts_per_day: 12
+  - user: sim-cobranca-2
+    role: analyst
+    function: collections
+    slots: ["11:00", "14:30"]
+    contacts_per_day: 12
+  - user: sim-cobranca-3
+    role: analyst
+    function: collections
+    slots: ["11:00", "14:30"]
+    contacts_per_day: 12
+  - user: sim-gerente-fin
+    role: manager
+    function: approvals
+    slots: ["14:00"]
+    absences:
+      - {from_day: 61, to_day: 65}
+  - user: sim-controller
+    role: viewer
+    function: read_only
+    slots: ["18:00"]
+  - user: sim-admin
+    role: administrator
+    function: provisioning_only
+    slots: []
+  - user: "sistema.vencimentos@auneron.core"
+    role: system
+    function: system_principal
+    slots: []
+
+# Regua de cobranca da empresa (secao 3.4). Dias relativos ao vencimento.
+collections_policy:
+  reminder_days_before_due: 3
+  escalate_at_days_overdue: 5
+  recontact_after_business_days: 3
+  max_contacts_per_episode: 4
+  renegotiation_offer_day: 15
+  block_new_orders_after_days_overdue: 30
+  protest_after_days_overdue: 45
+  loss_provision_after_days_overdue: 90

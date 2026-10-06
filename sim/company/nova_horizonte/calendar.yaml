@@ -1,0 +1,51 @@
+# SIM-1.2 -- calendario NORMATIVO e FICTICIO da Nova Horizonte.
+#
+# Fixado para manter a simulacao deterministica. Inspira-se em datas
+# comemorativas, mas NAO afirma reproduzir o calendario bancario brasileiro
+# real de 2026 (expediente, compensacao, pontos facultativos, feriados locais
+# ou regras do sistema de pagamentos). Nenhum comportamento do Oracle baseado
+# nele pode ser citado como validacao de regra bancaria real. Mudar este
+# arquivo e mudar o mundo sintetico (nova versao de cenario).
+#
+# Semantica de dia (Design Freeze v2, secao 6.0): Dn = D0 + n dias,
+# n inteiro em [0, 179]; 180 dias de negocio = D0 (estado inicial/go-live)
+# + 179 avancos diarios. Datas civis sao sempre DERIVADAS de D0 + n.
+
+schema: sim.calendar.v1
+normative_notice: >-
+  Calendario normativo e ficticio da Nova Horizonte. Nao reproduz o
+  calendario bancario brasileiro real de 2026.
+d0: "2026-01-05"
+days: 180
+timezone_name: America/Sao_Paulo
+# Offset fixo do mundo sintetico (sem horario de verao na janela).
+utc_offset_minutes: -180
+# 0 = segunda ... 4 = sexta
+business_weekdays: [0, 1, 2, 3, 4]
+# Dias declarados NAO uteis por este mundo (indices n; data = D0 + n).
+non_business_days:
+  - 42   # 2026-02-16 Carnaval
+  - 43   # 2026-02-17 Carnaval
+  - 88   # 2026-04-03 Sexta-feira Santa
+  - 106  # 2026-04-21 Tiradentes
+  - 116  # 2026-05-01 Dia do Trabalho
+  - 150  # 2026-06-04 Corpus Christi
+intraday:
+  clock: "07:00"
+  billing_1: "09:00"
+  settlement_bank_return: "10:00"
+  renegotiation: "10:30"
+  collections_1: "11:00"
+  approvals: "14:00"
+  collections_2: "14:30"
+  billing_2: "15:00"
+  settlement_day: "16:00"
+  snapshot: "18:00"
+special:
+  restart_backend: {day: 90, at: "11:00"}
+  stress_week: {from_day: 120, to_day: 126}
+  evidence_floor: {day: 14, at: "08:00"}
+# Janelas sazonais do perfil P8 (indices n de VENCIMENTO, inclusivos).
+seasonal_due_windows:
+  - [79, 95]    # 2026-03-25 .. 2026-04-10 (fechamento do 1o trimestre)
+  - [171, 179]  # 2026-06-25 .. 2026-07-03 (fechamento do 2o trimestre)

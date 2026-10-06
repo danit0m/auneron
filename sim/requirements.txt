@@ -1,0 +1,5 @@
+# Dependencias EXCLUSIVAS do harness SIM (D-1.2-7). Nunca entram no
+# requirements do produto (backend/requirements*.txt).
+PyYAML==6.0.3
+# somente para o gate T-1..T-10
+pytest==9.1.1

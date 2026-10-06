@@ -1,0 +1,127 @@
+# SIM-1.2 -- populacao sintetica da Nova Horizonte (secao 5).
+# Valores monetarios sempre em string decimal com 2 casas.
+
+schema: sim.population.v1
+
+variants:
+  nh-standard:
+    customers: 240
+    opening: {to_due: 380, overdue: 40}
+    profiles: {P1: 72, P2: 48, P3: 24, P4: 19, P5: 14, P6: 12, P7: 19, P8: 12, P9: 10, P10: 10}
+    segments:
+      supermercado_bairro: 84
+      restaurante_bar: 60
+      hotel_pousada: 24
+      condominio_facilities: 36
+      revenda_atacarejo: 36
+    drift:
+      - {from: P1, to: P3, count: 8, from_day: 90}
+      - {from: P3, to: P1, count: 8, from_day: 75}
+      - {from: P2, to: P6, count: 8, from_day: 120}
+    min_case_instances: 3
+  nh-small:
+    customers: 60
+    opening: {to_due: 95, overdue: 10}
+    profiles: {P1: 18, P2: 12, P3: 6, P4: 5, P5: 4, P6: 3, P7: 5, P8: 3, P9: 2, P10: 2}
+    segments:
+      supermercado_bairro: 21
+      restaurante_bar: 15
+      hotel_pousada: 6
+      condominio_facilities: 9
+      revenda_atacarejo: 9
+    drift:
+      - {from: P1, to: P3, count: 2, from_day: 90}
+      - {from: P3, to: P1, count: 2, from_day: 75}
+      - {from: P2, to: P6, count: 2, from_day: 120}
+    min_case_instances: 1
+
+# Segmentos (secao 5.2). purchase_every_days: 7 = semanal, 14 = quinzenal,
+# 28 = mensal. payment_mix em pesos inteiros.
+segments:
+  supermercado_bairro:
+    label: Supermercado de bairro
+    term_days: 28
+    ticket: ["2000.00", "18000.00"]
+    purchase_every_days: 14
+    payment_mix: {boleto: 60, pix: 40}
+  restaurante_bar:
+    label: Restaurantes e bares
+    term_days: 21
+    ticket: ["800.00", "6000.00"]
+    purchase_every_days: 7
+    payment_mix: {pix: 80, boleto: 20}
+  hotel_pousada:
+    label: Hoteis e pousadas
+    term_days: 28
+    ticket: ["3000.00", "25000.00"]
+    purchase_every_days: 14
+    payment_mix: {boleto: 100}
+  condominio_facilities:
+    label: Condominios / facilities
+    term_days: 35
+    ticket: ["1500.00", "9000.00"]
+    purchase_every_days: 28
+    payment_mix: {boleto: 100}
+  revenda_atacarejo:
+    label: Revendas / atacarejo
+    term_days: 42
+    ticket: ["12000.00", "45000.00"]
+    purchase_every_days: 28
+    payment_mix: {ted: 50, boleto: 50}
+
+# Perfis comportamentais (secao 5.3). Offsets em dias relativos ao
+# vencimento (negativo = antes). Pesos inteiros.
+profiles:
+  P1:
+    label: Pontual
+    kind: offset
+    branches: [{weight: 100, range: [-2, 0]}]
+  P2:
+    label: Atraso ocasional
+    kind: offset
+    branches: [{weight: 80, range: [-1, 0]}, {weight: 20, range: [1, 4]}]
+  P3:
+    label: Reincidente
+    kind: offset
+    branches: [{weight: 65, range: [3, 12]}, {weight: 35, range: [0, 2]}]
+  P4:
+    label: Paga apos cobranca
+    kind: after_contact
+    pay_after_contact_days: [1, 5]
+    promise_kept_pct: 70
+  P5:
+    label: Renegociador
+    kind: renegotiator
+    changes: [1, 2]
+    before_due_pct: 50
+    request_before_due_days: [2, 5]
+    extend_days: [7, 15]
+    branches: [{weight: 100, range: [-1, 0]}]
+  P6:
+    label: Inadimplente prolongado
+    kind: prolonged_default
+    late_payer_pct: 33
+    late_range: [60, 90]
+  P7:
+    label: Antecipado
+    kind: offset
+    branches: [{weight: 100, range: [-10, -3]}]
+  P8:
+    label: Sazonal
+    kind: seasonal
+    branches: [{weight: 100, range: [-1, 0]}]
+    seasonal_branches: [{weight: 100, range: [5, 15]}]
+  P9:
+    label: Erratico
+    kind: offset
+    branches: [{weight: 100, range: [-5, 30]}]
+  P10:
+    label: Ambiguo deliberado
+    kind: offset
+    branches: [{weight: 80, range: [-1, 0]}, {weight: 20, range: [1, 4]}]
+
+# Resultado de contato da cobranca por perfil (codigos reais do Auneron).
+contact_outcomes:
+  P4: {payment_promised: 60, contact_made: 40}
+  P6: {unreachable: 50, payment_refused: 30, contact_made: 20}
+  default: {contact_made: 50, payment_promised: 50}

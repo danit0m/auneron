@@ -1,0 +1,48 @@
+# SIM-1.2 -- catalogo de casos (Design Freeze v2, secao 7).
+# origin: natural  = surge do comportamento dos perfis e e apenas rotulado;
+#         injected = o gerador forca o roteiro deterministicamente;
+#         agenda   = so acrescenta operacoes de persona (nao muda o mundo).
+# O minimo de instancias por caso vem da variante (population.yaml).
+
+schema: sim.cases.v1
+cases:
+  C-N-1: {category: normal, origin: natural, title: Pagamento pontual}
+  C-N-2: {category: normal, origin: natural, title: Pagamento antecipado}
+  C-N-3: {category: normal, origin: natural, title: Atraso curto sem cobranca}
+  C-N-4: {category: normal, origin: natural, title: Atraso, escalonamento e pagamento}
+  C-N-5: {category: normal, origin: natural, title: Reincidente classificado}
+  C-N-6: {category: normal, origin: natural, title: Renegociacao antes do vencimento}
+  C-N-7: {category: normal, origin: injected, title: Atraso de alto valor (high_exposure_early)}
+  C-N-8: {category: normal, origin: injected, title: Atraso prolongado (prolonged_overdue)}
+  C-N-9: {category: normal, origin: natural, title: Varios titulos, um atrasado}
+  C-PRM-1: {category: promise, origin: natural, title: Promessa cumprida}
+  C-PRM-2: {category: promise, origin: natural, title: Promessa quebrada}
+  C-PRM-3: {category: promise, origin: natural, title: Promessas repetidas e quebradas}
+  C-NEG-1: {category: negative, origin: natural, title: Carteira pontual sem efeitos por 30 dias}
+  C-NEG-2: {category: negative, origin: natural, title: Pagamento antes do floor}
+  C-NEG-3: {category: negative, origin: injected, title: Vencimento em dia nao util pago no util seguinte}
+  C-NEG-4: {category: negative, origin: agenda, title: Pago antes de escalonar e tentativa de materializar}
+  C-NEG-5: {category: negative, origin: natural, title: Titulo ja atrasado nao e reproposto}
+  C-AMB-1: {category: ambiguous, origin: natural, title: Vencimento alterado depois do escalonamento}
+  C-AMB-2: {category: ambiguous, origin: injected, title: Dois titulos escalonados, um pago}
+  C-AMB-3: {category: ambiguous, origin: injected, title: Pagamento parcial}
+  C-AMB-4: {category: ambiguous, origin: injected, title: Promessa e nao pagamento}
+  C-AMB-5: {category: ambiguous, origin: injected, title: Pagaria de qualquer forma}
+  C-AMB-6: {category: ambiguous, origin: injected, title: Dois clientes com o mesmo email}
+  C-AMB-7: {category: ambiguous, origin: natural, title: Informacao insuficiente}
+  C-AMB-8: {category: ambiguous, origin: injected, title: Recusa seguida de pagamento}
+  C-AMB-9: {category: ambiguous, origin: injected, title: Banco pagou, ERP sem baixa}
+  C-ADV-1: {category: adversarial, origin: agenda, title: Baixa duplicada}
+  C-ADV-2: {category: adversarial, origin: agenda, title: Replay do materialize}
+  C-ADV-3: {category: adversarial, origin: agenda, title: Duas personas baixam no mesmo instante}
+  C-ADV-4: {category: adversarial, origin: agenda, title: N baixas no mesmo instante}
+  C-ADV-5: {category: adversarial, origin: injected, title: Entrega atrasada}
+  C-ADV-6: {category: adversarial, origin: natural, title: Restart do backend no meio do tick}
+  C-ADV-7: {category: adversarial, origin: injected, title: Baixa 23:59 vs 00:00}
+  C-ADV-8: {category: adversarial, origin: natural, title: Pagamento antes do floor apos escalonamento}
+  C-ADV-9: {category: adversarial, origin: agenda, title: Pago e depois tentativa de escalonamento}
+  C-ADV-10: {category: adversarial, origin: injected, title: Vencimento digitado errado e corrigido}
+  C-TZ-1: {category: time_boundary, origin: injected, title: Baixa 22:30 no dia do vencimento}
+  C-TZ-2: {category: time_boundary, origin: injected, title: Baixa 20:59 no dia do vencimento}
+  C-HUM-1: {category: human, origin: natural, title: Gerente decide no mesmo dia}
+  C-HUM-2: {category: human, origin: natural, title: Gerente ausente, aprovacao expira}
