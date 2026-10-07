@@ -419,7 +419,7 @@ def test_every_scenario_is_a_valid_public_agenda_for_the_driver(tmp_path, name, 
 
 
 def test_scenario_days_only_move_forward_and_floor_scenario_straddles_the_floor():
-    order = ["c0", "dr3", "dr4", "dr5", "dr6", "dr7", "dr8", "c0b"]
+    order = ["c0", "dr3", "dr4", "dr5", "dr6", "dr7", "dr8", "c0b", "d90"]
     days = [S.DAYS[k] for k in order]
     assert days == sorted(days) and len(set(days)) == len(days)
     assert S.DAYS["c0b"] == S.FLOOR_DAY - 1 == CONFIG["clock"]["floor_day"] - 1

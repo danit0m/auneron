@@ -267,3 +267,113 @@ def distinguish(results: list) -> dict:
         bucket[item["class"]] = bucket.get(item["class"], 0) + 1
     instrument = sum(v for bucket in out.values() for k, v in bucket.items() if k == INSTRUMENT_FAILURE)
     return {"by_evidence_class": out, "instrument_failures": instrument}
+
+
+# ------------------------------------------------------------------------------------ D90 (restart + Collector)
+RESTART_BARRIER = "after_restart_barrier"
+FROZEN_NETWORKS = ["auneron_sim_driver", "auneron_sim_internal"]
+IDENTITY_KEYS = ("build_git_sha", "build_git_dirty", "build_source_digest", "build_source_digest_algorithm",
+                 "build_identity_state", "environment", "maintenance_enabled", "evidence_floor", "evidence_floor_state")
+
+
+def first_time(timeline: list, event: str, arg0=None, arg1=None):
+    for entry in timeline:
+        if entry["event"] != event:
+            continue
+        args = entry.get("args", [])
+        if (arg0 is None or (args and args[0] == arg0)) and (arg1 is None or (len(args) > 1 and args[1] == arg1)):
+            return entry["t"]
+    return None
+
+
+def build_d90_report(*, plan: dict, run: dict, second_trigger: dict, driver_status: dict, day: int, at: str) -> dict:
+    """Junta a evidencia do D90 num dict puro (sem Docker) para o juiz."""
+    state = run["state"]
+    timeline = state["timeline"]
+    http = [r for r in run["driver_lines"] if r.get("kind") == "http" and r["op"] == "execute_mark_paid"]
+    plan_items = {i["item_id"]: i for i in plan["items"]}
+    records = []
+    for record in run["collected"]:
+        item = plan_items[record["item_id"]]
+        records.append({"item_id": record["item_id"], "trigger": record["trigger"]["kind"], "safe_at": item["safe_at"],
+                        "day": item.get("day"), "at": item.get("at"), "requires": item["requires"], "t_real": record["t_real"]})
+    expected = [i["item_id"] for i in plan["items"] if i.get("channel", "http") == "http" and i["safe_at"] == "after_daily_barrier"]
+    return {
+        "restart": state["restart"], "plan_safe_at": sorted({i["safe_at"] for i in plan["items"]}),
+        "times": {
+            "restart_end": first_time(timeline, "restart_backend:end"),
+            "barrier_begin": first_time(timeline, "restart_barrier:start"), "barrier_end": first_time(timeline, "restart_barrier:end"),
+            "mark_barrier": first_time(timeline, "collector_mark_barrier:start", RESTART_BARRIER),
+            "mark_done": first_time(timeline, "driver_mark_harness_done:start", None, "restart_backend")},
+        "restart_slot": {"day": day, "at": at}, "records": records, "missing": run["missing"], "problems": run["problems"],
+        "retrigger": {"collected": second_trigger.get("collected"), "already_collected": second_trigger.get("already_collected"),
+                      "expected": len(expected)},
+        "driver": {"in_flight": driver_status.get("in_flight"), "counts": driver_status.get("counts"),
+                   "execute_statuses": [r["status"] for r in http]},
+        "evaluation": {"summary": run["evaluation"]["summary"], "run_valid": run["evaluation"]["run_valid"],
+                       "instrument_failures": run["distinction"]["instrument_failures"]},
+    }
+
+
+def judge_d90(d: dict) -> list:
+    failures = []
+    if RESTART_BARRIER in d["plan_safe_at"]:
+        failures.append("o plano contem safe_at=after_restart_barrier (coleta impossivel de cumprir)")
+    r = d["restart"]
+    if not r.get("completed"):
+        failures.append("restart nao concluido")
+    if not r.get("barrier_done"):
+        failures.append("barreira extraordinaria nao concluida")
+    if r.get("docker_restart_code") != 0:
+        failures.append("docker restart nao retornou 0")
+    before, after = r.get("before", {}), r.get("after", {})
+    if not before or not after or after.get("started_at", "") <= before.get("started_at", "~"):
+        failures.append("o backend nao reiniciou (StartedAt nao avancou)")
+    if not r.get("ready", {}).get("ready"):
+        failures.append("o backend nao voltou ready")
+    if before.get("networks") != FROZEN_NETWORKS or after.get("networks") != FROZEN_NETWORKS:
+        failures.append(f"redes antes/depois: {before.get('networks')} / {after.get('networks')}")
+    ib, ia = r.get("identity_before") or {}, r.get("identity_after") or {}
+    if not ib or not ia or [k for k in IDENTITY_KEYS if ib.get(k) != ia.get(k)] or ia.get("build_identity_state") != "valid":
+        failures.append("identidade/ambiente do build mudou ou invalida")
+    control = r.get("pre_restart_control") or {}
+    if not (control.get("exit_code") == 3 and "exige" in json_text(control.get("payload"))
+            and control.get("collected_before") == control.get("collected_after")):
+        failures.append("coleta antecipada (antes da barreira) nao foi recusada")
+    t, start = d["times"], r.get("since")
+    ordered = [start, t["restart_end"], t["barrier_begin"], t["barrier_end"], t["mark_barrier"], t["mark_done"]]
+    if any(x is None for x in ordered) or ordered != sorted(ordered):
+        failures.append(f"ordem restart -> barreira -> marca da barreira -> harness-done violada: {ordered}")
+    barrier_end = t["barrier_end"] or float("inf")
+    slot = d["restart_slot"]
+    needing = [x for x in d["records"] if RESTART_BARRIER in x["requires"]]
+    if not needing or any(x["t_real"] <= barrier_end or x["trigger"] != "after_daily_barrier" for x in needing):
+        failures.append("itens com requires=after_restart_barrier ausentes ou coletados antes da barreira")
+    at_slot = [x for x in d["records"] if x["day"] == slot["day"] and x["at"] == slot["at"]]
+    pre = [x for x in at_slot if x["safe_at"] == "pre_slot"]
+    post = [x for x in at_slot if x["safe_at"] == "post_slot"]
+    if not pre or any(x["t_real"] >= (start or 0) for x in pre):
+        failures.append("pre_slot do slot do restart ausente ou coletado depois do restart")
+    if not post or any(x["t_real"] <= barrier_end for x in post):
+        failures.append("post_slot do slot do restart ausente ou coletado antes da barreira")
+    ids = [x["item_id"] for x in d["records"]]
+    if d["missing"] or d["problems"] or len(ids) != len(set(ids)):
+        failures.append(f"coleta faltante/duplicada/fora de ponto: missing={d['missing']} problems={d['problems']}")
+    rt = d["retrigger"]
+    if not (rt["collected"] == 0 and rt["already_collected"] == rt["expected"] > 0):
+        failures.append(f"re-disparo nao e idempotente: {rt}")
+    drv = d["driver"]
+    if drv["in_flight"] != [] or set(drv["counts"] or {}) - {"done", "reconciled"} or not drv["counts"]:
+        failures.append("Driver nao continuou/terminou limpo apos o restart")
+    if not drv["execute_statuses"] or drv["execute_statuses"][-1] != 200:
+        failures.append("execucao da aprovacao pre-restart nao teve sucesso apos o restart")
+    ev = d["evaluation"]
+    if set(ev["summary"]) != {"CORRECT"} or not ev["run_valid"] or ev["instrument_failures"]:
+        failures.append(f"avaliacao: {ev}")
+    return failures
+
+
+def json_text(value) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False)

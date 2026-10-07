@@ -107,9 +107,79 @@ def activate_floor(lab, floor_day: int = S.FLOOR_DAY) -> dict:
     return data
 
 
+# ----------------------------------------------------------------------------------- restart do backend (D90), fail-closed
+RESTART_BARRIER = "after_restart_barrier"
+FROZEN_NETWORKS = sorted({"auneron_sim_internal", driver_lab.DRIVER_NETWORK})
+IDENTITY_KEYS = ("build_git_sha", "build_git_dirty", "build_source_digest", "build_source_digest_algorithm",
+                 "build_identity_state")
+PRESERVED_KEYS = ("environment", "maintenance_enabled", "evidence_floor", "evidence_floor_state")
+
+
+def backend_state(lab) -> dict:
+    res = lab.runner.run(["docker", "inspect", E.BACKEND])
+    if res.code != 0:
+        raise HarnessError("docker inspect do backend falhou")
+    data = json.loads(res.out)[0]
+    return {"networks": sorted(data["NetworkSettings"]["Networks"]), "started_at": data["State"]["StartedAt"],
+            "running": bool(data["State"]["Running"])}
+
+
+def restart_backend_checked(lab, record: dict) -> dict:
+    """`restart_backend` REAL. Fail-closed (SIM-1.5B, F-D90-1): qualquer falha levanta HarnessError e a op de harness
+    NAO pode ser marcada como concluida. Verifica restart efetivo (StartedAt muda), `ready`, as DUAS redes congeladas
+    e a identidade/ambiente do build (iguais as de antes do restart)."""
+    control = record.get("pre_restart_control")            # controle negativo feito antes (so no D90)
+    record.clear()
+    record.update({"completed": False, "barrier_done": False})
+    if control is not None:
+        record["pre_restart_control"] = control
+    before = backend_state(lab)
+    identity_before = lab.startup_record(1)               # ultimo `application_started` ANTES do restart
+    if before["networks"] != FROZEN_NETWORKS:
+        raise HarnessError(f"backend fora da topologia antes do restart: {before['networks']}")
+    if not identity_before or identity_before.get("build_identity_state") != "valid":
+        raise HarnessError("identidade de build do backend invalida/ausente antes do restart")
+    record.update({"before": before, "identity_before": identity_before, "since": time.time()})
+    result = lab.runner.run(["docker", "restart", E.BACKEND], timeout=300)
+    record["docker_restart_code"] = result.code
+    if result.code != 0:
+        raise HarnessError(f"docker restart falhou (exit {result.code})")
+    after = backend_state(lab)
+    record["after"] = after
+    if not after["running"] or after["started_at"] <= before["started_at"]:
+        raise HarnessError("restart sem efeito: o backend nao reiniciou (StartedAt nao avancou)")
+    ready = lab.wait_ready()
+    record["ready"] = ready
+    if not ready.get("ready"):
+        raise HarnessError("o backend nao voltou `ready` apos o restart")
+    if after["networks"] != FROZEN_NETWORKS:
+        raise HarnessError(f"backend voltou em topologia errada: {after['networks']}")
+    identity_after = lab.startup_record(record["since"])
+    record["identity_after"] = identity_after
+    if not identity_after:
+        raise HarnessError("sem `application_started` apos o restart")
+    changed = [k for k in (*IDENTITY_KEYS, *PRESERVED_KEYS) if identity_before.get(k) != identity_after.get(k)]
+    if changed:
+        raise HarnessError(f"identidade/ambiente do build mudou no restart: {changed}")
+    if identity_after.get("build_identity_state") != "valid" or identity_after.get("build_git_sha") != lab.config.commit:
+        raise HarnessError("identidade de build invalida apos o restart")
+    record["completed"] = True
+    return record
+
+
+def restart_barrier_checked(lab, record: dict) -> dict:
+    """Barreira EXTRAORDINARIA: so depois de o restart concluir com sucesso."""
+    if not record.get("completed"):
+        raise HarnessError("barreira extraordinaria sem restart concluido (restart falho, ausente ou ainda em curso)")
+    record["barrier_started_at"] = time.time()
+    record["barrier"] = lab.run_barrier(record["since"], lab.events())
+    record["barrier_done"] = True
+    return record["barrier"]
+
+
 # ----------------------------------------------------------------------------------- hooks docker exec
-def build_hooks(lab, *, denv=None, cenv=None, floor: bool = False):
-    state = {"since": None, "barriers": [], "triggers": [], "slots": [], "floor": None}
+def build_hooks(lab, *, denv=None, cenv=None, floor: bool = False, before_restart=None):
+    state = {"since": None, "barriers": [], "triggers": [], "slots": [], "floor": None, "restart": {}, "timeline": []}
     denv, cenv = denv or {}, cenv or {}
 
     def checked(res, what):
@@ -148,6 +218,8 @@ def build_hooks(lab, *, denv=None, cenv=None, floor: bool = False):
         return payload
 
     def mark_barrier(name):
+        if name == RESTART_BARRIER and not state["restart"].get("barrier_done"):
+            raise HarnessError("barreira de restart marcada sem a barreira extraordinaria concluida")
         return checked(E.dexec(lab, E.COLLECTOR, "python", "-m", "sim.collector.cli", "mark-barrier", "--name", name,
                                env=cenv), "mark-barrier")
 
@@ -157,6 +229,9 @@ def build_hooks(lab, *, denv=None, cenv=None, floor: bool = False):
         return result
 
     def mark_done(seq, note):
+        if note == "restart_backend" and not (state["restart"].get("completed") and state["restart"].get("barrier_done")):
+            # fail-closed (F-D90-1): a op de restart NUNCA e dada como concluida sem restart efetivo e barreira feita
+            raise HarnessError("op restart_backend nao pode ser marcada concluida: restart/barreira nao concluidos")
         return checked(E.dexec(lab, E.DRIVER, "python", "-m", "sim.driver.cli", "mark-harness-done", "--seq", str(seq),
                                "--note", note, env=denv), "mark-harness-done")
 
@@ -166,10 +241,30 @@ def build_hooks(lab, *, denv=None, cenv=None, floor: bool = False):
         state["floor"] = activate_floor(lab)
         return state["floor"]
 
-    hooks = Hooks(clock_set=clock_set, driver_slots=slots, driver_run_slot=run_slot, driver_export_refs=export_refs,
-                  driver_mark_harness_done=mark_done, collector_load_refs=load_refs, collector_trigger=trigger,
-                  collector_mark_barrier=mark_barrier, daily_barrier=daily_barrier, restart_backend=lambda: {},
-                  restart_barrier=lambda: {}, floor_activation=floor_activation)
+    def restart_backend():
+        record = state["restart"]
+        if before_restart is not None:
+            record["pre_restart_control"] = before_restart()          # controle negativo ANTES de mexer no backend
+        restart_backend_checked(lab, record)
+        return record
+
+    def restart_barrier():
+        return restart_barrier_checked(lab, state["restart"])
+
+    def timed(name, fn):
+        def inner(*args, **kwargs):
+            state["timeline"].append({"t": time.time(), "event": f"{name}:start", "args": [str(a) for a in args]})
+            out = fn(*args, **kwargs)
+            state["timeline"].append({"t": time.time(), "event": f"{name}:end"})
+            return out
+        return inner
+
+    functions = {"clock_set": clock_set, "driver_slots": slots, "driver_run_slot": run_slot,
+                 "driver_export_refs": export_refs, "driver_mark_harness_done": mark_done,
+                 "collector_load_refs": load_refs, "collector_trigger": trigger, "collector_mark_barrier": mark_barrier,
+                 "daily_barrier": daily_barrier, "restart_backend": restart_backend, "restart_barrier": restart_barrier,
+                 "floor_activation": floor_activation}
+    hooks = Hooks(**{name: timed(name, fn) for name, fn in functions.items()})
     return hooks, state
 
 
@@ -186,11 +281,11 @@ def provenance_facts(lab) -> dict:
 
 
 def run_pipeline(lab, info: dict, oracle: dict, tag: str, *, first_day: int, last_day: int, flat: bool = False,
-                 floor: bool = False, with_provenance: bool = False) -> dict:
+                 floor: bool = False, with_provenance: bool = False, before_restart=None) -> dict:
     """Driver + Collector em containers + barreira diaria real + Evaluator offline. Devolve a avaliacao e a evidencia."""
     denv = {} if flat else driver_env(tag)
     cenv = {} if flat else collector_env(tag)
-    hooks, state = build_hooks(lab, denv=denv, cenv=cenv, floor=floor)
+    hooks, state = build_hooks(lab, denv=denv, cenv=cenv, floor=floor, before_restart=before_restart)
     orch = RunOrchestrator(hooks, floor_day=S.FLOOR_DAY if floor else 99, last_day=last_day)
     started = time.time()
     events = orch.run(first_day=first_day, last_day=last_day)

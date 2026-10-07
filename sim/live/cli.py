@@ -8,6 +8,8 @@ Sessao tipica (C0b e regressao DR), cada uma num stack DESCARTAVEL proprio:
   prep -> up-base -> provision -> compose-config -> build -> up-ext -> stage-secrets -> c0b -> reset
   prep -> up-base -> provision -> compose-config -> up-ext -> stage-base -> dr1 -> c0 -> dr2 -> dr3 -> dr4
        -> dr5 -> dr6 -> dr7 -> dr8 -> teardown
+  # sessao 3 (D90)   stack descartavel proprio: restart real + barreira extraordinaria + Collector
+  prep -> up-base -> provision -> compose-config -> up-ext -> stage-secrets -> d90 -> teardown
 
 `prep` guarda o manifesto aprovado do candidato (indice) e o HEAD esperado; `teardown` reconcilia contra eles.
 Fase com FAIL => o operador PARA e leva a evidencia ao PO; nenhuma fase corrige o ambiente sozinha.
@@ -35,7 +37,7 @@ PHASES = {
     "stage-secrets": lambda lab: _ok(lab, "LIVE-STAGE-SECRETS", flow.stage_secrets),
     "stage-base": G.phase_stage_base, "dr1": G.phase_dr1, "c0": G.phase_c0, "dr2": G.phase_dr2, "dr3": G.phase_dr3,
     "dr4": G.phase_dr4, "dr5": G.phase_dr5, "dr6": G.phase_dr6, "dr7": G.phase_dr7, "dr8": G.phase_dr8,
-    "c0b": G.phase_c0b, "reset": G.phase_reset, "teardown": G.phase_teardown,
+    "c0b": G.phase_c0b, "d90": G.phase_d90, "reset": G.phase_reset, "teardown": G.phase_teardown,
 }
 
 

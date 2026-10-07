@@ -258,19 +258,26 @@ HISTORICAL = (".claude/", "Claude outputs/", "backend/DW3_patch_review_v2.patch"
               "backend/tests/test_value33b_")
 
 
+BASELINE = "ba7d70d079c6d649621d4a5fa9c34308793840c5"       # SIM-1.4 fechado/pushed: base do candidato aditivo
+
+
+def _git(*args) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True)
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git indisponivel")
 def test_candidate_file_boundary_is_exactly_the_authorized_set():
-    """O candidato e ADITIVO: nenhum arquivo rastreado e modificado/removido/renomeado. Os arquivos novos podem estar
-    nao rastreados OU adicionados ao indice (`A`, EXACT STAGING); em ambos os casos precisam estar na lista autorizada."""
-    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO,
-                            capture_output=True, text=True).stdout.splitlines()
-    not_additions = [line for line in status if line[0] != "A"]            # `A?` = adicionado ao indice (pode ter edicao nao staged)
-    assert not_additions == [], "alteracao em arquivo rastreado (o SIM-1.5 e 100% aditivo)"
-    untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=REPO,
-                               capture_output=True, text=True).stdout.splitlines()
-    staged_added = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=A"], cwd=REPO,
-                                  capture_output=True, text=True).stdout.splitlines()
-    candidate = [p for p in [*untracked, *staged_added] if not p.startswith(HISTORICAL)]
+    """O SIM-1.5 e ADITIVO sobre a baseline `ba7d70d`: tudo o que difere dela (arvore de trabalho, indice, commits e
+    arquivos nao rastreados) e ADICAO de arquivo e esta na lista autorizada. Vale antes do staging, com o candidato
+    staged, ja commitado ou com edicoes posteriores (SIM-1.5C)."""
+    if _git("cat-file", "-e", f"{BASELINE}^{{commit}}").returncode != 0:
+        pytest.skip("baseline do SIM-1.4 ausente (clone raso)")
+    diff = _git("diff", "--name-status", BASELINE).stdout.splitlines()
+    not_additions = [line for line in diff if not line.startswith("A	")]
+    assert not_additions == [], "alteracao/remocao de arquivo da baseline (o SIM-1.5 e 100% aditivo)"
+    added = [line.split("	", 1)[1] for line in diff]
+    untracked = _git("ls-files", "--others", "--exclude-standard").stdout.splitlines()
+    candidate = [p for p in [*added, *untracked] if not p.startswith(HISTORICAL)]
     stray = [p for p in candidate if not any(re.match(rule, p) for rule in ALLOWED)]
     assert stray == [], stray
     assert not any(p.startswith(("backend/", "frontend/")) for p in candidate)

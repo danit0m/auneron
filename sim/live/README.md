@@ -23,6 +23,8 @@ prep -> up-base -> provision -> compose-config -> build -> up-ext -> stage-secre
 # sessão 2 (DR)     stack descartável próprio
 prep -> up-base -> provision -> compose-config -> up-ext -> stage-base -> dr1 -> c0 -> dr2 -> dr3 -> dr4
       -> dr5 -> dr6 -> dr7 -> dr8 -> teardown
+# sessão 3 (D90)   stack descartável próprio: restart real + barreira extraordinária + Collector
+prep -> up-base -> provision -> compose-config -> build -> up-ext -> stage-secrets -> d90 -> teardown
 ```
 
 `prep` guarda o manifesto aprovado do candidato (lido do **índice**) e o `HEAD` esperado. `teardown` reconcilia contra eles: 0 resíduos Docker, índice e bytes idênticos ao aprovado, `HEAD` inalterado, 23 arquivos do SIM-1.4 intactos, snapshot DEV idêntico e `auneron_test` intacto.
@@ -39,3 +41,10 @@ prep -> up-base -> provision -> compose-config -> up-ext -> stage-base -> dr1 ->
 ## Fronteiras de claim
 
 Os cenários técnicos provam que os **instrumentos** funcionam contra o produto real. Não são resultado de cenário: nunca `SIMULATION VERIFIED` nem `OPERATIONALLY OBSERVED`.
+
+## D90 (restart + Collector), SIM-1.5C
+
+- `restart_backend` é **real e fail-closed** (`flow.restart_backend_checked`): `docker restart`, `StartedAt` precisa avançar, `ready`, as **duas** redes congeladas e a identidade/ambiente do build iguais às de antes. Qualquer falha levanta `HarnessError`: a op de harness **nunca** aparece como concluída (`mark-harness-done` e a marca `after_restart_barrier` recusam sem restart e barreira concluídos).
+- A barreira extraordinária (`restart_barrier_checked`) só roda depois de um restart concluído e usa o instante do restart como `since`.
+- `after_restart_barrier` é **barreira** (usada em `requires`), **nunca** `safe_at` de coleta: `validate_plan` e o compilador recusam essa configuração, porque o orquestrador nunca dispararia a coleta (F-D90-2). Itens com `requires: [after_restart_barrier]` e `safe_at` suportado (ex.: `after_daily_barrier`) seguem valendo.
+- A fase `d90` roda a perna curta (dia 90) com fixtures `[SIM-HARNESS]` e inclui um controle negativo: a coleta antecipada, antes da barreira, é recusada sem coletar nada.

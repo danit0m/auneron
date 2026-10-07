@@ -23,6 +23,10 @@ FORBIDDEN_FIELDS = frozenset({
 COLLECTION_TRIGGERS = frozenset({
     "pre_slot", "post_slot", "after_daily_barrier", "after_floor_barrier", "after_restart_barrier", "end_of_run",
 })
+# `after_restart_barrier` continua sendo uma BARREIRA (marcada pelo orquestrador e usada em `requires`), mas NAO e um
+# momento de coleta: o orquestrador nunca dispara essa coleta, entao um item com esse `safe_at` jamais seria coletado
+# (SIM-1.5B, F-D90-2). O plano recusa a configuracao impossivel em vez de deixa-la virar HARNESS_ERROR no run.
+UNSUPPORTED_SAFE_AT = frozenset({"after_restart_barrier"})
 PAGING = frozenset({"none", "after_id", "skip", "cursor", "work_list"})
 ROUTE_NAMES = frozenset(name for name, _, _ in COLLECTOR_ROUTES)
 CHANNELS = frozenset({"http", "cli"})
@@ -67,6 +71,9 @@ def validate_plan(plan: dict) -> None:
         seen.add(item["item_id"])
         if item["safe_at"] not in COLLECTION_TRIGGERS or item.get("paging", "none") not in PAGING:
             raise PlanInvalid(f"safe_at/paging invalido em {item['item_id']}")
+        if item["safe_at"] in UNSUPPORTED_SAFE_AT:
+            raise PlanInvalid(f"safe_at={item['safe_at']} nao e um momento de coleta suportado ({item['item_id']}): "
+                              "use `requires` com um safe_at suportado")
         if item.get("channel", "http") not in CHANNELS or item["principal"] != OBSERVER:
             raise PlanInvalid(f"canal/principal invalido em {item['item_id']}")
         if item["safe_at"] in ("pre_slot", "post_slot") and (item.get("at") is None or item.get("day") is None):

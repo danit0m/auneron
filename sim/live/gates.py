@@ -638,6 +638,43 @@ def _record_pipeline(lab, gate: str, run: dict, info: dict, extra: dict | None =
         **(extra or {})})
 
 
+# ----------------------------------------------------------------------------------- D90 (restart + Collector)
+def phase_d90(lab) -> dict:
+    """Perna curta do D90 pelo caminho VERSIONADO: restart real do backend (fail-closed), duas redes, identidade de build,
+    barreira extraordinaria, coletas `requires: after_restart_barrier` e `pre/post_slot` do slot do restart, continuacao
+    do Driver e avaliacao offline. `after_restart_barrier` e barreira, nunca `safe_at` de coleta (F-D90-2)."""
+    day, tag = S.RESTART_DAY, "r"
+    oracle = S.oracle_d90(tag, day)
+    info = flow.prepare(lab, S.scen_d90(lab.instance_id, tag, day), oracle, version_id(lab))
+    flow.stage(lab, info, tag)
+    denv, cenv = flow.driver_env(tag), flow.collector_env(tag)
+
+    def collector(*args):
+        return E.dexec(lab, E.COLLECTOR, "python", "-m", "sim.collector.cli", *args, env=cenv)
+
+    def early_control() -> dict:
+        """Coleta ANTECIPADA: os itens do dia exigem a barreira do restart, que ainda nao ocorreu => recusa, 0 coletas."""
+        before = E.parse_last_json(collector("status"))
+        early = collector("trigger", "--kind", "after_daily_barrier", "--day", str(day), "--at", "18:00")
+        after = E.parse_last_json(collector("status"))
+        return {"exit_code": early.code, "payload": E.parse_last_json(early), "collected_before": before.get("collected"),
+                "collected_after": after.get("collected")}
+
+    run = flow.run_pipeline(lab, info, oracle, tag, first_day=day, last_day=day, before_restart=early_control)
+    second = E.parse_last_json(collector("trigger", "--kind", "after_daily_barrier", "--day", str(day), "--at", "18:00"))
+    dstatus = E.parse_last_json(E.dexec(lab, E.DRIVER, "python", "-m", "sim.driver.cli", "status", env=denv))
+    report = judges.build_d90_report(plan=info["plan"], run=run, second_trigger=second, driver_status=dstatus, day=day,
+                                     at=S.RESTART_AT)
+    failures = judges.judge_d90(report)
+    E.write_json(lab.live_dir / "d90_report.json", report)
+    return lab.record("D90", not failures, {
+        "failures": failures, "seconds": run["seconds"], "restart": report["restart"], "times": report["times"],
+        "evaluation_summary": run["evaluation"]["summary"], "distinction": run["distinction"],
+        "results": [{k: r[k] for k in ("exp_id", "kind", "evidence_class", "class")} for r in run["evaluation"]["results"]],
+        "retrigger": report["retrigger"], "driver": report["driver"],
+        "session_401_seqs": [r["seq"] for r in run["driver_lines"] if r.get("kind") == "http" and r["status"] == 401]})
+
+
 # ----------------------------------------------------------------------------------- teardown
 def phase_reset(lab) -> dict:
     """Destroi o stack descartavel (down -v, so o prefixo do lab) entre as duas sessoes. Mesma instancia, mesmas imagens."""

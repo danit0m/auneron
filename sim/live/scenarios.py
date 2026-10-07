@@ -19,7 +19,9 @@ AFTER = "after_daily_barrier"
 FLOOR_DAY = 14
 
 # Dias virtuais por gate (sempre para frente: o clock nunca retrocede dentro de um stack)
-DAYS = {"c0": 1, "dr3": 5, "dr4": 6, "dr5": 8, "dr6": 9, "dr7": 10, "dr8": 12, "c0b": FLOOR_DAY - 1}
+RESTART_DAY = 90
+DAYS = {"c0": 1, "dr3": 5, "dr4": 6, "dr5": 8, "dr6": 9, "dr7": 10, "dr8": 12, "c0b": FLOOR_DAY - 1,
+        "d90": RESTART_DAY}
 
 
 def scenario_id(tag: str) -> str:
@@ -327,4 +329,47 @@ def oracle_c0b(tag: str = "m", floor_day: int = FLOOR_DAY) -> dict:
         o.add("provenance_present", DERIVATION, "end_of_run", floor_day, {"rec_ref": rec(n), "vencimento_day": due},
               {"producer_pass_id": True, "provenance_context": True}, requires=["provenance_aggregate", "after_floor_barrier"],
               derivation="exhaustion")
+    return o.document()
+
+
+# ---------------------------------------------------------------------------------------- D90 (restart + Collector)
+RESTART_AT = "11:00"
+RESTART_REQUIRES = ["after_restart_barrier"]       # `after_restart_barrier` e BARREIRA (requires), nunca `safe_at` de coleta
+
+
+def scen_d90(instance: str, tag: str = "r", day: int = RESTART_DAY) -> Builder:
+    """Perna curta do D90 com fixtures `[SIM-HARNESS]`: R-02 escalada ANTES do restart; R-01 aprovada ANTES do restart
+    e executada DEPOIS dele (a aprovacao precisa sobreviver); R-03 criada DEPOIS; `restart_backend` as 11:00."""
+    b = Builder(instance, tag)
+    b.create(day, "09:00", 1, "230.00", day - 2)
+    b.create(day, "09:00", 2, "240.00", day - 3)
+    b.escalate(day, 2, day - 3, at="09:30", assess_at="09:45")
+    b.pay_chain(day, 1, "10:00", "10:30", "12:00")
+    b.add(day, RESTART_AT, "harness", "restart_backend")
+    b.create(day, "11:30", 3, "250.00", day + 20)
+    b.add(day, "14:00", "sim-receber", "change_due_date", rec_ref=b.rec(3), vencimento_day=day + 25)
+    return b
+
+
+def oracle_d90(tag: str = "r", day: int = RESTART_DAY) -> dict:
+    o = OracleBuilder(tag)
+    rec = lambda n: f"{tag.upper()}-{n:02d}"  # noqa: E731
+    esc2 = {"rec_ref": rec(2), "vencimento_day": day - 3}
+    ref = f"MP-{tag}1"
+    o.add("escalation_eligible", P, "pre_slot", day, esc2, False, at=RESTART_AT)        # no slot do restart, ANTES dele
+    o.add("escalation_eligible", P, "post_slot", day, esc2, False, at=RESTART_AT)       # no slot do restart, DEPOIS da barreira
+    req = RESTART_REQUIRES
+    o.add("escalation_work_item_exists", P, AFTER, day, esc2, True, requires=req)
+    o.add("governed_decision", P, AFTER, day, {"kind": "mark_paid", "rec_ref": rec(1), "ref": ref},
+          {"decider": "sim-coordenador-fin", "decision": "approved"}, requires=req)
+    o.add("account_status", P, AFTER, day, {"rec_ref": rec(1)}, "pago", requires=req)
+    o.add("lifecycle_state", P, AFTER, day, {"rec_ref": rec(1)}, "paid", requires=req)
+    o.add("account_status", P, AFTER, day, {"rec_ref": rec(3)}, "aberto", requires=req)
+    o.add("lifecycle_state", P, AFTER, day, {"rec_ref": rec(3)}, expected_lifecycle(25), requires=req)
+    o.add("human_assessment_count", P, AFTER, day, {"rec_ref": rec(2)}, 1, requires=req)
+    o.add("governed_execution", D, "in_slot", day, {"kind": "mark_paid", "rec_ref": rec(1), "ref": ref},
+          {"executor": "sim-gerente-fin", "result": "succeeded"}, at="12:00")
+    o.add("driver_due_date_change_accepted_count", D, "end_of_run", day, {"rec_ref": rec(3)}, 1)
+    o.add("no_duplicate_effect", P, "end_of_run", day, {"rec_ref": rec(2)},
+          {"escalation_work_items_per_episode_max": 1, "live_approval_requests_per_episode_max": 1})
     return o.document()
