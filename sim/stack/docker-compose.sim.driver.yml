@@ -1,0 +1,69 @@
+# SIM-1.5 -- OVERRIDE ADITIVO do stack auneron_sim (Design Freeze V1.1, E-1).
+# O compose do SIM-1.4 (`docker-compose.sim.yml`) permanece byte a byte como
+# foi PROVADO; este arquivo so acrescenta Driver, Evidence Collector e a rede
+# isolada deles. Uso: `-f docker-compose.sim.yml -f docker-compose.sim.driver.yml`.
+#
+# Topologia (propriedade, nao endereco):
+#   auneron_sim_internal : sim-postgres, sim-migration, sim-backend   (inalterada)
+#   auneron_sim_driver   : sim-backend, sim-driver, sim-collector     (NOVA, internal)
+#
+# * a rede do Driver e `internal: true` (sem gateway: sem saida para a
+#   internet nem para o host);
+# * sim-postgres NAO entra na rede do Driver;
+# * Driver/Collector falam com `http://sim-backend:8000` (DNS interno);
+# * proibidos: network_mode host, extra_hosts, host.docker.internal, portas
+#   publicadas, socket do Docker, montagens de bind.
+# Entradas e segredos chegam por `docker cp` em volumes NATIVOS do lab
+# (nunca bind mount, SIM-CLOCK-1), e somem no teardown (`down -v`).
+name: auneron-sim
+
+services:
+  sim-backend:
+    networks: [auneron_sim_internal, auneron_sim_driver]
+
+  sim-driver:
+    image: auneron-sim-driver:${SIM_IMAGE_TAG:?SIM_IMAGE_TAG}
+    container_name: auneron-sim-driver
+    command: ["sleep", "infinity"]
+    environment:
+      SIM_DRIVER_HOME: /state
+      SIM_DRIVER_AGENDA: /inputs/public_agenda.json
+      SIM_DRIVER_MANIFEST: /inputs/driver_manifest.json
+      SIM_DRIVER_SECRETS: /inputs/secrets.json
+    volumes:
+      - auneron_sim_driver_state:/state
+      - auneron_sim_driver_inputs:/inputs
+    depends_on:
+      sim-backend: {condition: service_started}
+    networks: [auneron_sim_driver]
+
+  sim-collector:
+    image: auneron-sim-collector:${SIM_IMAGE_TAG:?SIM_IMAGE_TAG}
+    container_name: auneron-sim-collector
+    command: ["sleep", "infinity"]
+    environment:
+      SIM_COLLECTOR_HOME: /state
+      SIM_COLLECTOR_PLAN: /inputs/collection_plan.json
+      SIM_COLLECTOR_SECRETS: /inputs/secrets.json
+    volumes:
+      - auneron_sim_collector_state:/state
+      - auneron_sim_collector_inputs:/inputs
+    depends_on:
+      sim-backend: {condition: service_started}
+    networks: [auneron_sim_driver]
+
+volumes:
+  auneron_sim_driver_state:
+    name: auneron_sim_driver_state
+  auneron_sim_driver_inputs:
+    name: auneron_sim_driver_inputs
+  auneron_sim_collector_state:
+    name: auneron_sim_collector_state
+  auneron_sim_collector_inputs:
+    name: auneron_sim_collector_inputs
+
+networks:
+  auneron_sim_driver:
+    name: auneron_sim_driver
+    driver: bridge
+    internal: true

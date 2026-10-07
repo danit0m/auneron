@@ -1,0 +1,24 @@
+{
+ "backend_url": "http://sim-backend:8000",
+ "d0": "2026-01-05",
+ "email_domain": "nova-horizonte.example.com",
+ "http_timeout_s": 30,
+ "o1_max_skew_s": 1.0,
+ "reconcile_create_receivable": {
+  "max_pages": 1000,
+  "max_resend": 1,
+  "page_limit": 200,
+  "reads": 3,
+  "wait_s": 5
+ },
+ "retry": {
+  "backoff_s": 2,
+  "max_attempts": 3
+ },
+ "schema": "sim.driver.params.v1",
+ "session": {
+  "relogin_margin_minutes": 30
+ },
+ "skill_key_mark_paid": "account.mark_paid",
+ "utc_offset_minutes": -180
+}
