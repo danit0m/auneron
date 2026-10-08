@@ -137,13 +137,96 @@ def test_scheduler_scripts_are_constants_without_forbidden_options():
         low = script.lower()
         assert "-force" not in low and "-password" not in low and "/sc " not in low and "highest" not in low and "s4u" not in low
     assert "-Xml $env:SIM_TASK_XML" in sched.PS_REGISTER and "-User" not in sched.PS_REGISTER
-    for script in (sched.PS_REGISTER, sched.PS_START, sched.PS_END, sched.PS_UNREGISTER, sched.PS_INFO):
-        assert "$env:SIM_TASK_NAME" in script and "$env:SIM_TASK_PATH" in script
+    for script in (sched.PS_REGISTER, sched.PS_START, sched.PS_END, sched.PS_UNREGISTER):
+        assert "$env:SIM_TASK_NAME" in script and "$env:SIM_TASK_PATH" in script and "SIM_COM_PATH" not in script
+    for script in sched.SCRIPTS:
+        assert script.startswith(sched._PRELUDE)                                      # DEF-3: saida UTF-8 em todos os scripts
+
+
+# ------------------------------------------------------------------------------------------------------ SIM-1.5G.1 (DEF-1/2/3)
+def test_def1_integrity_comes_from_the_token_api_not_from_the_group_list():
+    script = sched.PS_IDENTITY
+    assert script.count("GetTokenInformation(t, 25") == 2 and "SimTokenIntegrity" in script and "integrity_rid=$rid" in script
+    assert "S-1-16" not in script and ".Groups" not in script and "medium=" not in script and "high=" not in script
+
+
+def test_def1_unknown_or_non_medium_tokens_make_the_scan_report_elevation(tmp_path):
+    for rid in (None, 0x3000, 0x1000, -1):
+        host = FakeHost(tmp_path, integrity=rid)
+        assert sched.scan_unreconciled(tmp_path, host, alive=host.alive)["elevated"] is True
+    host = FakeHost(tmp_path)
+    assert sched.scan_unreconciled(tmp_path, host, alive=host.alive)["elevated"] is False
+    host = FakeHost(tmp_path, admin=True)
+    assert sched.scan_unreconciled(tmp_path, host, alive=host.alive)["elevated"] is True
+
+
+def test_def2_com_paths_have_no_trailing_backslash_and_cmdlet_paths_do():
+    assert sched.COM_FOLDER == "\\AuneronSim" and sched.FOLDER == "\\AuneronSim\\"
+    assert sched.validate_com_path("\\AuneronSim") == "\\AuneronSim"
+    for bad in ("\\AuneronSim\\", "AuneronSim", "\\", "\\Microsoft", ""):
+        with pytest.raises(sched.SchedError):
+            sched.validate_com_path(bad)
+    env = sched._task_env(RUN)
+    assert env["SIM_COM_PATH"] == "\\AuneronSim" and env["SIM_TASK_PATH"] == "\\AuneronSim\\"
+    for script in (sched.PS_INFO, sched.PS_LIST, sched.PS_DELETE_FOLDER):
+        assert "$svc.GetFolder($env:SIM_COM_PATH)" in script and "SIM_TASK_PATH" not in script
+    assert sched.PS_DELETE_FOLDER.count("GetFolder(") == 2 and "GetFolder('\\')" in sched.PS_DELETE_FOLDER
+
+
+def test_def2_the_windows_contract_is_enforced_by_the_fake_for_both_path_forms(tmp_path, monkeypatch):
+    host = FakeHost(tmp_path)
+    assert sched.list_folder(host) == {"folder_exists": False, "tasks": [], "folders": []}
+    assert sched.info(host, RUN) == {"found": False, "folder_exists": False}
+    monkeypatch.setattr(sched, "COM_FOLDER", "\\AuneronSim\\")                       # o defeito original
+    with pytest.raises(sched.SchedError, match="0x8007007B"):
+        sched.list_folder(host)
+    with pytest.raises(sched.SchedError, match="0x8007007B"):
+        sched.info(host, RUN)
+    monkeypatch.setattr(sched, "COM_FOLDER", "\\AuneronSim")
+    monkeypatch.setattr(sched, "FOLDER", "\\AuneronSim")                               # cmdlet sem barra final
+    with pytest.raises(sched.SchedError, match="TaskPath"):
+        sched.register(host, RUN, good_xml())
+
+
+def test_def2_only_the_two_genuine_not_found_hresults_mean_absent():
+    assert sched._NOT_FOUND == "(-2147024894, -2147024893)"
+    assert str(-2147024773) not in sched._NOT_FOUND                                    # 0x8007007B (nome invalido) NAO e "ausente"
+    for script in (sched.PS_INFO, sched.PS_LIST):
+        assert script.count("-in " + sched._NOT_FOUND) == (2 if script is sched.PS_INFO else 1) and "else { throw }" in script
+
+
+def test_def3_python_decodes_utf8_explicitly_and_keeps_the_diagnostic(tmp_path):
+    seen = {}
+
+    def run(cmd, **kwargs):
+        seen.update(kwargs)
+        return type("R", (), {"stdout": "", "stderr": "A sintaxe do nome do diretório está incorreta (0x8007007B)", "returncode": 1})()
+
+    with pytest.raises(sched.SchedError, match="0x8007007B") as error:
+        sched.list_folder(run)
+    assert "diretório" in str(error.value) and seen["encoding"] == "utf-8" and seen["errors"] == "replace" and "text" not in seen
+
+
+def test_def3_diagnostic_falls_back_to_stdout_and_unreadable_output_is_never_a_success():
+    def make(stdout, stderr, rc):
+        return lambda cmd, **kw: type("R", (), {"stdout": stdout, "stderr": stderr, "returncode": rc})()
+
+    with pytest.raises(sched.SchedError, match="so no stdout"):
+        sched.list_folder(make("so no stdout", "", 1))
+    with pytest.raises(sched.SchedError, match="bytes nao decodificaveis"):
+        sched.list_folder(make('{"folder_exists": true, "tasks": [], "folders": []}�', "", 0))             # falso sucesso proibido
+    with pytest.raises(sched.SchedError, match="nao e JSON"):
+        sched.list_folder(make("", "", 0))
+    assert sched.list_folder(make('{"folder_exists": false, "tasks": [], "folders": []}', "aviso", 0))["folder_exists"] is False
+    with pytest.raises(sched.SchedError, match="sem confirmacao"):
+        sched.start(make("", "", 0), RUN)
 
 
 # ------------------------------------------------------------------------------------------------------ privilegio
-@pytest.mark.parametrize("field,value", [("admin_role", True), ("high", True), ("medium", False), ("schedule_state", "Stopped"),
-                                         ("user", "tomaz")])
+@pytest.mark.parametrize("field,value", [("admin_role", True), ("admin_role", None), ("integrity_rid", 0x3000), ("integrity_rid", 0x4000),
+                                         ("integrity_rid", 0x1000), ("integrity_rid", 0), ("integrity_rid", -1), ("integrity_rid", None),
+                                         ("integrity_rid", True), ("integrity_rid", "8192"), ("integrity_rid", 8192.0), ("integrity_rid", 8193),
+                                         ("schedule_state", "Stopped"), ("user", "tomaz")])
 def test_unexpected_privilege_or_service_state_fails_closed_without_registering(tmp_path, field, value):
     host = FakeHost(tmp_path)
     host.who[field] = value
@@ -156,7 +239,11 @@ def test_unexpected_privilege_or_service_state_fails_closed_without_registering(
 def test_require_unelevated_returns_the_identity_when_it_matches_the_measured_one(tmp_path):
     assert sched.require_unelevated(FakeHost(tmp_path).who)["user"] == "PC-X\\tomaz"
     with pytest.raises(sched.UnexpectedPrivilege):
-        sched.require_unelevated({"admin_role": False, "high": False, "medium": False, "schedule_state": "Running", "user": USER})
+        sched.require_unelevated({"admin_role": False, "integrity_rid": None, "schedule_state": "Running", "user": USER})
+    with pytest.raises(sched.UnexpectedPrivilege):
+        sched.require_unelevated({"admin_role": False, "schedule_state": "Running", "user": USER})                 # RID ausente
+    assert sched.is_unelevated({"admin_role": False, "integrity_rid": 0x2000}) is True
+    assert sched.is_unelevated({"admin_role": False, "integrity_rid": 0x2001}) is False
 
 
 # ------------------------------------------------------------------------------------------------------ lancamento
@@ -170,7 +257,8 @@ def test_launch_registers_verifies_starts_and_records_everything(tmp_path):
     assert saved["xml_sha256"] == sched.xml_sha256(host.tasks[RUN]["xml"]) and saved["user"] == USER
     blob = json.dumps(saved).lower()
     assert "password" not in blob and "s4u" not in blob
-    assert [c[2] for c in host.calls if c[2]] == ["\\AuneronSim\\"] * 4
+    assert [(c[0], c[2]) for c in host.calls if c[2]] == [("register", "\\AuneronSim\\"), ("info", "\\AuneronSim"),
+                                                          ("start", "\\AuneronSim\\"), ("info", "\\AuneronSim")]
     audit = sched.Audit(detach.proc_dir(tmp_path, RUN), tmp_path / sched.ANCHOR_DIR, RUN)
     events = [r["event"] for r in audit.records()]
     assert events == ["REGISTERED", "EXPORT_VERIFIED", "STARTED", "HEARTBEAT_SEEN"] and audit.verify()["ok"]
@@ -263,7 +351,7 @@ def test_only_the_aunerons_folder_is_ever_addressed_and_foreign_tasks_are_untouc
     launch(tmp_path, host)
     sched.list_folder(host)
     for label, name, path in host.calls:
-        assert path in (None, "\\AuneronSim\\") and name != THIRD_PARTY
+        assert path in (None, "\\AuneronSim\\", "\\AuneronSim") and name != THIRD_PARTY
     with pytest.raises(sched.SchedError):
         sched.validate_path("\\")
     with pytest.raises(sched.SchedError):

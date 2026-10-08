@@ -34,6 +34,8 @@ from sim.runner.errors import RunnerError
 
 FOLDER = "\\AuneronSim\\"
 FOLDER_NAME = "AuneronSim"
+COM_FOLDER = "\\AuneronSim"               # API COM (`GetFolder`): SEM barra final (a barra final da 0x8007007B)
+INTEGRITY_MEDIUM = 0x2000
 CMD_EXE = "C:\\Windows\\System32\\cmd.exe"
 MECHANISM = "task_scheduler"
 STATE_READY, STATE_RUNNING = 3, 4
@@ -76,31 +78,48 @@ class RemovalNotVerified(SchedError):
 # scripts PowerShell (CONSTANTES; entrada so por ambiente)
 # ---------------------------------------------------------------------------------------------------------------------
 _NOT_FOUND = "(-2147024894, -2147024893)"
+_PRELUDE = ("try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}; "
+            "$OutputEncoding=[System.Text.Encoding]::UTF8; ")
+_TOKEN_CS = (
+    'using System; using System.Runtime.InteropServices; public class SimTokenIntegrity { '
+    '[DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t); '
+    '[DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr t, int c, IntPtr b, int l, out int r); '
+    '[DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr s, int i); '
+    '[DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthorityCount(IntPtr s); '
+    '[DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h); '
+    'public static int Level() { IntPtr t; '
+    'if (!OpenProcessToken(System.Diagnostics.Process.GetCurrentProcess().Handle, 8, out t)) return -1; '
+    'try { int n; GetTokenInformation(t, 25, IntPtr.Zero, 0, out n); if (n <= 0) return -1; IntPtr b = Marshal.AllocHGlobal(n); '
+    'try { if (!GetTokenInformation(t, 25, b, n, out n)) return -1; IntPtr sid = Marshal.ReadIntPtr(b); '
+    'byte c = Marshal.ReadByte(GetSidSubAuthorityCount(sid)); return Marshal.ReadInt32(GetSidSubAuthority(sid, c - 1)); } '
+    'finally { Marshal.FreeHGlobal(b); } } finally { CloseHandle(t); } } }'
+)
 _HR = "$h=$_.Exception.HResult; if ($_.Exception.InnerException) { $h=$_.Exception.InnerException.HResult }; "
 PS_IDENTITY = (
-    "$ErrorActionPreference='Stop'; $id=[Security.Principal.WindowsIdentity]::GetCurrent(); "
-    "$pr=New-Object Security.Principal.WindowsPrincipal($id); $g=@($id.Groups | ForEach-Object { $_.Value }); "
+    _PRELUDE + "$ErrorActionPreference='Stop'; $id=[Security.Principal.WindowsIdentity]::GetCurrent(); "
+    "$pr=New-Object Security.Principal.WindowsPrincipal($id); "
+    "Add-Type -TypeDefinition '" + _TOKEN_CS + "'; $rid=[int][SimTokenIntegrity]::Level(); "
     "$s=Get-CimInstance Win32_Service -Filter \"Name='Schedule'\"; "
     "$rb=((Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') -or "
     "(Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending')); "
     "[pscustomobject]@{user=$id.Name; sid=$id.User.Value; admin_role=$pr.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); "
-    "medium=($g -contains 'S-1-16-8192'); high=($g -contains 'S-1-16-12288'); schedule_state=[string]$s.State; schedule_pid=[int]$s.ProcessId; "
+    "integrity_rid=$rid; schedule_state=[string]$s.State; schedule_pid=[int]$s.ProcessId; "
     "session=[int](Get-Process -Id $PID).SessionId; reboot_pending=[bool]$rb} | ConvertTo-Json -Compress"
 )
 PS_REGISTER = (
-    "$ErrorActionPreference='Stop'; Register-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH "
+    _PRELUDE + "$ErrorActionPreference='Stop'; Register-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH "
     "-Xml $env:SIM_TASK_XML | Out-Null; Write-Output 'OK'"
 )
-PS_START = "$ErrorActionPreference='Stop'; Start-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH; Write-Output 'OK'"
-PS_END = "$ErrorActionPreference='Stop'; Stop-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH; Write-Output 'OK'"
+PS_START = _PRELUDE + "$ErrorActionPreference='Stop'; Start-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH; Write-Output 'OK'"
+PS_END = _PRELUDE + "$ErrorActionPreference='Stop'; Stop-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH; Write-Output 'OK'"
 PS_UNREGISTER = (
-    "$ErrorActionPreference='Stop'; Unregister-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH "
+    _PRELUDE + "$ErrorActionPreference='Stop'; Unregister-ScheduledTask -TaskName $env:SIM_TASK_NAME -TaskPath $env:SIM_TASK_PATH "
     "-Confirm:$false; Write-Output 'OK'"
 )
 PS_INFO = (
-    "$ErrorActionPreference='Stop'; $svc=New-Object -ComObject Schedule.Service; $svc.Connect(); "
+    _PRELUDE + "$ErrorActionPreference='Stop'; $svc=New-Object -ComObject Schedule.Service; $svc.Connect(); "
     "$o=[ordered]@{found=$false; folder_exists=$true}; "
-    f"try {{ $f=$svc.GetFolder($env:SIM_TASK_PATH) }} catch {{ {_HR}if ($h -in {_NOT_FOUND}) {{ $o.folder_exists=$false; "
+    f"try {{ $f=$svc.GetFolder($env:SIM_COM_PATH) }} catch {{ {_HR}if ($h -in {_NOT_FOUND}) {{ $o.folder_exists=$false; "
     "$o | ConvertTo-Json -Compress; exit 0 } else { throw } }; "
     f"try {{ $t=$f.GetTask($env:SIM_TASK_NAME) }} catch {{ {_HR}if ($h -in {_NOT_FOUND}) {{ $o | ConvertTo-Json -Compress; "
     "exit 0 } else { throw } }; "
@@ -110,25 +129,25 @@ PS_INFO = (
     "if ($env:SIM_WANT_XML -eq '1') { $o.xml=[string]$t.Xml }; $o | ConvertTo-Json -Compress -Depth 4"
 )
 PS_LIST = (
-    "$ErrorActionPreference='Stop'; $svc=New-Object -ComObject Schedule.Service; $svc.Connect(); $o=[ordered]@{folder_exists=$true; tasks=@(); folders=@()}; "
-    f"try {{ $f=$svc.GetFolder($env:SIM_TASK_PATH) }} catch {{ {_HR}if ($h -in {_NOT_FOUND}) {{ $o.folder_exists=$false; "
+    _PRELUDE + "$ErrorActionPreference='Stop'; $svc=New-Object -ComObject Schedule.Service; $svc.Connect(); $o=[ordered]@{folder_exists=$true; tasks=@(); folders=@()}; "
+    f"try {{ $f=$svc.GetFolder($env:SIM_COM_PATH) }} catch {{ {_HR}if ($h -in {_NOT_FOUND}) {{ $o.folder_exists=$false; "
     "$o | ConvertTo-Json -Compress; exit 0 } else { throw } }; "
     "foreach ($t in $f.GetTasks(1)) { $o.tasks += [pscustomobject]@{name=[string]$t.Name; state=[int]$t.State} }; "
     "foreach ($d in $f.GetFolders(0)) { $o.folders += [string]$d.Name }; $o | ConvertTo-Json -Compress -Depth 4"
 )
 PS_DELETE_FOLDER = (
-    "$ErrorActionPreference='Stop'; $svc=New-Object -ComObject Schedule.Service; $svc.Connect(); $f=$svc.GetFolder($env:SIM_TASK_PATH); "
+    _PRELUDE + "$ErrorActionPreference='Stop'; $svc=New-Object -ComObject Schedule.Service; $svc.Connect(); $f=$svc.GetFolder($env:SIM_COM_PATH); "
     "if ($f.GetTasks(1).Count -ne 0 -or $f.GetFolders(0).Count -ne 0) { throw 'pasta nao vazia' }; "
     "$svc.GetFolder('\\').DeleteFolder($env:SIM_FOLDER_NAME, 0); Write-Output 'OK'"
 )
 PS_CHAIN = (
-    "$ErrorActionPreference='Stop'; $p=[int]$env:SIM_PID; $out=@(); for ($i=0; $i -lt 6 -and $p -gt 0; $i++) { "
+    _PRELUDE + "$ErrorActionPreference='Stop'; $p=[int]$env:SIM_PID; $out=@(); for ($i=0; $i -lt 6 -and $p -gt 0; $i++) { "
     "$w=Get-CimInstance Win32_Process -Filter \"ProcessId=$p\"; if (-not $w) { break }; "
     "$out += [pscustomobject]@{pid=[int]$w.ProcessId; ppid=[int]$w.ParentProcessId; name=[string]$w.Name; session=[int]$w.SessionId; "
     "cmd=[string]$w.CommandLine}; $p=[int]$w.ParentProcessId }; ConvertTo-Json -InputObject @($out) -Compress"
 )
 PS_PROCS = (
-    "$ErrorActionPreference='Stop'; $m=$env:SIM_MARKER; $o=@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+    _PRELUDE + "$ErrorActionPreference='Stop'; $m=$env:SIM_MARKER; $o=@(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
     "$_.CommandLine.Contains($m) -and $_.Name -in 'python.exe','cmd.exe','pythonw.exe' } | ForEach-Object { [pscustomobject]@{"
     "pid=[int]$_.ProcessId; ppid=[int]$_.ParentProcessId; name=[string]$_.Name} }); ConvertTo-Json -InputObject @($o) -Compress"
 )
@@ -151,6 +170,13 @@ def validate_name(name: str) -> str:
 def validate_path(path: str) -> str:
     if path != FOLDER:
         raise SchedError(f"so a pasta {FOLDER} e permitida (recebido {path!r}); tarefas de terceiros nunca sao tocadas")
+    return path
+
+
+def validate_com_path(path: str) -> str:
+    """Caminho para a API COM (`GetFolder`): `\\AuneronSim`, SEM barra final. Os cmdlets usam `FOLDER` (com barra final)."""
+    if path != COM_FOLDER:
+        raise SchedError(f"caminho COM invalido (esperado {COM_FOLDER}, sem barra final): {path!r}")
     return path
 
 
@@ -299,11 +325,17 @@ def validate_semantics(xml: str, *, user_aliases: list, arguments: str, workdir:
 # chamadas ao host (todas por `run`)
 # ---------------------------------------------------------------------------------------------------------------------
 def _ps(run, script: str, env: dict | None = None, timeout: int = 90) -> str:
+    """Executa um script constante. UTF-8 explicito com `errors="replace"`: o diagnostico nunca se perde, e bytes
+    ilegiveis na SAIDA reprovam (nunca viram sucesso)."""
     result = run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], env={**os.environ, **(env or {})},
-                 capture_output=True, text=True, timeout=timeout)
+                 capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
+    stdout = getattr(result, "stdout", "") or ""
+    stderr = getattr(result, "stderr", "") or ""
     if getattr(result, "returncode", 0) != 0:
-        raise SchedError(f"powershell falhou (rc={result.returncode}): {(getattr(result, 'stderr', '') or '')[:300]}")
-    return (getattr(result, "stdout", "") or "").strip()
+        raise SchedError(f"powershell falhou (rc={result.returncode}): {(stderr or stdout).strip()[:300]}")
+    if "\ufffd" in stdout:
+        raise SchedError("saida do PowerShell com bytes nao decodificaveis (UTF-8): resultado rejeitado")
+    return stdout.strip()
 
 
 def _json(run, script: str, env: dict | None = None):
@@ -315,18 +347,26 @@ def _json(run, script: str, env: dict | None = None):
 
 
 def _task_env(name: str, **extra) -> dict:
-    return {"SIM_TASK_NAME": validate_name(name), "SIM_TASK_PATH": validate_path(FOLDER), **extra}
+    return {"SIM_TASK_NAME": validate_name(name), "SIM_TASK_PATH": validate_path(FOLDER),
+            "SIM_COM_PATH": validate_com_path(COM_FOLDER), **extra}
 
 
 def identity(run) -> dict:
     return _json(run, PS_IDENTITY)
 
 
+def is_unelevated(who: dict) -> bool:
+    """Token de integridade MEDIA (RID 0x2000, lido da API do Windows) e nao-administrador. Ausente/desconhecido => False."""
+    rid = who.get("integrity_rid")
+    return who.get("admin_role") is False and isinstance(rid, int) and rid == INTEGRITY_MEDIUM
+
+
 def require_unelevated(who: dict) -> dict:
-    """Falha fechada se o privilegio difere do medido (token medio, nao-admin, servico `Schedule` ativo)."""
-    if who.get("admin_role") or who.get("high") or not who.get("medium"):
-        raise UnexpectedPrivilege(f"privilegio inesperado (admin={who.get('admin_role')}, alto={who.get('high')}, "
-                                  f"medio={who.get('medium')}): o desenho exige token medio nao elevado")
+    """Falha fechada se o privilegio difere do medido (token medio nao elevado, servico `Schedule` ativo)."""
+    if not is_unelevated(who):
+        raise UnexpectedPrivilege(f"privilegio inesperado ou desconhecido (admin_role={who.get('admin_role')!r}, "
+                                  f"integrity_rid={who.get('integrity_rid')!r}): o desenho exige token de integridade media "
+                                  f"(0x{INTEGRITY_MEDIUM:X}) nao elevado")
     if who.get("schedule_state") != "Running":
         raise UnexpectedPrivilege(f"servico Schedule nao esta ativo: {who.get('schedule_state')!r}")
     validate_user(who.get("user", ""))
@@ -359,7 +399,7 @@ def unregister(run, name: str) -> None:
 
 
 def list_folder(run) -> dict:
-    return _json(run, PS_LIST, {"SIM_TASK_PATH": validate_path(FOLDER)})
+    return _json(run, PS_LIST, {"SIM_COM_PATH": validate_com_path(COM_FOLDER)})
 
 
 def delete_folder_if_empty(run) -> bool:
@@ -368,7 +408,7 @@ def delete_folder_if_empty(run) -> bool:
         return False
     if listing.get("tasks") or listing.get("folders"):
         return False
-    _ps(run, PS_DELETE_FOLDER, {"SIM_TASK_PATH": validate_path(FOLDER), "SIM_FOLDER_NAME": FOLDER_NAME})
+    _ps(run, PS_DELETE_FOLDER, {"SIM_COM_PATH": validate_com_path(COM_FOLDER), "SIM_FOLDER_NAME": FOLDER_NAME})
     return True
 
 
@@ -627,4 +667,4 @@ def scan_unreconciled(runs_root, run, *, alive) -> dict:
             orphans += 1
     return {"scheduler_running": who.get("schedule_state") == "Running", "folder_tasks": len(tasks),
             "unreconciled_runs": len(unreconciled), "orphan_processes": orphans, "reboot_pending": bool(who.get("reboot_pending")),
-            "elevated": bool(who.get("admin_role") or who.get("high")), "tasks": sorted(tasks), "unreconciled": sorted(unreconciled)}
+            "elevated": not is_unelevated(who), "tasks": sorted(tasks), "unreconciled": sorted(unreconciled)}
