@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -41,10 +42,21 @@ def proc_dir(runs_root, run_id: str) -> Path:
     return Path(runs_root) / f"{run_id}{PROC_SUFFIX}"
 
 
+CMD_UNSAFE = re.compile(r'[%!^&|<>\r\n]')                 # metacaracteres do cmd: nunca entram no comando montado
+EXIT_INT = re.compile(r'-?[0-9]{1,10}')
+
+
 def build_cmd_arguments(python: str, cli_args: str, proc: Path, module: str = "sim.runner.cli") -> str:
-    """Argumentos do `cmd`: redireciona stdout/stderr e grava o codigo de saida (identicos para WMI e Task Scheduler)."""
+    """Argumentos do `cmd` (identicos para WMI e Task Scheduler): redireciona stdout/stderr e grava o codigo de saida.
+
+    `/v:on` + `!errorlevel!`: expansao no MOMENTO da execucao (depois do Python terminar) e nao no parse da linha; o
+    redirecionamento vem ANTES do `echo` (`>arq echo N`), porque `echo 0> arq` seria lido como redirecionamento do handle 0
+    (arquivo vazio). Sem `%`, `!`, `^`, `&`, `|`, `<`, `>` nos componentes (fail-closed)."""
+    for label, value in (("python", python), ("cli_args", cli_args), ("module", module), ("proc", str(proc))):
+        if CMD_UNSAFE.search(value):
+            raise DetachError(f"caractere especial do cmd em {label}: o comando nao e montado")
     inner = f'"{python}" -m {module} {cli_args} 1>>"{proc / STDOUT}" 2>>"{proc / STDERR}"'
-    return f'/d /s /c "{inner} & echo %errorlevel%> "{proc / EXIT_CODE}""'
+    return f'/d /v:on /s /c "{inner} & >"{proc / EXIT_CODE}" echo !errorlevel!"'
 
 
 def build_cmdline(python: str, cli_args: str, proc: Path) -> str:
@@ -154,10 +166,16 @@ def assess(proc: Path, ledger_state: str | None, *, alive=pid_alive, now=time.ti
 
 
 def read_exit_code(proc: Path):
+    """Codigo de saida gravado pelo `cmd` depois do Python terminar. Ausente, vazio, ilegivel ou nao-inteiro => None
+    (nunca se infere do `exit.json`)."""
     try:
-        return int((proc / EXIT_CODE).read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+        text = (proc / EXIT_CODE).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
         return None
+    if not EXIT_INT.fullmatch(text):
+        return None
+    value = int(text)
+    return value if -2**31 <= value <= 2**32 - 1 else None
 
 
 def request_stop(proc: Path, reason: str) -> Path:
@@ -241,8 +259,12 @@ def launch_detached(runs_root, run_id: str, *, python: str, repo: str, cli_args:
     while clock() < deadline:
         beat = read_heartbeat(proc)
         if beat is not None and alive(beat["pid"]):
-            state = sched.info(run, name)
-            engine = [i.get("pid") for i in state.get("instances", [])]
+            engine = []
+            try:
+                table = sched.process_table(run, who["schedule_pid"])
+                engine = [e["pid"] for e in sched.task_instances(table, who["schedule_pid"], str(proc))["engines"]]
+            except sched.SchedError as error:
+                audit.append("ENGINE_LOOKUP_FAILED", {"error": str(error)[:200]})
             doc["pid"] = engine[0] if engine else beat["pid"]
             _atomic_write(launch_path, doc)
             audit.append("HEARTBEAT_SEEN", {"pid": beat["pid"], "engine_pids": engine})
@@ -265,8 +287,11 @@ def kill_task(proc: Path, *, confirm: bool, run=None, anchors_dir=None, clock=ti
     sched.end(run, name)
     audit.append("FORCED_END", {"by": "operator", "confirm": True})
     after = sched.info(run, name)
-    _atomic_write(proc / KILLED, {"task": doc["task"], "state_after": after.get("state"), "instances_after": len(after.get("instances", []))})
-    return {"task": doc["task"], "state_after": after.get("state"), "instances_after": len(after.get("instances", []))}
+    who = sched.identity(run)
+    table = sched.process_table(run, who["schedule_pid"])
+    count = len(sched.task_instances(table, who["schedule_pid"], str(proc))["engines"])
+    _atomic_write(proc / KILLED, {"task": doc["task"], "state_after": after.get("state"), "instances_after": count})
+    return {"task": doc["task"], "state_after": after.get("state"), "instances_after": count}
 
 
 def tail(proc: Path, which: str = "stdout", lines: int = 50) -> list:

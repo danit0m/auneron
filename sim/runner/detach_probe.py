@@ -152,6 +152,7 @@ CRITERIA2 = (
 LEVELS = {"L1": {"required_s": 900, "survive_s": 840, "profile": "PROBE_L1", "cap_s": 1500},
           "L2": {"required_s": 2700, "survive_s": 600, "profile": "PROBE_L2", "cap_s": 4200}}
 MAX_GAP_S = 15
+DENSE_SAMPLES, DENSE_MIN, DENSE_PAUSE_S = 20, 8, 0.5     # amostragem densa depois da 2a partida (janelas transitorias)
 BEAT_EVERY_S = 5
 FACTS, FACTS_LOG, BEATS = "facts.json", "facts.jsonl", "beats.jsonl"
 MONITOR_JSON, VERDICT_JSON, EVIDENCE_MANIFEST = "detach2_monitor.json", "detach2_verdict.json", "evidence_manifest.json"
@@ -278,16 +279,18 @@ def judge_detach2(facts: dict, monitor: dict, level: str = "L1") -> dict:
     spec = LEVELS[level]
     ok = {}
     interp = facts.get("interpreter") or {}
-    chain = monitor.get("chain") or []
-    chain_pids = [c.get("pid") for c in chain]
-    engine = monitor.get("engine_pids") or []
+    engine = monitor.get("engine") or {}
+    schedule = monitor.get("schedule") or {}
+    tree = monitor.get("engine_tree") or []
+    # D2-02: medido na TABELA DE PROCESSOS do SO (cmd.exe filho do servico Schedule com a linha de comando da tarefa),
+    # independente do heartbeat; o heartbeat so corrobora que a sonda esta dentro da arvore.
     ok["D2-01_task_as_requested"] = (monitor.get("registered_verified") is True and monitor.get("xml_sha256") is not None
                                      and str(monitor.get("task", "")).startswith("\\AuneronSim\\"))
-    engine_in_chain = any(p in chain_pids for p in engine)
-    engine_parent = next((c.get("ppid") for c in chain if c.get("pid") in engine), None)
-    ok["D2-02_scheduler_parentage"] = (bool(engine) and engine_in_chain and monitor.get("schedule_pid") not in (None, 0)
-                                       and engine_parent == monitor.get("schedule_pid")
-                                       and monitor.get("launcher_pid") not in chain_pids)
+    ok["D2-02_scheduler_parentage"] = (str(engine.get("name", "")).lower() == "cmd.exe" and engine.get("pid") is not None
+                                       and schedule.get("pid") not in (None, 0) and str(schedule.get("name", "")).lower() == "svchost.exe"
+                                       and engine.get("ppid") == schedule.get("pid") and monitor.get("heartbeat_pid_in_tree") is True
+                                       and monitor.get("launcher_pid") is not None and monitor.get("launcher_pid") not in tree
+                                       and engine.get("session") is not None and engine.get("session") == facts.get("interactive_session"))
     ok["D2-03_same_session"] = (facts.get("session_id") is not None and facts.get("session_id") == facts.get("interactive_session"))
     ok["D2-04_isolated_interpreter"] = (bool(interp.get("prefix")) and _norm(interp.get("prefix")) == _norm(interp.get("expected_prefix"))
                                         and _norm(interp.get("prefix")) != _norm(interp.get("base_prefix"))
@@ -306,8 +309,14 @@ def judge_detach2(facts: dict, monitor: dict, level: str = "L1") -> dict:
     ok["D2-09_stop_exit_clean"] = (facts.get("stop_obeyed") is True and exit_doc.get("code") == 0 and exit_doc.get("reason") == "STOP"
                                    and monitor.get("exit_code_txt") == 0 and monitor.get("task_state_after") == sched.STATE_READY
                                    and monitor.get("last_result_after") == 0)
+    inst = monitor.get("instances") or {}
     ok["D2-10_no_trigger_restart_parallel"] = (monitor.get("triggers") == 0 and monitor.get("restart_on_failure") is False
-                                               and monitor.get("instances_after_second_start") == 1)
+                                               and inst.get("second_start_attempted") is True and inst.get("engines_max") == 1
+                                               and inst.get("engines_min_while_alive") == 1
+                                               and len(inst.get("distinct_engine_pids") or []) == 1
+                                               and inst.get("start_records") == 1 and len(inst.get("beat_pids") or []) == 1
+                                               and (inst.get("dense_samples_after_second_start") or 0) >= DENSE_MIN
+                                               and inst.get("sample_errors") == 0)
     ok["D2-11_removed_clean_evidence"] = (monitor.get("removal_verified") is True and monitor.get("orphan_processes") == 0
                                           and monitor.get("evidence_manifest_ok") is True and monitor.get("audit_ok") is True
                                           and monitor.get("folder_clean") is True)
@@ -344,9 +353,45 @@ def _read_json(path: Path):
         return None
 
 
+def _sample(run, schedule_pid: int, proc, stats: dict, alive_now: bool):
+    """Uma foto da tabela de processos do SO; contabiliza instancias (motores) sem depender do heartbeat."""
+    stats["samples"] += 1
+    try:
+        snap = sched.task_instances(sched.process_table(run, schedule_pid), schedule_pid, str(proc))
+    except sched.SchedError:
+        stats["sample_errors"] += 1
+        return None
+    count = len(snap["engines"])
+    stats["engines_max"] = max(stats["engines_max"], count)
+    stats["distinct_engine_pids"].update(e["pid"] for e in snap["engines"])
+    if alive_now:
+        stats["engines_min_while_alive"] = count if stats["engines_min_while_alive"] is None else min(stats["engines_min_while_alive"], count)
+    return snap
+
+
+def _second_start(run, name, schedule_pid, proc, stats, audit, sleep, alive):
+    """2a partida (deve ser IGNORADA: IgnoreNew) seguida de amostragem densa da tabela de processos."""
+    sched.start(run, name)
+    stats["second_start_attempted"] = True
+    audit.append("SECOND_START_ATTEMPT", {})
+    for _ in range(DENSE_SAMPLES):
+        pid = (detach.read_heartbeat(proc) or {}).get("pid")
+        _sample(run, schedule_pid, proc, stats, bool(pid) and alive(pid))
+        stats["dense_samples_after_second_start"] += 1
+        sleep(DENSE_PAUSE_S)
+
+
+def _start_records(proc: Path) -> int:
+    path = Path(proc) / FACTS_LOG
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if '"phase": "start"' in line)
+
+
 def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_alive, sleep=time.sleep, clock=time.time,
                   poll_s: int = 10, session_end_t: int | None = None, anchors_dir=None, stop_wait_s: int = 90) -> dict:
-    """Processo NOVO (depois do fim do lancador): observa de fora, tenta uma 2a partida, pede STOP e coleta os fatos do monitor."""
+    """Processo NOVO (depois do fim do lancador): observa de fora, tenta uma 2a partida, pede STOP e coleta os fatos do monitor.
+    Parentesco e instancias vem da TABELA DE PROCESSOS (nao do COM `GetInstances`, vazio no host real, nem do heartbeat)."""
     run = run or sched.run_default
     spec, proc = LEVELS[level], detach.proc_dir(runs_root, name)
     anchors = anchors_dir or (Path(runs_root) / sched.ANCHOR_DIR)
@@ -357,24 +402,23 @@ def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_
     launch_doc = detach.read_launch(proc) or {}
     launcher_pid = (by_event.get("STARTED") or {}).get("payload", {}).get("launcher_pid")
     who = sched.identity(run)
+    schedule_pid = who.get("schedule_pid")
     first_seen_dead_t = None if launcher_pid is None or alive(launcher_pid) else int(clock())
     launcher_alive = bool(launcher_pid) and alive(launcher_pid)
-    second_done, instances_after_second = False, None
+    stats = {"samples": 0, "sample_errors": 0, "engines_max": 0, "engines_min_while_alive": None, "distinct_engine_pids": set(),
+             "second_start_attempted": False, "dense_samples_after_second_start": 0}
     t0 = clock()
     while True:
         beats = beat_series(proc)
-        stats = beat_stats(beats)
+        bstats = beat_stats(beats)
         pid = (detach.read_heartbeat(proc) or {}).get("pid")
         if not pid or not alive(pid):
             break
-        if stats["duration_s"] >= spec["required_s"]:
+        _sample(run, schedule_pid, proc, stats, True)
+        if bstats["duration_s"] >= spec["required_s"]:
             break
-        if not second_done and stats["duration_s"] >= min(120, spec["required_s"] // 3):
-            sched.start(run, name)                       # IgnoreNew: nao pode criar 2a instancia
-            sleep(2)
-            instances_after_second = len(sched.info(run, name).get("instances", []))
-            audit.append("SECOND_START_ATTEMPT", {"instances_after": instances_after_second})
-            second_done = True
+        if not stats["second_start_attempted"] and bstats["duration_s"] >= min(120, spec["required_s"] // 3):
+            _second_start(run, name, schedule_pid, proc, stats, audit, sleep, alive)
         if clock() - t0 > spec["cap_s"] + 300:
             break
         sleep(poll_s)
@@ -384,11 +428,14 @@ def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_
     chain = sched.process_chain(run, pid) if probe_alive_before_stop else []
     beats_now = beat_series(proc)
     heartbeat = detach.read_heartbeat(proc) or {}
-    if second_done is False and probe_alive_before_stop:
-        sched.start(run, name)
-        sleep(2)
-        instances_after_second = len(sched.info(run, name).get("instances", []))
-        audit.append("SECOND_START_ATTEMPT", {"instances_after": instances_after_second})
+    if not stats["second_start_attempted"] and probe_alive_before_stop:
+        _second_start(run, name, schedule_pid, proc, stats, audit, sleep, alive)
+        pid = (detach.read_heartbeat(proc) or {}).get("pid")
+        probe_alive_before_stop = bool(pid) and alive(pid)                       # a janela densa pode ter durado: reavalia
+    final = _sample(run, schedule_pid, proc, stats, probe_alive_before_stop) if probe_alive_before_stop else None
+    engines = (final or {}).get("engines") or []
+    engine = engines[0] if len(engines) == 1 else {}
+    engine_tree = engine.get("tree", [])
     if probe_alive_before_stop:
         detach.request_stop(proc, "DETACH-2 acceptance: controlled STOP")
         audit.append("STOP_REQUESTED", {})
@@ -396,23 +443,34 @@ def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_
         while not (proc / detach.EXIT).exists() and waited < stop_wait_s:
             sleep(1)
             waited += 1
-        sleep(3)
+        waited = 0
+        while detach.read_exit_code(proc) is None and waited < 30:          # o `cmd` grava DEPOIS de o Python terminar
+            sleep(1)
+            waited += 1
     after = sched.info(run, name)
     exit_doc = _read_json(proc / detach.EXIT)
     audit.append("STOPPED", {"exit": exit_doc})
     parsed = sched.parse_task_xml(state_running.get("xml") or "<Task/>") if state_running.get("found") else {"triggers": None, "tags": []}
-    stats = beat_stats(beats_now, after=first_seen_dead_t, cross=session_end_t)
+    bstats = beat_stats(beats_now, after=first_seen_dead_t, cross=session_end_t)
     monitor = {
         "level": level, "task": launch_doc.get("task"), "xml_sha256": launch_doc.get("xml_sha256"),
-        "registered_verified": "EXPORT_VERIFIED" in by_event, "engine_pids": [i.get("pid") for i in state_running.get("instances", [])],
-        "chain": chain, "schedule_pid": who.get("schedule_pid"), "launcher_pid": launcher_pid, "launcher_alive": launcher_alive,
+        "registered_verified": "EXPORT_VERIFIED" in by_event,
+        "schedule": {k: (final or {}).get("schedule", {}).get(k) if (final or {}).get("schedule") else None for k in ("pid", "name", "session")},
+        "engine": {k: engine.get(k) for k in ("pid", "ppid", "name", "session")} if engine else {},
+        "engine_tree": engine_tree, "heartbeat_pid_in_tree": bool(pid) and pid in engine_tree,
+        "chain": chain, "launcher_pid": launcher_pid, "launcher_alive": launcher_alive,
         "first_seen_launcher_dead_t": first_seen_dead_t, "probe_alive_before_stop": probe_alive_before_stop,
-        "heartbeat_age_s": max(int(clock()) - int(heartbeat.get("t_epoch", 0)), 0) if heartbeat else None, "beats": stats,
+        "heartbeat_age_s": max(int(clock()) - int(heartbeat.get("t_epoch", 0)), 0) if heartbeat else None, "beats": bstats,
         "triggers": parsed.get("triggers"), "restart_on_failure": "RestartOnFailure" in parsed.get("tags", []),
-        "instances_after_second_start": instances_after_second, "exit": exit_doc,
-        "exit_code_txt": detach.read_exit_code(proc), "task_state_after": after.get("state"), "last_result_after": after.get("last_result"),
+        "instances": {"engines_max": stats["engines_max"], "engines_min_while_alive": stats["engines_min_while_alive"],
+                      "distinct_engine_pids": sorted(stats["distinct_engine_pids"]), "samples": stats["samples"],
+                      "sample_errors": stats["sample_errors"], "second_start_attempted": stats["second_start_attempted"],
+                      "dense_samples_after_second_start": stats["dense_samples_after_second_start"],
+                      "start_records": _start_records(proc), "beat_pids": sorted({b.get("pid") for b in beats_now})},
+        "exit": exit_doc, "exit_code_txt": detach.read_exit_code(proc),
+        "task_state_after": after.get("state"), "last_result_after": after.get("last_result"),
         "audit_check": {"ok": trail["ok"], "problems": trail["problems"]},
-        "session_end": ({"t": session_end_t, "crosses": stats.get("crosses"), "gap_at_cross_s": stats.get("gap_at_cross_s")}
+        "session_end": ({"t": session_end_t, "crosses": bstats.get("crosses"), "gap_at_cross_s": bstats.get("gap_at_cross_s")}
                         if session_end_t is not None else None),
     }
     _atomic_json(proc / MONITOR_JSON, monitor)
@@ -455,18 +513,23 @@ def probe_finish(runs_root, name: str, *, level: str, run=None, alive=host.pid_a
         removal = sched.remove_verified(run, name, proc, audit)
     except sched.RemovalNotVerified as error:
         removal, removal_ok = {"error": str(error)}, False
-    orphans = [p for p in sched.find_processes(run, name) if alive(p.get("pid"))]
+    try:
+        found = sched.find_orphans(run, name, alive=alive)
+        orphans, excluded, orphan_count = found["orphans"], found["excluded"], len(found["orphans"])
+    except sched.SchedError:
+        orphans, excluded, orphan_count = [], [], None                      # fail-closed: arvore do inspetor indeterminada
     folder = sched.list_folder(run)
     trail = audit.verify()
     manifest = evidence_manifest(proc)
     (proc / EVIDENCE_MANIFEST).write_bytes(json.dumps(manifest, sort_keys=True).encode("utf-8"))
     evidence_ok = verify_evidence(proc)
     final = {**monitor, "removal_verified": removal_ok and (removal.get("removed") or removal.get("already_absent")),
-             "orphan_processes": len(orphans), "folder_clean": not folder.get("tasks"), "audit_ok": trail["ok"],
+             "orphan_processes": orphan_count, "folder_clean": not folder.get("tasks"), "audit_ok": trail["ok"],
              "evidence_manifest_ok": evidence_ok}
     facts = _read_json(proc / FACTS) or {}
     verdict = judge_detach2(facts, final, level)
-    doc = {"verdict": verdict, "removal": removal, "orphans": orphans, "evidence_files": len(manifest)}
+    doc = {"verdict": verdict, "removal": removal, "orphans": orphans, "inspector_tree_excluded": excluded,
+           "evidence_files": len(manifest)}
     _atomic_json(proc / VERDICT_JSON, doc)
     return doc
 

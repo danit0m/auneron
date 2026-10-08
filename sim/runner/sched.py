@@ -151,7 +151,13 @@ PS_PROCS = (
     "$_.CommandLine.Contains($m) -and $_.Name -in 'python.exe','cmd.exe','pythonw.exe' } | ForEach-Object { [pscustomobject]@{"
     "pid=[int]$_.ProcessId; ppid=[int]$_.ParentProcessId; name=[string]$_.Name} }); ConvertTo-Json -InputObject @($o) -Compress"
 )
-SCRIPTS = (PS_IDENTITY, PS_REGISTER, PS_START, PS_END, PS_UNREGISTER, PS_INFO, PS_LIST, PS_DELETE_FOLDER, PS_CHAIN, PS_PROCS)
+PS_PTABLE = (
+    _PRELUDE + "$ErrorActionPreference='Stop'; $sp=[int]$env:SIM_SCHEDULE_PID; $o=@(Get-CimInstance Win32_Process | "
+    "Where-Object { $_.ProcessId -eq $sp -or $_.Name -in 'cmd.exe','python.exe','pythonw.exe' } | ForEach-Object { "
+    "[pscustomobject]@{pid=[int]$_.ProcessId; ppid=[int]$_.ParentProcessId; name=[string]$_.Name; session=[int]$_.SessionId; "
+    "cmd=[string]$_.CommandLine} }); ConvertTo-Json -InputObject @($o) -Compress"
+)
+SCRIPTS = (PS_IDENTITY, PS_REGISTER, PS_START, PS_END, PS_UNREGISTER, PS_INFO, PS_LIST, PS_DELETE_FOLDER, PS_CHAIN, PS_PROCS, PS_PTABLE)
 
 
 def run_default(cmd, **kwargs):
@@ -424,6 +430,59 @@ def find_processes(run, marker: str) -> list:
     return data if isinstance(data, list) else [data]
 
 
+def process_table(run, schedule_pid: int) -> list:
+    """Tabela de processos (cmd/python + o processo do servico `Schedule`) lida do SO, INDEPENDENTE do heartbeat."""
+    if not isinstance(schedule_pid, int) or isinstance(schedule_pid, bool) or schedule_pid <= 0:
+        raise SchedError(f"PID do servico Schedule invalido: {schedule_pid!r}")
+    data = _json(run, PS_PTABLE, {"SIM_SCHEDULE_PID": str(schedule_pid)})
+    return data if isinstance(data, list) else [data]
+
+
+def descendants(table: list, root_pid: int) -> list:
+    """PIDs descendentes de `root_pid` na tabela (a prova de ciclos)."""
+    found, frontier = [], [root_pid]
+    while frontier:
+        parent = frontier.pop()
+        for p in table:
+            if p.get("ppid") == parent and p["pid"] not in found and p["pid"] != root_pid:
+                found.append(p["pid"])
+                frontier.append(p["pid"])
+    return sorted(found)
+
+
+def task_instances(table: list, schedule_pid: int, proc_marker: str) -> dict:
+    """Instancias da tarefa medidas pela arvore real: `cmd.exe` FILHO do servico `Schedule` cuja linha de comando carrega o
+    diretorio `.proc` da tarefa (marcador unico). -> {schedule: entrada|None, engines: [{..., tree: [pids]}]}."""
+    marker = proc_marker.lower()
+    if len(marker) < 8:
+        raise SchedError("marcador de instancia curto demais")
+    schedule = next((p for p in table if p.get("pid") == schedule_pid), None)
+    engines = []
+    for p in table:
+        if (str(p.get("name", "")).lower() == "cmd.exe" and p.get("ppid") == schedule_pid
+                and marker in str(p.get("cmd") or "").lower()):
+            engines.append({**p, "tree": [p["pid"], *descendants(table, p["pid"])]})
+    return {"schedule": schedule, "engines": engines}
+
+
+def inspector_tree(run, pid: int | None = None) -> set:
+    """PIDs do processo que INSPECIONA (ele mesmo + ancestrais, ex.: launcher do venv). Indeterminavel => `SchedError`."""
+    pid = os.getpid() if pid is None else pid
+    chain = process_chain(run, pid)
+    if not chain or chain[0].get("pid") != pid:
+        raise SchedError(f"nao foi possivel determinar a arvore do processo inspetor (PID {pid})")
+    return {c["pid"] for c in chain}
+
+
+def find_orphans(run, marker: str, *, alive) -> dict:
+    """Processos vivos cuja linha de comando contem `marker`, EXCLUINDO somente a arvore do inspetor (PID + ancestrais).
+    Qualquer outro processo com o marcador continua sendo orfao. Arvore indeterminavel => `SchedError` (fail-closed)."""
+    tree = inspector_tree(run)
+    found = find_processes(run, marker)
+    return {"orphans": [p for p in found if p["pid"] not in tree and alive(p["pid"])],
+            "excluded": [p for p in found if p["pid"] in tree], "inspector_tree": sorted(tree)}
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # trilha de auditoria encadeada por hash e ancorada
 # ---------------------------------------------------------------------------------------------------------------------
@@ -619,8 +678,12 @@ def reconcile(run, *, proc: Path, anchors_dir, name: str, ledger_state: str | No
         findings.append({"code": "ORPHAN_TASK", "detail": "run/sonda encerrado e tarefa ainda registrada"})
     if process_alive and not found:
         findings.append({"code": "ORPHAN_PROCESS", "detail": "processo vivo sem tarefa"})
-    extra = find_processes(run, markers[0]) if markers else []
-    live_extra = [p for p in extra if alive(p.get("pid"))]
+    live_extra = []
+    if markers:
+        try:
+            live_extra = find_orphans(run, markers[0], alive=alive)["orphans"]
+        except SchedError as error:
+            findings.append({"code": "INSPECTOR_TREE_UNDETERMINED", "detail": str(error)[:200]})
     if live_extra and (finished or not found):
         findings.append({"code": "ORPHAN_PROCESS", "detail": f"{len(live_extra)} processo(s) com o marcador do run"})
     if recorded in ("REMOVAL_FAILED",):

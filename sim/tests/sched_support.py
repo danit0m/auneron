@@ -6,6 +6,7 @@ texto do script), mantendo o estado das tarefas. Nenhuma tarefa real e criada; n
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,13 +18,14 @@ COM_LABELS = ("info", "list", "delete_folder")
 CMDLET_LABELS = ("register", "start", "end", "unregister")
 LABELS = {sched.PS_IDENTITY: "identity", sched.PS_REGISTER: "register", sched.PS_START: "start", sched.PS_END: "end",
           sched.PS_UNREGISTER: "unregister", sched.PS_INFO: "info", sched.PS_LIST: "list", sched.PS_DELETE_FOLDER: "delete_folder",
-          sched.PS_CHAIN: "chain", sched.PS_PROCS: "procs"}
+          sched.PS_CHAIN: "chain", sched.PS_PROCS: "procs", sched.PS_PTABLE: "ptable"}
 
 
 class FakeHost:
     def __init__(self, runs_root, *, user="PC-X\\tomaz", sid="S-1-5-21-1-1000", admin=False, integrity=0x2000,
                  schedule="Running", reboot=False, export=None, fail_unregister=False, keep_after_unregister=False, heartbeat=True,
-                 engine_pid=900, probe_pid=901, session=1, schedule_pid=555, chain=None, procs=None, hook=None):
+                 engine_pid=900, probe_pid=901, launcher_pid=902, session=1, schedule_pid=555, chain=None, procs=None, hook=None,
+                 inspector_chain=None, engine_parent=None, table_extra=None, ptable_errors=(), table_probe_pid=None, end_leaves_running=False):
         self.runs_root, self.user, self.sid = Path(runs_root), user, sid
         self.who = {"user": user, "sid": sid, "admin_role": admin, "integrity_rid": integrity, "schedule_state": schedule,
                     "schedule_pid": schedule_pid, "session": session, "reboot_pending": reboot}
@@ -33,6 +35,15 @@ class FakeHost:
         self.chain = chain if chain is not None else [{"pid": probe_pid, "ppid": engine_pid, "name": "python.exe", "session": session, "cmd": "x"},
                                                       {"pid": engine_pid, "ppid": schedule_pid, "name": "cmd.exe", "session": session, "cmd": "y"}]
         self.procs, self.hook = procs or [], hook
+        self.launcher_pid, self.engine_parent = launcher_pid, engine_parent
+        self.end_leaves_running = end_leaves_running
+        self.table_probe_pid = table_probe_pid if table_probe_pid is not None else probe_pid
+        # processo que INSPECIONA (esta suite): ele mesmo + o launcher do venv (ancestral)
+        self.inspector_chain = inspector_chain if inspector_chain is not None else [
+            {"pid": os.getpid(), "ppid": 7001, "name": "python.exe", "session": session, "cmd": "pytest"},
+            {"pid": 7001, "ppid": 1, "name": "python.exe", "session": session, "cmd": "venv launcher"}]
+        self.table_extra = table_extra or {}                              # n-esima chamada de `ptable` -> entradas extras (transitorias)
+        self.ptable_errors, self.ptable_calls = set(ptable_errors), 0
         self.third_party = {THIRD_PARTY: {"state": 3}}                      # no raiz; nunca deve ser tocada
 
     # -- utilidades --------------------------------------------------------------------------------------------
@@ -98,7 +109,7 @@ class FakeHost:
         task = self.tasks[name]
         if task["state"] == sched.STATE_RUNNING:
             return self._ok()                                              # IgnoreNew
-        task["state"], task["instances"] = sched.STATE_RUNNING, [{"pid": self.engine_pid, "state": 4}]
+        task["state"], task["instances"] = sched.STATE_RUNNING, []                  # como no host real: instancias COM vazias
         self.alive_pids |= {self.engine_pid, self.probe_pid}
         if self.heartbeat:
             proc = self.proc_of(name)
@@ -107,6 +118,8 @@ class FakeHost:
         return self._ok()
 
     def do_end(self, name, env):
+        if self.end_leaves_running:                                       # Stop-ScheduledTask "ok", mas a arvore continua
+            return self._ok()
         task = self.tasks[name]
         task["state"], task["instances"], task["last"] = sched.STATE_READY, [], 1
         self.alive_pids -= {self.engine_pid, self.probe_pid}
@@ -131,7 +144,25 @@ class FakeHost:
         return self._ok()
 
     def do_chain(self, name, env):
-        return self._json(self.chain)
+        return self._json(self.inspector_chain if int(env["SIM_PID"]) == os.getpid() else self.chain)
+
+    def do_ptable(self, name, env):
+        self.ptable_calls += 1
+        if self.ptable_calls in self.ptable_errors:
+            return self._ok("", 1, "Get-CimInstance falhou")
+        schedule_pid = int(env["SIM_SCHEDULE_PID"])
+        table = [{"pid": schedule_pid, "ppid": 1, "name": "svchost.exe", "session": 0, "cmd": ""},
+                 {"pid": 4242, "ppid": 1, "name": "python.exe", "session": 1, "cmd": "python outro.py"}]
+        for task_name, task in sorted(self.tasks.items()):
+            if task["state"] != sched.STATE_RUNNING:
+                continue
+            table += [{"pid": self.engine_pid, "ppid": self.engine_parent if self.engine_parent is not None else schedule_pid,
+                       "name": "cmd.exe", "session": self.who["session"],
+                       "cmd": f'cmd.exe /d /v:on /s /c ""py" -m x --proc-dir "{self.proc_of(task_name)}" 1>>"o"'},
+                      {"pid": self.launcher_pid, "ppid": self.engine_pid, "name": "python.exe", "session": self.who["session"], "cmd": "venv"},
+                      {"pid": self.table_probe_pid, "ppid": self.launcher_pid, "name": "python.exe", "session": self.who["session"], "cmd": "base"}]
+        table += self.table_extra.get(self.ptable_calls, [])
+        return self._json(table)
 
     def do_procs(self, name, env):
         return self._json(self.procs)

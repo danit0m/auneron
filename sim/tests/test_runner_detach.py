@@ -73,7 +73,7 @@ def test_launch_uses_wmi_with_the_command_line_in_the_environment_and_records_ev
 
 def test_command_line_redirects_logs_and_records_the_exit_code(tmp_path):
     line = detach.build_cmdline("C:\\py\\python.exe", "run --run-id X", tmp_path)
-    assert line.startswith("cmd.exe /d /s /c ") and "stdout.log" in line and "stderr.log" in line and "exit_code.txt" in line
+    assert line.startswith("cmd.exe /d /v:on /s /c ") and "stdout.log" in line and "stderr.log" in line and "exit_code.txt" in line
     assert "-m sim.runner.cli run --run-id X" in line
 
 
