@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from datetime import datetime
 from datetime import timezone
@@ -82,6 +83,39 @@ def dr1_probe(lab, forbidden: list, *, with_controls: bool) -> dict:
             findings[container] += driver_lab.judge_probe(run(container))
     clean = all(not v for v in findings.values()) and controls_ok
     return {"clean": clean, "findings": findings, "controls_fired": controls_ok if with_controls else None}
+
+
+def parse_du(output: str) -> int:
+    """`du -sk` => bytes. Saida invalida => erro (nunca zero)."""
+    fields = output.split()
+    if not fields or not fields[0].isdigit():
+        raise RunnerError(f"saida de du invalida: {output[:60]!r}")
+    return int(fields[0]) * 1024
+
+
+def vhdx_path() -> Path:
+    override = os.environ.get("AUNERON_DOCKER_VHDX")
+    if override:
+        return Path(override)
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        raise RunnerError("LOCALAPPDATA ausente: nao ha como localizar o VHDX do Docker")
+    return Path(base) / "Docker" / "wsl" / "disk" / "docker_data.vhdx"
+
+
+def vhdx_bytes() -> int:
+    path = vhdx_path()
+    if not path.is_file():
+        raise RunnerError(f"VHDX do Docker nao encontrado: {path}")
+    return path.stat().st_size
+
+
+def directory_bytes(root: Path) -> int:
+    return sum(p.stat().st_size for p in Path(root).rglob("*") if p.is_file())
+
+
+TOP_RELATIONS_SQL = ("select c.relname, pg_total_relation_size(c.oid) from pg_class c join pg_namespace n on n.oid = c.relnamespace "
+                     "where n.nspname = 'public' and c.relkind = 'r' order by 2 desc limit 10")
 
 
 def lab_ports(lab, run_dir, *, hooks_state: dict, forbidden_hashes: list, oracle: dict, inputs_dir: Path,
@@ -169,6 +203,18 @@ def lab_ports(lab, run_dir, *, hooks_state: dict, forbidden_hashes: list, oracle
         verdict = harness_side.verify_authority_offline(target, oracle)
         return {"violations": verdict["violations"]}
 
+    def growth() -> dict:
+        db = int(sqlro.query(lab.runner, lab.config, "select pg_database_size(current_database())")[0][0])
+        top = sqlro.query(lab.runner, lab.config, TOP_RELATIONS_SQL)
+        state = {}
+        for short, container in (("driver", E.DRIVER), ("collector", E.COLLECTOR)):
+            res = E.dexec(lab, container, "du", "-sk", STATE)
+            if res.code != 0:
+                raise RunnerError(f"du falhou em {container}")
+            state[short] = parse_du(res.out)
+        return {"db_bytes": db, "vhdx_bytes": vhdx_bytes(), "state_bytes": state, "evidence_bytes": directory_bytes(run_dir),
+                "top_relations": [[row[0], int(row[1])] for row in top]}
+
     return Ports(
         new_driver_lines=new_driver_lines, new_collector_lines=new_collector_lines, driver_status=driver_status,
         db_counts=db_counts, containers=lambda: inspect_containers(lab), run_id_files=run_id_files,
@@ -177,4 +223,4 @@ def lab_ports(lab, run_dir, *, hooks_state: dict, forbidden_hashes: list, oracle
         virtual_now=lambda: lab.clock.expected_now().isoformat(timespec="seconds"), real_now=_utc_now,
         log_slice=log_slice,
         probe=lambda day, when: dr1_probe(lab, forbidden_hashes, with_controls=True),
-        preserve=preserve, finalize_extra=finalize_extra)
+        preserve=preserve, finalize_extra=finalize_extra, growth=growth)

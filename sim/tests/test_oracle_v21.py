@@ -250,6 +250,7 @@ ALLOWED = [
     r"^sim/oracle/artifacts/nh-small-v2-s340001-oracle-v2\.1/(oracle|manifest_v2_1)\.json$",
     r"^sim/oracle/artifacts/nh-small-v2-s340001-oracle-v2\.2/(oracle|manifest_v2_2)\.json$",      # SIM-1.5E (DV15E-1)
     r"^sim/runner/[^/]+$",                                                                         # SIM-1.5E: plano de controle
+    r"^sim/rehearsal/(profiles/)?[^/]+$",                                                          # SIM-1.5F: fixture do SR-1
     r"^sim/stack/(docker-compose\.sim\.driver\.yml|driver\.Dockerfile|collector\.Dockerfile|DRIVER_LAB\.md)$",
     r"^sim/stack/lab/(driver_lab|run_orchestrator)\.py$",
     r"^sim/live/(container/)?[^/]+$",                  # SIM-1.5A: harness live versionado
@@ -297,6 +298,7 @@ def test_candidate_text_files_are_lf_without_trailing_whitespace():
               SIM_ROOT / "tests" / "sim14_frozen_hashes.json"]
     files += [p for p in (SIM_ROOT / "tests").glob("*.py")]
     files += [p for p in (SIM_ROOT / "runner").glob("*.py")] + [SIM_ROOT / "oracle" / "v2_2.py"]
+    files += [p for p in (SIM_ROOT / "rehearsal").glob("*.py")]
     for path in files:
         data = path.read_bytes()
         if not data:                      # __init__.py vazio preexistente

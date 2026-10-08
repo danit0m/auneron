@@ -24,6 +24,7 @@ from sim.runner import harness_side
 from sim.runner import interlock
 from sim.runner import lab_ports
 from sim.runner import package
+from sim.runner import results as results_mod
 from sim.runner import runner as runner_mod
 from sim.runner.declare import GIB
 from sim.runner.live import IncrementalChain
@@ -36,11 +37,20 @@ from sim.stack.lab.run_orchestrator import Hooks
 from sim.tests.collector_support import make_collector
 from sim.tests.driver_support import make_driver
 from sim.tests.fake_product import FakeProduct
+from sim.generator.canonical import canonical_bytes
+from sim.generator.canonical import sha256_bytes
+from sim.runner import rim as rim_mod
+from sim.tests.runner_support import declared
+from sim.tests.runner_support import observed
+from sim.tests.runner_support import good_growth
 from sim.tests.runner_support import good_preflight_facts
 from sim.tests.runner_support import make_rim
 from sim.tests.test_live_harness import OBSERVER_EMAIL
 
 DAY = S.DAYS["c0"]
+GOOD_PROVENANCE = {"provenance_exit": 0, "provenance_report": {"observations": {"observed_fact_with_provenance": 0,
+                                                                                  "observed_fact_legacy_without_provenance": 0},
+                                                               "integrity_failures": 0}}
 
 
 def build_world(tmp_path, *, tamper=None):
@@ -84,7 +94,8 @@ def fake_ports(w, run, **over) -> Ports:
         last_barrier=lambda: {"total_s": 175.5, "time_floor_satisfied": True, "stable_after_attempts": 1},
         skew_ms=lambda: 20, o1_ms=lambda: 30, free_bytes=lambda: 50 * GIB, virtual_now=lambda: "v", real_now=lambda: "r",
         log_slice=lambda service: f"{service} log".encode(), probe=lambda day, when: {"clean": True},
-        preserve=lambda cls, target: {"ok": True}, finalize_extra=lambda target: finalize_extra(w, target))
+        preserve=lambda cls, target: {"ok": True}, finalize_extra=lambda target: finalize_extra(w, target),
+        growth=lambda: {k: v for k, v in good_growth().items() if k != "log_bytes"})
     values.update(over)
     return Ports(**values)
 
@@ -92,12 +103,22 @@ def fake_ports(w, run, **over) -> Ports:
 def finalize_extra(w, target):
     (target / "harness").mkdir(exist_ok=True)
     (target / "harness" / "refs.json").write_text(json.dumps({"refs": w.store.all_refs(), "due_days": w.store.all_due()}))
-    (target / "harness" / "facts.json").write_text("{}")
+    (target / "harness" / "facts.json").write_text(json.dumps(GOOD_PROVENANCE))
+    (target / "inputs").mkdir(exist_ok=True)
+    (target / "inputs" / "oracle.json").write_bytes(canonical_bytes(w.oracle))
+    (target / "inputs" / "collection_plan.json").write_bytes(canonical_bytes(w.plan))
+    (target / "inputs" / "preregistration.json").write_bytes(canonical_bytes(harness_side.preregistration(w.oracle)))
     return {"violations": harness_side.verify_authority_offline(target, w.oracle)["violations"]}
 
 
-def start(tmp_path, w, **port_over):
-    rim = make_rim("REHEARSAL", last_day=DAY + 1, floor_day=DAY + 1, restart_day=DAY + 1)
+def start(tmp_path, w, balance_mode="enforce", timeline=None, overrides=None, **port_over):
+    last_day, floor_day, restart_day = timeline or (DAY + 1, DAY + 1, DAY + 1)
+    d = declared(last_day=last_day, floor_day=floor_day, restart_day=restart_day, balance_mode=balance_mode)
+    d["oracle_sha256"] = sha256_bytes(canonical_bytes(w.oracle))
+    d["plan_sha256"] = sha256_bytes(canonical_bytes(w.plan))
+    d["preregistration_sha256"] = sha256_bytes(canonical_bytes(harness_side.preregistration(w.oracle)))
+    d.update(overrides or {})
+    rim = rim_mod.build_rim("REHEARSAL", d, observed(d))
     registry = Registry(tmp_path / "runs")
     info, ledger = runner_mod.open_new_run(registry, rim, purpose="FIRST")
     runner_mod.run_preflight(ledger, registry, rim, good_preflight_facts(rim), projected_growth_bytes=GIB)
@@ -131,13 +152,15 @@ def test_end_to_end_run_with_real_driver_collector_orchestrator_completes_and_ev
     # avaliacao OFFLINE sobre o pacote: Evaluator real, sem HARNESS_ERROR; claim gerada do estado
     work = run.run_dir
     (work / "inputs").mkdir(exist_ok=True)
-    evaluation = harness_side.evaluate_run(run.run_dir, w.oracle, w.plan, registry=run.registry)
+    report = harness_side.evaluate_package(run.run_dir, registry=run.registry)
+    evaluation = report["evaluation"]
     assert evaluation["run_valid"] is True and evaluation["summary"].get("HARNESS_ERROR", 0) == 0
     ledger = RunLedger(run.run_dir)
     assert ledger.state == "COMPLETED" and "EVALUATED" in ledger.replay.seen
     claim = json.loads((run.run_dir / "claim.json").read_bytes())
     assert claim["level"] == "TECHNICAL_REHEARSAL"                          # ensaio: sem claim de negocio
-    assert package.verify(run.run_dir)["ok"]                                  # evaluation/claim sao pos-run: o selo continua valido
+    assert package.verify(run.run_dir)["ok"]                                  # o selo original continua valido
+    assert results_mod.verify_results(run.run_dir)["ok"]                      # e os resultados tem digest final vinculado ao ledger
     direct = evaluate(w.oracle, w.plan, ChainLog.read(w.chain.path), [json.loads(l) for l in w.evidence_path.read_text().splitlines()],
                       {"refs": w.store.all_refs(), "due_days": w.store.all_due()}, {})
     assert direct["summary"] == evaluation["summary"]

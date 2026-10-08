@@ -73,6 +73,7 @@ class Ports:
     probe: Callable[[int, str], dict]
     preserve: Callable[[str, Path], dict]
     finalize_extra: Callable[[Path], dict]               # copia /state, proveniencia, DR-1 final... -> {"violations": [...]}
+    growth: Callable[[], dict]                           # banco, VHDX, estado, evidencia, logs, maiores relacoes
 
 
 @dataclass
@@ -87,6 +88,7 @@ class LiveServices:
     expected_containers: dict                             # nome -> started_at esperado (backend muda depois do restart)
     expected_networks: dict
     barrier_hard_ms: int
+    kind: str = "REHEARSAL"
     tripwire: authority.AuthorityTripwire = field(default_factory=authority.AuthorityTripwire)
     driver_chain: IncrementalChain = field(default_factory=IncrementalChain)
     collector_chain: IncrementalChain = field(default_factory=IncrementalChain)
@@ -162,6 +164,7 @@ class LiveServices:
             "balance": self._balance(day),
             "infra": infra,
             "disk": {"free_bytes": ports.free_bytes()},
+            "growth": {**ports.growth(), "log_bytes": {s["service"]: s["bytes"] for s in logs}},
             "authority": {"status_lines": len(status_rows), "chain_lines": len(chain_rows), "tripwire": tripwire},
             "logs": logs,
         }
@@ -241,8 +244,14 @@ class LiveServices:
 
     # -- demais servicos -----------------------------------------------------------------------------------------------------------
     def finalize(self) -> dict:
+        from sim.runner import harness_side
+
         extra = self.ports.finalize_extra(self.run_dir)
-        return {"violations": list(extra.get("violations", [])), **{k: v for k, v in extra.items() if k != "violations"}}
+        violations = list(extra.get("violations", []))
+        contaminated = harness_side.contamination_problems(self.run_dir, self.kind)
+        if contaminated:
+            violations.append({"class": "FIXTURE_CONTAMINATION", "detail": "; ".join(contaminated[:3])})
+        return {"violations": violations, **{k: v for k, v in extra.items() if k != "violations"}}
 
     def preserve(self, failure_class: str) -> dict:
         return self.ports.preserve(failure_class, self.run_dir)

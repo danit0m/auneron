@@ -17,6 +17,7 @@ from sim.runner.errors import RimError
 
 RIM_SCHEMA = "sim.run.rim.v1"
 KINDS = ("RUN", "REHEARSAL")
+BALANCE_MODES = ("enforce", "report")
 RUN_ID_RE = re.compile(r"^RUN-([0-9a-f]{12})-A([0-9]{2})$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 RECOVERY_POLICY = "R0"
@@ -38,7 +39,8 @@ DECLARED_SCHEMA = {
     "base_image_digest": _STR,
     "lab_image_ids": {"base": _STR, "backend": _STR, "postgres": _STR},
     "compose_sha256": {"base": _SHA, "override": _SHA},
-    "params": {"quiescence_sha256": _SHA, "driver_params_sha256": _SHA, "o1_limit_ms": _INT, "clock_skew_limit_ms": _INT},
+    "params": {"quiescence_sha256": _SHA, "driver_params_sha256": _SHA, "o1_limit_ms": _INT, "clock_skew_limit_ms": _INT,
+               "balance_mode": _STR},
     "plan_sha256": _SHA, "preregistration_sha256": _SHA, "authority_invariants_sha256": _SHA,
     "timeline": {"d0": _STR, "utc_offset_minutes": _INT, "floor_day": _INT, "restart_day": _INT, "last_day": _INT},
     "disk_policy": {"preflight_min_bytes": _INT, "warn_bytes": _INT, "abort_bytes": _INT, "reserve_bytes": _INT,
@@ -106,6 +108,11 @@ def validate_rim(rim: dict) -> None:
         raise RimError("RIM: floor_day/restart_day fora de 0..last_day")
     if rim["kind"] == "RUN" and declared["growth_model_sha256"] is None:
         raise RimError("RIM: um RUN exige modelo de crescimento medido (growth_model_sha256) -- rode o ensaio antes")
+    mode = declared["params"]["balance_mode"]
+    if mode not in BALANCE_MODES:
+        raise RimError(f"RIM: balance_mode invalido: {mode!r}")
+    if rim["kind"] == "RUN" and mode != "enforce":
+        raise RimError("RIM: um RUN exige balance_mode = enforce (report e exclusivo de REHEARSAL)")
     limits = declared["disk_policy"]
     if not 0 < limits["abort_bytes"] <= limits["warn_bytes"] <= limits["preflight_min_bytes"]:
         raise RimError("RIM: limiares de disco devem satisfazer 0 < abort <= warn <= preflight_min")

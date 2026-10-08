@@ -60,6 +60,33 @@ def judge_preflight(free_bytes, policy: dict, projected_growth_bytes: int | None
     return DiskVerdict(OK, free_bytes, required, ())
 
 
+MIN_PROJECTION_POINTS = 3
+
+
+def project_free_at_end(free_history: list, remaining_days: int, growth_per_day_bytes: int | None = None) -> int | None:
+    """Espaco livre PROJETADO no fim do run: livre atual - dias restantes x max(queda media observada, crescimento do modelo).
+    Menos de 3 pontos e sem modelo => sem projecao (None): so vale o piso absoluto."""
+    if not free_history or any((not isinstance(v, int)) or isinstance(v, bool) or v < 0 for v in free_history):
+        raise DiskGuardError("historico de espaco livre invalido")
+    observed = 0
+    if len(free_history) >= MIN_PROJECTION_POINTS:
+        observed = max((free_history[0] - free_history[-1]) // (len(free_history) - 1), 0)
+    per_day = max(observed, growth_per_day_bytes or 0)
+    if len(free_history) < MIN_PROJECTION_POINTS and not growth_per_day_bytes:
+        return None
+    return free_history[-1] - per_day * max(remaining_days, 0)
+
+
+def judge_projection(projected_free_bytes: int | None, policy: dict) -> DiskVerdict:
+    """Projecao abaixo da RESERVA OPERACIONAL => parada controlada com preservacao (antes de faltar disco)."""
+    if projected_free_bytes is None:
+        return DiskVerdict(OK, None, policy["reserve_bytes"], ())
+    if projected_free_bytes < policy["reserve_bytes"]:
+        return DiskVerdict(ABORT, projected_free_bytes, policy["reserve_bytes"],
+                           (f"livre projetado no fim {projected_free_bytes} < reserva operacional {policy['reserve_bytes']}",))
+    return DiskVerdict(OK, projected_free_bytes, policy["reserve_bytes"], ())
+
+
 def judge_day(free_bytes, policy: dict) -> DiskVerdict:
     if not isinstance(free_bytes, int) or isinstance(free_bytes, bool) or free_bytes < 0:
         return DiskVerdict(ABORT, None, None, ("medida de espaco livre ausente ou invalida",))

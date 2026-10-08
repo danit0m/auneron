@@ -10,9 +10,11 @@ CLAIM_SCHEMA = "sim.run.claim.v1"
 
 
 def claim_for(*, kind: str, state: str | None, run_id: str, oracle_version: str, evaluated: bool, partial: bool = False,
-              invalidated_post_hoc: bool = False) -> dict:
+              invalidated_post_hoc: bool = False, balance_divergences: int = 0) -> dict:
     if kind == "REHEARSAL":
         text = "TECHNICAL REHEARSAL of the run mechanism over [SIM-HARNESS] fixtures. No business claim."
+        if balance_divergences:
+            text += f" Recorded mass-balance divergences: {balance_divergences} (never silently accepted)."
         level = "TECHNICAL_REHEARSAL"
     elif state in ("ABORTED", "INVALID") or invalidated_post_hoc or state is None:
         text = "NO CLAIM: this run is not valid evidence."
@@ -29,4 +31,5 @@ def claim_for(*, kind: str, state: str | None, run_id: str, oracle_version: str,
         level = "SIMULATION_RESULT"
     if FORBIDDEN_PHRASE in text:
         raise AssertionError("a claim gerada nao pode conter a expressao de verificacao")
-    return {"schema": CLAIM_SCHEMA, "run_id": run_id, "kind": kind, "level": level, "partial": bool(partial), "text": text}
+    return {"schema": CLAIM_SCHEMA, "run_id": run_id, "kind": kind, "level": level, "partial": bool(partial),
+            "balance_divergences": int(balance_divergences), "text": text}

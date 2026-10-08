@@ -20,7 +20,7 @@ def sha(char: str = "a") -> str:
     return (char * 64)[:64]
 
 
-def declared(last_day: int = 3, floor_day: int = 1, restart_day: int = 2, growth=None) -> dict:
+def declared(last_day: int = 3, floor_day: int = 1, restart_day: int = 2, growth=None, balance_mode: str = "enforce") -> dict:
     trees = {k: "t" + k for k in ("backend", "frontend", "sim_driver", "sim_collector", "sim_evaluator", "sim_oracle",
                                   "sim_live", "sim_runner", "sim_stack")}
     return {
@@ -31,7 +31,7 @@ def declared(last_day: int = 3, floor_day: int = 1, restart_day: int = 2, growth
         "lab_image_ids": {"base": "sha256:" + "1" * 64, "backend": "sha256:" + "2" * 64, "postgres": "sha256:" + "3" * 64},
         "compose_sha256": {"base": sha("8"), "override": sha("9")},
         "params": {"quiescence_sha256": sha("a"), "driver_params_sha256": sha("b"), "o1_limit_ms": 1000,
-                   "clock_skew_limit_ms": 3000},
+                   "clock_skew_limit_ms": 3000, "balance_mode": balance_mode},
         "plan_sha256": sha("c"), "preregistration_sha256": sha("d"), "authority_invariants_sha256": sha("e"),
         "timeline": {"d0": "2026-01-05", "utc_offset_minutes": -180, "floor_day": floor_day, "restart_day": restart_day,
                      "last_day": last_day},
@@ -76,7 +76,14 @@ def good_preflight_facts(rim: dict) -> dict:
                 "plan_sha256": d["plan_sha256"], "dr1_clean": True},
         "P12": {"run_id_file_ok": True, "ledger_opened": True, "free_bytes": 100 * GIB},
         "P13": {"awake_acquired": True, "foreign_docker_activity": 0, "dev_untouched": True},
+        "P14": {"volumes_created_after_previous_terminal": True, "driver_state_present": False, "collector_state_present": False,
+                "business_rows": 0, "marker_rows": 0, "previous_runs_non_terminal": False},
     }
+
+
+def good_growth(db: int = 100_000_000, vhdx: int = 10 * GIB) -> dict:
+    return {"db_bytes": db, "vhdx_bytes": vhdx, "state_bytes": {"driver": 1_000_000, "collector": 2_000_000},
+            "evidence_bytes": 3_000_000, "log_bytes": {"backend": 1_000, "driver": 100}, "top_relations": [["accounts", 4096]]}
 
 
 def good_day_facts(ops_through_day: int = 0, **over) -> dict:
@@ -88,6 +95,7 @@ def good_day_facts(ops_through_day: int = 0, **over) -> dict:
         "balance": {"accounts": [0, 0]},
         "infra": {"containers_ok": True, "unexpected_restarts": [], "topology_ok": True, "run_id_ok": True},
         "disk": {"free_bytes": 50 * GIB},
+        "growth": good_growth(),
         "authority": {"status_lines": 0, "chain_lines": 0, "tripwire": []},
         "logs": [],
     }

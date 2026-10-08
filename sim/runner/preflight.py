@@ -6,6 +6,7 @@ Preflight NAO muta o negocio e nao avanca o relogio de negocio.
 
 from __future__ import annotations
 
+from sim.rehearsal import contamination
 from sim.runner import disk as disk_mod
 
 BUSINESS_ZERO = "business_rows"
@@ -25,6 +26,8 @@ REQUIRED = {
     "P11": ("agenda_sha256", "manifest_sha256", "plan_sha256", "dr1_clean"),
     "P12": ("run_id_file_ok", "ledger_opened", "free_bytes"),
     "P13": ("awake_acquired", "foreign_docker_activity", "dev_untouched"),
+    "P14": ("volumes_created_after_previous_terminal", "driver_state_present", "collector_state_present", "business_rows",
+            "marker_rows", "previous_runs_non_terminal"),
 }
 NETWORKS_BACKEND = frozenset({"auneron_sim_driver", "auneron_sim_internal"})
 NETWORKS_DRIVER = frozenset({"auneron_sim_driver"})
@@ -105,4 +108,6 @@ def judge_preflight(facts: dict, rim: dict, *, projected_growth_bytes: int | Non
     p = facts["P13"]
     if p["awake_acquired"] is not True or p["foreign_docker_activity"] != 0 or p["dev_untouched"] is not True:
         fail("P13", f"maquina/docker/DEV: {p}")
+    for detail in contamination.judge_p14(facts["P14"]):
+        fail("P14", detail)
     return fails

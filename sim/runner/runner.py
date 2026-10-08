@@ -72,6 +72,7 @@ class RunServices:
     probe: Callable[[int, str], dict]                 # -> {"clean": bool, ...} (DR-1)
     orchestrator_factory: Callable | None = None
     awake: Callable[[], bool] | None = None
+    growth_per_day_bytes: int | None = None           # modelo de crescimento validado (RUN); None no ensaio
 
 
 def classify_exception(exc: BaseException, hook: str | None) -> str:
@@ -160,6 +161,9 @@ class NhRunner:
     current_day: int | None = None
     current_hook: str | None = None
     timeline: list = field(default_factory=list)
+    free_history: list = field(default_factory=list)
+    divergence_days: list = field(default_factory=list)
+    status: dict = field(default_factory=dict)
 
     # -- propriedades derivadas do RIM -------------------------------------------------------------------------------
     @property
@@ -187,6 +191,7 @@ class NhRunner:
             if name == "clock_set" and args and args[0] != self.current_day:
                 raise DayGuardError(f"clock_set(dia {args[0]}) fora do dia corrente {self.current_day}")
             self.current_hook = name
+            self.status.update({"hook": name, "day": self.current_day})
             started = time.monotonic()
             result = fn(*args, **kwargs)
             self.timeline.append({"day": self.current_day, "hook": name, "ms": int((time.monotonic() - started) * 1000)})
@@ -237,6 +242,7 @@ class NhRunner:
             for day in range(0, last + 1):
                 self._check_stop()
                 self.current_day = day
+                self.status.update({"day": day, "hook": None, "seq": self.ledger.tail["seq"]})
                 self.ledger.append("DAY_STARTED", {"day": day})
                 orchestrator.run(first_day=day, last_day=day)
                 if day in probe_after:
@@ -263,25 +269,36 @@ class NhRunner:
             facts["time"]["real_open"] = started["t_real"]
             facts["time"]["real_close"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.clock()))
         d = self.decl
-        violations, warnings = daily.judge_day(facts, disk_policy=d["disk_policy"],
-                                               clock_skew_limit_ms=d["params"]["clock_skew_limit_ms"],
-                                               o1_limit_ms=d["params"]["o1_limit_ms"])
+        violations, warnings, divergences = daily.judge_day(
+            facts, disk_policy=d["disk_policy"], clock_skew_limit_ms=d["params"]["clock_skew_limit_ms"],
+            o1_limit_ms=d["params"]["o1_limit_ms"], balance_mode=d["params"]["balance_mode"], free_history=self.free_history,
+            remaining_days=d["timeline"]["last_day"] - day, growth_per_day_bytes=self.services.growth_per_day_bytes)
         days_dir = self.run_dir / "days"
         days_dir.mkdir(exist_ok=True)
         prev = daily.GENESIS
         if day > 0:
             prev = json.loads((days_dir / f"D{day - 1:03d}.json").read_bytes().decode("utf-8"))["hash"]
-        record = daily.build_day_record(run_id=self.run_id, day=day, facts=facts, prev_hash=prev, violations=violations,
-                                        warnings=warnings)
+        try:
+            record = daily.build_day_record(run_id=self.run_id, day=day, facts=facts, prev_hash=prev, violations=violations,
+                                            warnings=warnings, divergences=divergences)
+        except TypeError as error:                                    # fato nao serializavel (ex.: float): falha do instrumento
+            violations = violations + [{"class": "HARNESS_ERROR", "detail": f"fatos do dia nao serializaveis: {error}"}]
+            record = daily.build_day_record(run_id=self.run_id, day=day, facts={"unserializable": str(error)}, prev_hash=prev,
+                                            violations=violations, warnings=warnings, divergences=divergences)
         (days_dir / f"D{day:03d}.json").write_bytes(canonical_bytes(record))
         if violations:
             raise DayViolation(violations)
         for warning in warnings:
-            self.ledger.append("DISK_WARNING", {"day": day, "warning": warning})
+            if warning.startswith("DISK_WARNING"):
+                self.ledger.append("DISK_WARNING", {"day": day, "warning": warning})
+        if divergences:
+            self.divergence_days.append(day)
+            self.ledger.append("BALANCE_DIVERGENCE", {"day": day, "divergences": divergences})
+        self.free_history.append(facts["disk"]["free_bytes"])
         self.ledger.append("DAY_CLOSED", {"day": day, "hash": record["hash"]})
 
     def _finalize(self) -> dict:
-        self.ledger.append("RUN_FINALIZING", {})
+        self.ledger.append("RUN_FINALIZING", {"balance_divergence_days": list(self.divergence_days)})
         outcome = self.services.finalize()
         if outcome.get("violations"):
             raise DayViolation(outcome["violations"])
@@ -292,7 +309,8 @@ class NhRunner:
             raise DayViolation([{"class": "PACKAGE_VERIFY_FAILED", "detail": "; ".join(verdict["problems"])}])
         self.ledger.append("COMPLETED", {"digest": digest})
         self.registry.record_terminal(self.run_id, COMPLETED, None, self.ledger.tail, digest)
-        return {"state": COMPLETED, "digest": digest, "run_id": self.run_id}
+        return {"state": COMPLETED, "digest": digest, "run_id": self.run_id,
+                "balance_divergence_days": list(self.divergence_days)}
 
     # -- terminais ------------------------------------------------------------------------------------------------------------
     def _terminate(self, classes: list, detail: dict) -> dict:

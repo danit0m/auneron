@@ -23,7 +23,8 @@ MANIFEST_NAME = "package_manifest.json"
 DIGEST_NAME = "evidence_digest.txt"
 PACKAGE_SCHEMA = "sim.run.package.v1"
 EXCLUDED = frozenset({MANIFEST_NAME, DIGEST_NAME, ledger_mod.LEDGER_NAME, ledger_mod.ANCHOR_NAME, "claim.json",
-                      "evaluation.json", "RUN.LOCK"})
+                      "evaluation.json", "surprises.json", "results_manifest.json", "results_digest.txt", "growth_model.json",
+                      "RUN.LOCK"})
 REQUIRED_PATHS = ("run_id.json", "rim.json")
 
 

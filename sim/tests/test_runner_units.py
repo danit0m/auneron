@@ -168,15 +168,15 @@ def test_offline_adjudication_recovers_protocol_noise_matches_expected_and_flags
 
 # ------------------------------------------------------------------------------------------------------- registro diario
 def test_daily_judge_accepts_good_facts_and_reports_every_class_of_failure_together():
-    assert daily.judge_day(good_day_facts(), disk_policy=POLICY, clock_skew_limit_ms=3000, o1_limit_ms=1000) == ([], [])
+    assert daily.judge_day(good_day_facts(), disk_policy=POLICY, clock_skew_limit_ms=3000, o1_limit_ms=1000) == ([], [], [])
     facts = good_day_facts(time__o1_ms=2000, disk__free_bytes=5 * GIB, infra__topology_ok=False)
-    violations, _ = daily.judge_day(facts, disk_policy=POLICY, clock_skew_limit_ms=3000, o1_limit_ms=1000)
+    violations, _, _ = daily.judge_day(facts, disk_policy=POLICY, clock_skew_limit_ms=3000, o1_limit_ms=1000)
     assert {v["class"] for v in violations} == {"O1_THRESHOLD_REVIEW_REQUIRED", "DISK_LOW", "TOPOLOGY_VIOLATION"}
 
 
 def test_daily_judge_treats_a_barrier_without_evidence_as_a_failure():
     facts = good_day_facts(time__barrier_total_ms=None, time__barrier_events_ok=None)
-    violations, _ = daily.judge_day(facts, disk_policy=POLICY, clock_skew_limit_ms=3000, o1_limit_ms=1000)
+    violations, _, _ = daily.judge_day(facts, disk_policy=POLICY, clock_skew_limit_ms=3000, o1_limit_ms=1000)
     assert [v["class"] for v in violations] == ["BARRIER_FAILURE"]
 
 
@@ -316,6 +316,7 @@ def test_preregistration_and_expected_statuses_come_from_the_real_v22_oracle():
     oracle = json.loads((SIM_ROOT / "oracle" / "artifacts" / "nh-small-v2-s340001-oracle-v2.2" / "oracle.json").read_text(encoding="utf-8"))
     prereg = harness_side.preregistration(oracle)
     assert prereg["expectations"] == 13074 and prereg["oracle_version"] == "v2.2" and len(prereg["retimed_expected"]) == 5
+    assert prereg["known_limit_expectations"] >= 28 and prereg["finding_expectations"] > 0
     assert sum(prereg["by_semantics"].values()) == 13074 and prereg["not_collected"] == 28
     assert prereg["expected_findings"].get("F-CALENDAR", 0) > 0
     statuses = harness_side.expected_statuses(oracle)
