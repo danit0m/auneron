@@ -1,0 +1,260 @@
+"""
+Fases `nh-*` do CLI (SIM-1.5E C.1): ligam o runner ao lab. Camada FINA e NAO EXERCITADA AO VIVO neste checkpoint (Docker
+nao autorizado): os testes conferem os comandos com duplos; a primeira execucao real sera o SR-1. Qualquer fato que
+nao possa ser obtido => ausente => preflight reprova (fail-closed). Nenhuma fase corrige o ambiente sozinha.
+
+Fases que MUDAM o lab: `stage` (entradas), `open` (run_id), `preflight` (arma o relogio em D0 08:00 POR ULTIMO),
+`run` (so com D0_AUTHORIZATION.json valido). Nenhuma delas emite autorizacao de D0 para `kind = RUN`.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from sim.generator.canonical import canonical_bytes
+from sim.generator.canonical import sha256_bytes
+from sim.live import env as E
+from sim.live import flow
+from sim.live.fingerprint import fingerprint
+from sim.runner import declare
+from sim.runner import harness_side
+from sim.runner import host
+from sim.runner import rim as rim_mod
+from sim.runner import runner as runner_mod
+from sim.runner.errors import PreflightFailed
+from sim.runner.errors import RunnerError
+from sim.runner.lab_ports import lab_ports
+from sim.runner.live import LiveServices
+from sim.runner.registry import Registry
+from sim.stack.lab import driver_lab
+from sim.stack.lab.config import REPO_ROOT
+from sim.stack.lab.config import lab_home
+
+SCENARIO_ID = "nh-small-v2-s340001"
+VARIANT, SEED, ORACLE_VERSION = "nh-small", 340001, "v2.2"
+SCENARIO_DIR = REPO_ROOT / "sim" / "scenarios" / SCENARIO_ID
+ORACLE_DIR = REPO_ROOT / "sim" / "oracle" / "artifacts" / f"{SCENARIO_ID}-oracle-{ORACLE_VERSION}"
+BUSINESS_TABLES = ("accounts", "account_events", "account_vencimento_changes", "approval_requests", "approval_decisions",
+                   "approval_consumptions", "knowledge", "memory_items", "memory_evidence", "work_items")
+D0_MARGIN_MS = 5 * 60 * 1000
+
+
+def runs_root() -> Path:
+    return lab_home() / "runs"
+
+
+def inputs_dir(lab) -> Path:
+    return lab.live_dir / "nh_inputs"
+
+
+def _json(path) -> dict:
+    return json.loads(Path(path).read_bytes().decode("utf-8"))
+
+
+# ----------------------------------------------------------------------------------------------------------- stage
+def phase_stage(lab) -> dict:
+    work = inputs_dir(lab)
+    work.mkdir(parents=True, exist_ok=True)
+    oracle = _json(ORACLE_DIR / "oracle.json")
+    agenda_path = SCENARIO_DIR / "public_agenda.json"
+    ops = _json(agenda_path)["ops"]
+    version_id = lab.evidence["mark_paid_version_id"]
+    timeline = declare.NH_TIMELINE
+    manifest = driver_lab.build_driver_manifest(agenda_path, SCENARIO_ID, version_id, driver_lab.active_personas(ops),
+                                                timeline["d0"], timeline["last_day"] + 1)
+    plan = harness_side.compile_plan_for(oracle, ops, d0=timeline["d0"], utc_offset_minutes=timeline["utc_offset_minutes"],
+                                         observer_email=lab.config.email(E.OBSERVER))
+    prereg = harness_side.preregistration(oracle)
+    (work / "public_agenda.json").write_bytes(agenda_path.read_bytes())
+    E.write_json(work / "driver_manifest.json", manifest)
+    E.write_json(work / "collection_plan.json", plan)
+    (work / "preregistration.json").write_bytes(canonical_bytes(prereg))
+    (work / "oracle.json").write_bytes((ORACLE_DIR / "oracle.json").read_bytes())          # copia host-only (hash e proibido no DR-1)
+    flow.stage_secrets(lab)
+    flow.stage(lab, {"work": work, "plan": plan}, "nh", flat=True)
+    return lab.record("NH-STAGE", True, {name: E.sha(work / name) for name in
+                                          ("public_agenda.json", "driver_manifest.json", "collection_plan.json",
+                                           "preregistration.json")})
+
+
+# ----------------------------------------------------------------------------------------------------------- open
+def _docker_value(lab, *args) -> str:
+    res = lab.runner.run(["docker", *args])
+    if res.code != 0 or not res.out.strip():
+        raise RunnerError(f"docker {' '.join(args)} falhou")
+    return res.out.strip()
+
+
+def _index_tree(path: str) -> str:
+    tree = declare.git_out(REPO_ROOT, "write-tree")
+    return declare.git_out(REPO_ROOT, "rev-parse", f"{tree}:{path}")
+
+
+def build_rim(lab, kind: str, growth_model_sha256: str | None) -> dict:
+    work = inputs_dir(lab)
+    base_digest = _docker_value(lab, "image", "inspect", "-f", "{{index .RepoDigests 0}}", "python:3.11-slim")
+    ids = {k: _docker_value(lab, "image", "inspect", "-f", "{{.Id}}", lab.config.image(k)) for k in ("base", "backend", "postgres")}
+    from sim.stack.lab.config import STACK_DIR
+    from sim.driver.params import load_params
+
+    declared = declare.build_declared(
+        repo=REPO_ROOT, scenario_dir=SCENARIO_DIR, oracle_dir=ORACLE_DIR, scenario_id=SCENARIO_ID, variant=VARIANT, seed=SEED,
+        oracle_version=ORACLE_VERSION, generator_version="sim-1.5.1", base_image_digest=base_digest, lab_image_ids=ids,
+        compose_files={"base": lab.config.compose_file, "override": STACK_DIR / driver_lab.OVERRIDE_FILE},
+        quiescence_sha256=sha256_bytes(canonical_bytes(lab.config["quiescence"])), driver_params_sha256=load_params().sha256,
+        plan_sha256=E.sha(work / "collection_plan.json"), preregistration_sha256=E.sha(work / "preregistration.json"),
+        authority_invariants_sha256=harness_side.authority_invariants_sha256(), growth_model_sha256=growth_model_sha256)
+    observed = {"driver_manifest_sha256": E.sha(work / "driver_manifest.json"),
+                "driver_manifest_agenda_sha256": _json(work / "driver_manifest.json")["public_agenda_sha256"],
+                "compose_resolved_sha256": E.sha(lab.live_dir / "compose_resolved.json"),
+                "driver_image": {"tree": _index_tree("sim/driver"), "base_digest": base_digest},
+                "collector_image": {"tree": _index_tree("sim/collector"), "base_digest": base_digest}}
+    return rim_mod.build_rim(kind, declared, observed)
+
+
+def phase_open(lab, kind: str = "RUN", growth_model: Path | None = None, purpose: str = "FIRST",
+               parent: str | None = None, reason: str | None = None) -> dict:
+    growth = E.sha(growth_model) if growth_model else None
+    rim = build_rim(lab, kind, growth)
+    registry = Registry(runs_root())
+    info, ledger = runner_mod.open_new_run(registry, rim, purpose=purpose, parent_run_id=parent, reason=reason)
+    for container in (E.DRIVER, E.COLLECTOR):
+        res = E.dexec(lab, container, "sh", "-c", f"printf %s {info['run_id']} > /state/RUN_ID", user="root")
+        if res.code != 0:
+            raise RunnerError(f"nao foi possivel gravar /state/RUN_ID em {container}")
+    return lab.record("NH-OPEN", True, {"run_id": info["run_id"], "rim_sha256": info["rim_sha256"], "attempt": info["attempt"]})
+
+
+# ----------------------------------------------------------------------------------------------------------- preflight
+def collect_preflight_facts(lab, rim: dict, run_dir: Path) -> dict:
+    g = lab.evidence["gates"]
+    work = inputs_dir(lab)
+
+    def git(*a):
+        return declare.git_out(REPO_ROOT, *a)
+
+    tests = subprocess.run([sys.executable, "-m", "pytest", "sim/tests", "-q", "-p", "no:cacheprovider"], cwd=REPO_ROOT,
+                           capture_output=True, text=True)
+    regenerated = None
+    try:
+        from sim.oracle import v2_2
+
+        _, files = v2_2.generate_oracle_v2_2(VARIANT, SEED, REPO_ROOT / "sim" / "scenarios", ORACLE_DIR.parent / f"{SCENARIO_ID}-oracle-v2.1")
+        regenerated = (files["oracle.json"] == (ORACLE_DIR / "oracle.json").read_bytes()
+                       and files["manifest_v2_2.json"] == (ORACLE_DIR / "manifest_v2_2.json").read_bytes())
+    except Exception:                                                                    # noqa: BLE001 - qualquer falha reprova
+        regenerated = False
+    d = rim["declared"]
+    resolved = _json(lab.live_dir / "compose_resolved.json")
+    nets = lambda svc: sorted((resolved["services"][svc].get("networks") or {}))           # noqa: E731
+    prov = g.get("LIVE-PROVISION", {})
+    started = g.get("LIVE-UP-EXT", {}).get("application_started") or {}
+    absences = prov.get("absences", {})
+    fp = fingerprint(lab.runner, lab.config)
+    business_rows = sum(fp.get(t, [0])[0] for t in BUSINESS_TABLES)
+    skills = {s["key"]: s for s in prov.get("skills", [])}
+    tokens = E.dexec(lab, E.DRIVER, "sh", "-c", "sha256sum /inputs/public_agenda.json /inputs/driver_manifest.json").out.split()
+    ctokens = E.dexec(lab, E.COLLECTOR, "sh", "-c", "sha256sum /inputs/collection_plan.json").out.split()
+    forbidden = _forbidden_hashes(lab, run_dir)
+    from sim.runner.lab_ports import dr1_probe
+
+    dr1 = dr1_probe(lab, forbidden, with_controls=True)
+    ids = [E.dexec(lab, c, "cat", "/state/RUN_ID").out.strip() for c in (E.DRIVER, E.COLLECTOR)]
+    others = [n for n in lab.runner.run(["docker", "ps", "--format", "{{.Names}}"]).out.split()
+              if not n.startswith(("auneron-sim-", "auneron-backend", "auneron-postgres", "auneron-frontend"))]
+    clock = lab.clock.set(lab.clock.virtual(0, "08:00"))                                 # arma o relogio POR ULTIMO (P10)
+    now_ms = int(lab.clock.expected_at(time.time()) * 1000)
+    from sim.runner import disk as disk_mod
+
+    return {
+        "P1": {"head": git("rev-parse", "HEAD"), "tree_clean": git("status", "--porcelain", "--untracked-files=no") == "",
+               "index_empty": git("diff", "--cached", "--name-only") == "", "static_tests_ok": tests.returncode == 0},
+        "P2": {"backend_tree": git("rev-parse", "HEAD:backend"), "frontend_tree": git("rev-parse", "HEAD:frontend")},
+        "P3": {"oracle_sha256": E.sha(ORACLE_DIR / "oracle.json"), "oracle_manifest_sha256": E.sha(ORACLE_DIR / "manifest_v2_2.json"),
+               "agenda_sha256": E.sha(SCENARIO_DIR / "public_agenda.json"), "world_sha256": E.sha(SCENARIO_DIR / "world.json"),
+               "v2_manifest_sha256": E.sha(SCENARIO_DIR / "manifest.json"), "v2_oracle_sha256": E.sha(SCENARIO_DIR / "oracle.json"),
+               "reproduced_in_memory": regenerated},
+        "P4": {"residues": 0 if g.get("LIVE-PREP", {}).get("status") == "PASS" else None, "volumes_new": True,
+               "dev_snapshot_before": (lab.dir / "dev_snapshot_before.json").exists()},
+        "P5": {"base_digest": rim["observed"]["driver_image"]["base_digest"], "driver_tree": rim["observed"]["driver_image"]["tree"],
+               "collector_tree": rim["observed"]["collector_image"]["tree"],
+               "build_identity_state": started.get("build_identity_state"), "build_git_sha": started.get("build_git_sha"),
+               "build_dirty": started.get("build_git_dirty")},
+        "P6": {"compose_guard_ok": g.get("LIVE-COMPOSE-CONFIG", {}).get("status") == "PASS", "backend_networks": nets("sim-backend"),
+               "driver_networks": nets("sim-driver"), "collector_networks": nets("sim-collector")},
+        "P7": {"business_rows": business_rows},
+        "P8": {"users_ok": prov.get("status") == "PASS", "bindings": sum(absences.values()), "grants": sum(absences.values()),
+               "system_principals": sum(absences.values()), "skills_active": prov.get("status") == "PASS",
+               "mark_paid_version_id": lab.evidence.get("mark_paid_version_id"),
+               "version_from_created_output": skills.get("account.mark_paid", {}).get("class") == "CREATED"},
+        "P9": {"maintenance_enabled": started.get("maintenance_enabled"), "app_env": started.get("environment"),
+               "worker_enabled": started.get("evidence_worker_enabled"), "floor_state": started.get("evidence_floor_state")},
+        "P10": {"virtual_now_ms": now_ms, "d0_first_slot_ms": int(lab.clock.virtual(0, "09:00").timestamp() * 1000),
+                "margin_ms": D0_MARGIN_MS, "clock_target": clock["target"]},
+        "P11": {"agenda_sha256": tokens[0] if tokens else None, "manifest_sha256": tokens[2] if len(tokens) > 2 else None,
+                "plan_sha256": ctokens[0] if ctokens else None, "dr1_clean": dr1["clean"]},
+        "P12": {"run_id_file_ok": all(i == run_dir.name for i in ids), "ledger_opened": (run_dir / "ledger.jsonl").exists(),
+                "free_bytes": disk_mod.measure_free(lab_home())},
+        "P13": {"awake_acquired": host.keep_awake(), "foreign_docker_activity": len(others),
+                "dev_untouched": (lab.dir / "dev_snapshot_before.json").exists()},
+    }
+
+
+def _forbidden_hashes(lab, run_dir: Path) -> list:
+    found = set()
+    for root in (REPO_ROOT / "sim" / "scenarios", REPO_ROOT / "sim" / "oracle" / "artifacts"):
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and path.name != "public_agenda.json":
+                found.add(hashlib.sha256(path.read_bytes()).hexdigest())
+    for name in ("oracle.json", "preregistration.json"):
+        found.add(E.sha(inputs_dir(lab) / name))
+    return sorted(found)
+
+
+def phase_preflight(lab, run_id: str) -> dict:
+    registry = Registry(runs_root())
+    run_dir = runs_root() / run_id
+    rim = _json(run_dir / "rim.json")
+    ledger = runner_mod.RunLedger(run_dir)
+    facts = collect_preflight_facts(lab, rim, run_dir)
+    try:
+        runner_mod.run_preflight(ledger, registry, rim, facts)
+    except PreflightFailed as error:
+        return lab.record("NH-PREFLIGHT", False, {"run_id": run_id, "failures": str(error)[:2000]})
+    return lab.record("NH-PREFLIGHT", True, {"run_id": run_id})
+
+
+# ----------------------------------------------------------------------------------------------------------- run
+def phase_run(lab, run_id: str) -> dict:
+    registry = Registry(runs_root())
+    run_dir = runs_root() / run_id
+    rim = _json(run_dir / "rim.json")
+    ledger = runner_mod.RunLedger(run_dir)
+    work = inputs_dir(lab)
+    oracle, plan = _json(work / "oracle.json"), _json(work / "collection_plan.json")
+    ops = _json(work / "public_agenda.json")["ops"]
+    hooks, state = flow.build_hooks(lab, floor=True)
+    ttl = flow.o1_ttl_minutes(lab)
+    ports = lab_ports(lab, run_dir, hooks_state=state, forbidden_hashes=_forbidden_hashes(lab, run_dir), oracle=oracle,
+                      inputs_dir=work, ttl_minutes=ttl)
+    containers = ports.containers()
+    live = LiveServices(
+        run_dir=run_dir, run_id=run_id, plan=plan, agenda_ops=ops, timeline=rim["declared"]["timeline"], ports=ports,
+        baseline={"accounts": 0, "approvals": 0, "work_items": 0},
+        expected_containers={k: v["started_at"] for k, v in containers.items()},
+        expected_networks={k: v["networks"] for k, v in containers.items()},
+        barrier_hard_ms=int(lab.config["quiescence"]["hard_timeout_s"]) * 1000)
+    stop = host.StopFlag()
+    stop.install()
+    services = live.services(hooks, awake=host.keep_awake)
+    nh = runner_mod.NhRunner(run_dir=run_dir, rim=rim, ledger=ledger, registry=registry, services=services, stop=stop)
+    try:
+        result = nh.run()
+    finally:
+        host.release_awake()
+    return lab.record("NH-RUN", result["state"] == "COMPLETED", result)

@@ -246,8 +246,10 @@ def test_projection_matches_the_product_rule_replica_for_every_day():
 # --------------------------------------------------------------------------
 ALLOWED = [
     r"^sim/driver/[^/]+$", r"^sim/collector/[^/]+$", r"^sim/evaluator/[^/]+$",
-    r"^sim/oracle/(v2_1|collection_plan)\.py$",
+    r"^sim/oracle/(v2_1|v2_2|collection_plan)\.py$",
     r"^sim/oracle/artifacts/nh-small-v2-s340001-oracle-v2\.1/(oracle|manifest_v2_1)\.json$",
+    r"^sim/oracle/artifacts/nh-small-v2-s340001-oracle-v2\.2/(oracle|manifest_v2_2)\.json$",      # SIM-1.5E (DV15E-1)
+    r"^sim/runner/[^/]+$",                                                                         # SIM-1.5E: plano de controle
     r"^sim/stack/(docker-compose\.sim\.driver\.yml|driver\.Dockerfile|collector\.Dockerfile|DRIVER_LAB\.md)$",
     r"^sim/stack/lab/(driver_lab|run_orchestrator)\.py$",
     r"^sim/live/(container/)?[^/]+$",                  # SIM-1.5A: harness live versionado
@@ -294,6 +296,7 @@ def test_candidate_text_files_are_lf_without_trailing_whitespace():
               SIM_ROOT / "stack" / "lab" / "driver_lab.py", SIM_ROOT / "stack" / "lab" / "run_orchestrator.py",
               SIM_ROOT / "tests" / "sim14_frozen_hashes.json"]
     files += [p for p in (SIM_ROOT / "tests").glob("*.py")]
+    files += [p for p in (SIM_ROOT / "runner").glob("*.py")] + [SIM_ROOT / "oracle" / "v2_2.py"]
     for path in files:
         data = path.read_bytes()
         if not data:                      # __init__.py vazio preexistente

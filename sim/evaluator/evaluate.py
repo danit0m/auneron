@@ -429,6 +429,9 @@ def evaluate(oracle: dict, plan: dict, collected: list, driver: list, refs: dict
         kind, exp_id = exp["kind"], exp["exp_id"]
         if exp.get("superseded_same_day"):
             klass, reason = KNOWN_LIMIT, "superseded_same_day: so o ultimo status do dia e verificavel"
+        elif (exp.get("ta1") or {}).get("disposition") == "NOT_COLLECTED":
+            # Oracle v2.2 (TA-1): superada antes do proximo `safe_at`; nunca CORRECT, nunca silenciosa
+            klass, reason = KNOWN_LIMIT, f"ta1:{exp['ta1']['reason_code']}"
         elif exp["semantics"] == "not_representable":
             klass, reason = NOT_REPRESENTABLE, "fato so do mundo"
         elif kind in _DRIVER:
