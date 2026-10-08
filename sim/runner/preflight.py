@@ -1,5 +1,5 @@
 """
-Preflight P1..P13 (SIM-1.5D sec. 5) como JULGAMENTO PURO sobre fatos observados. A coleta dos fatos (git, docker,
+Preflight P1..P15 (SIM-1.5D sec. 5; P14 contaminacao SIM-1.5F; P15 Task Scheduler SIM-1.5G) como JULGAMENTO PURO sobre fatos observados. A coleta dos fatos (git, docker,
 banco, relogio) e a camada fina de `sim.runner.live`; aqui so se decide. Fato ausente = reprovado (fail-closed).
 Preflight NAO muta o negocio e nao avanca o relogio de negocio.
 """
@@ -28,9 +28,27 @@ REQUIRED = {
     "P13": ("awake_acquired", "foreign_docker_activity", "dev_untouched"),
     "P14": ("volumes_created_after_previous_terminal", "driver_state_present", "collector_state_present", "business_rows",
             "marker_rows", "previous_runs_non_terminal"),
+    "P15": ("scheduler_running", "folder_tasks", "unreconciled_runs", "orphan_processes", "reboot_pending", "elevated"),
 }
 NETWORKS_BACKEND = frozenset({"auneron_sim_driver", "auneron_sim_internal"})
 NETWORKS_DRIVER = frozenset({"auneron_sim_driver"})
+
+
+def judge_p15(group: dict) -> list:
+    """P15 (SIM-1.5G, fail-closed): Task Scheduler ativo, nenhuma tarefa/trilha/processo residual, sem reboot pendente, sem elevacao."""
+    out = []
+    if group["scheduler_running"] is not True:
+        out.append("servico Task Scheduler nao esta ativo")
+    for key, label in (("folder_tasks", "tarefa(s) residual(is) em \\AuneronSim\\"), ("unreconciled_runs", "trilha(s) nao reconciliada(s)"),
+                       ("orphan_processes", "processo(s) orfao(s)")):
+        value = group[key]
+        if not isinstance(value, int) or isinstance(value, bool) or value != 0:
+            out.append(f"{value!r} {label}")
+    if group["reboot_pending"] is not False:
+        out.append("reinicializacao pendente do Windows (ou fato ausente)")
+    if group["elevated"] is not False:
+        out.append("sessao elevada (o desenho exige token medio)")
+    return out
 
 
 def missing(facts: dict) -> list:
@@ -110,4 +128,6 @@ def judge_preflight(facts: dict, rim: dict, *, projected_growth_bytes: int | Non
         fail("P13", f"maquina/docker/DEV: {p}")
     for detail in contamination.judge_p14(facts["P14"]):
         fail("P14", detail)
+    for detail in judge_p15(facts["P15"]):
+        fail("P15", detail)
     return fails

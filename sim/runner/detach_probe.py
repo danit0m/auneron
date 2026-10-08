@@ -3,11 +3,13 @@ Sonda de aceitacao DETACH-1 (SIM-1.5F C.3). O processo-sonda roda PELO MESMO CAM
 os fatos que decidem se o mecanismo e aceitavel; o juiz (`judge_detach1`) e puro. Os fatos "o lancador terminou e o
 processo continua vivo" sao do MONITOR (fora do processo-sonda).
 
-Nesta etapa nada disto e executado de verdade: os testes injetam as portas. O DETACH-1 real e um passo do SR-1.
+Nos testes nada disto roda de verdade: as portas sao injetadas. DETACH-1 (WMI) foi executado e REPROVOU; o DETACH-2
+(Task Scheduler, `collect2`/`judge_detach2`) e candidato e so roda com autorizacao do PO.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -17,6 +19,7 @@ from pathlib import Path
 
 from sim.runner import detach
 from sim.runner import host
+from sim.runner import sched
 
 CRITERIA = (
     "1_outside_job", "2_same_session", "3_docker_answers", "4_git_and_interpreter", "5_import_sim_and_launch_json",
@@ -138,14 +141,349 @@ def judge_detach1(result: dict, monitor: dict) -> list:
     return fails
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# DETACH-2 (SIM-1.5G): sonda incremental + juiz de 12 criterios + orquestracao (lancar / monitorar / encerrar)
+# ---------------------------------------------------------------------------------------------------------------------
+CRITERIA2 = (
+    "D2-01_task_as_requested", "D2-02_scheduler_parentage", "D2-03_same_session", "D2-04_isolated_interpreter",
+    "D2-05_docker_git_path", "D2-06_keep_awake", "D2-07_heartbeat_continuous", "D2-08_survives_launcher",
+    "D2-09_stop_exit_clean", "D2-10_no_trigger_restart_parallel", "D2-11_removed_clean_evidence", "D2-12_session_end_continuity",
+)
+LEVELS = {"L1": {"required_s": 900, "survive_s": 840, "profile": "PROBE_L1", "cap_s": 1500},
+          "L2": {"required_s": 2700, "survive_s": 600, "profile": "PROBE_L2", "cap_s": 4200}}
+MAX_GAP_S = 15
+BEAT_EVERY_S = 5
+FACTS, FACTS_LOG, BEATS = "facts.json", "facts.jsonl", "beats.jsonl"
+MONITOR_JSON, VERDICT_JSON, EVIDENCE_MANIFEST = "detach2_monitor.json", "detach2_verdict.json", "evidence_manifest.json"
+
+
+def _atomic_json(path: Path, doc: dict) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(doc, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+class FactsWriter:
+    """Fatos gravados INCREMENTALMENTE (licao do DETACH-1): cada fase atualiza `facts.json` e acrescenta a `facts.jsonl`."""
+
+    def __init__(self, proc: Path) -> None:
+        self.proc, self.facts = Path(proc), {}
+
+    def record(self, phase: str, **values) -> None:
+        self.facts.update(values)
+        self.facts["phase"] = phase
+        _atomic_json(self.proc / FACTS, self.facts)
+        with (self.proc / FACTS_LOG).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"phase": phase, **values}, sort_keys=True) + "\n")
+
+
+def _venv_cfg(prefix: str) -> dict:
+    try:
+        text = (Path(prefix) / "pyvenv.cfg").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    return {k.strip(): v.strip() for k, _, v in (line.partition("=") for line in text.splitlines()) if k.strip()}
+
+
+def _norm(path) -> str:
+    return os.path.normcase(os.path.normpath(str(path))) if path else ""
+
+
+def collect2(proc: Path, *, interactive_session: int | None, cap_s: int, ports: dict | None = None, sleep=time.sleep,
+             clock=time.time) -> dict:
+    """Roda DENTRO do processo da tarefa. Grava fatos a cada fase, um batimento a cada 5 s (`heartbeat.json` + `beats.jsonl`),
+    obedece ao STOP e grava `exit.json`. Se for morto no meio, os fatos ja gravados permanecem."""
+    ports, proc = ports or {}, Path(proc)
+    writer = FactsWriter(proc)
+    launch_doc = detach.read_launch(proc) or {}
+    expected = launch_doc.get("python")
+    run = ports.get("run") or _run
+    which = ports.get("which") or __import__("shutil").which
+    prefix = (ports.get("prefix") or (lambda: (sys.prefix, sys.base_prefix, sys.executable)))()
+    writer.record("start", pid=os.getpid(), session_id=(ports.get("session") or _session_id)(), interactive_session=interactive_session,
+                  interpreter={"prefix": prefix[0], "base_prefix": prefix[1], "executable": prefix[2],
+                               "expected_prefix": str(Path(expected).parent.parent) if expected else None,
+                               "include_system_site_packages": _venv_cfg(prefix[0]).get("include-system-site-packages")},
+                  launch_json_read=bool(launch_doc), cap_s=cap_s, t_start=int(clock()))
+    imported = False
+    try:
+        import sim  # noqa: F401
+
+        imported = True
+    except ImportError:
+        pass
+    writer.record("import", import_sim=imported)
+    writer.record("job", job=(ports.get("job") or _job_state)())
+    writer.record("docker", docker=list(run(["docker", "version", "--format", "{{.Server.Version}}"])))
+    writer.record("git", git=list(run(["git", "--version"])), path={"docker": which("docker") is not None, "git": which("git") is not None})
+    writer.record("keep_awake", keep_awake=bool((ports.get("keep_awake") or host.keep_awake)()))
+    hb = host.HeartbeatWriter(proc / detach.HEARTBEAT, lambda: {"probe": "detach2"}, interval_s=BEAT_EVERY_S, clock=clock)
+    stop_flag = host.StopFlag(proc / detach.STOP)
+    seq, started = 0, clock()
+
+    def beat() -> None:
+        nonlocal seq
+        doc = hb.beat()
+        seq += 1
+        with (proc / BEATS).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"seq": seq, "t": doc["t_epoch"], "pid": doc["pid"]}) + "\n")
+
+    beat()
+    writer.record("heartbeat", heartbeat_written=(proc / detach.HEARTBEAT).exists())
+    last_beat = clock()
+    while not stop_flag.requested and clock() - started < cap_s:
+        sleep(1)
+        if clock() - last_beat >= BEAT_EVERY_S:
+            beat()
+            last_beat = clock()
+    obeyed = stop_flag.requested
+    beat()
+    detach.write_exit(proc, 0 if obeyed else 1, "STOP" if obeyed else "TIMEOUT", clock=clock)
+    writer.record("exit", stop_obeyed=bool(obeyed))
+    return writer.facts
+
+
+def beat_series(proc: Path) -> list:
+    path = Path(proc) / BEATS
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+    return out
+
+
+def beat_stats(beats: list, *, after: int | None = None, cross: int | None = None) -> dict:
+    """Maior intervalo, primeira/ultima batida, e (opcional) continuidade atravessando o instante `cross`."""
+    times = [b["t"] for b in beats]
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    stats = {"count": len(times), "first_t": times[0] if times else None, "last_t": times[-1] if times else None,
+             "max_gap_s": max(gaps) if gaps else None, "duration_s": (times[-1] - times[0]) if times else 0}
+    if after is not None and times:
+        stats["survived_after_s"] = times[-1] - after
+    if cross is not None:
+        before, later = [t for t in times if t <= cross], [t for t in times if t > cross]
+        stats["crosses"] = bool(before and later)
+        stats["gap_at_cross_s"] = (later[0] - before[-1]) if before and later else None
+    return stats
+
+
+def judge_detach2(facts: dict, monitor: dict, level: str = "L1") -> dict:
+    """Juiz PURO (12 criterios binarios; fato ausente = reprovado). L1 PASS = D2-01..D2-11; L2 exige tambem D2-12.
+    -> {failed, passed, not_proven, verdict}. Em L1, D2-12 e NOT_PROVEN (nao e reprova, mas nao autoriza a afirmacao)."""
+    spec = LEVELS[level]
+    ok = {}
+    interp = facts.get("interpreter") or {}
+    chain = monitor.get("chain") or []
+    chain_pids = [c.get("pid") for c in chain]
+    engine = monitor.get("engine_pids") or []
+    ok["D2-01_task_as_requested"] = (monitor.get("registered_verified") is True and monitor.get("xml_sha256") is not None
+                                     and str(monitor.get("task", "")).startswith("\\AuneronSim\\"))
+    engine_in_chain = any(p in chain_pids for p in engine)
+    engine_parent = next((c.get("ppid") for c in chain if c.get("pid") in engine), None)
+    ok["D2-02_scheduler_parentage"] = (bool(engine) and engine_in_chain and monitor.get("schedule_pid") not in (None, 0)
+                                       and engine_parent == monitor.get("schedule_pid")
+                                       and monitor.get("launcher_pid") not in chain_pids)
+    ok["D2-03_same_session"] = (facts.get("session_id") is not None and facts.get("session_id") == facts.get("interactive_session"))
+    ok["D2-04_isolated_interpreter"] = (bool(interp.get("prefix")) and _norm(interp.get("prefix")) == _norm(interp.get("expected_prefix"))
+                                        and _norm(interp.get("prefix")) != _norm(interp.get("base_prefix"))
+                                        and str(interp.get("include_system_site_packages", "")).lower() == "false"
+                                        and facts.get("import_sim") is True and facts.get("launch_json_read") is True)
+    docker, git, path = facts.get("docker") or (None, ""), facts.get("git") or (None, ""), facts.get("path") or {}
+    ok["D2-05_docker_git_path"] = (docker[0] == 0 and bool(docker[1]) and git[0] == 0 and path.get("docker") is True
+                                   and path.get("git") is True)
+    ok["D2-06_keep_awake"] = facts.get("keep_awake") is True and facts.get("heartbeat_written") is True
+    hb = monitor.get("beats") or {}
+    ok["D2-07_heartbeat_continuous"] = (hb.get("max_gap_s") is not None and hb["max_gap_s"] <= MAX_GAP_S
+                                        and hb.get("duration_s", 0) >= spec["required_s"])
+    ok["D2-08_survives_launcher"] = (monitor.get("launcher_alive") is False and monitor.get("probe_alive_before_stop") is True
+                                     and hb.get("survived_after_s") is not None and hb["survived_after_s"] >= spec["survive_s"])
+    exit_doc = monitor.get("exit") or {}
+    ok["D2-09_stop_exit_clean"] = (facts.get("stop_obeyed") is True and exit_doc.get("code") == 0 and exit_doc.get("reason") == "STOP"
+                                   and monitor.get("exit_code_txt") == 0 and monitor.get("task_state_after") == sched.STATE_READY
+                                   and monitor.get("last_result_after") == 0)
+    ok["D2-10_no_trigger_restart_parallel"] = (monitor.get("triggers") == 0 and monitor.get("restart_on_failure") is False
+                                               and monitor.get("instances_after_second_start") == 1)
+    ok["D2-11_removed_clean_evidence"] = (monitor.get("removal_verified") is True and monitor.get("orphan_processes") == 0
+                                          and monitor.get("evidence_manifest_ok") is True and monitor.get("audit_ok") is True
+                                          and monitor.get("folder_clean") is True)
+    cross = monitor.get("session_end") or {}
+    ok["D2-12_session_end_continuity"] = (cross.get("t") is not None and cross.get("crosses") is True
+                                         and cross.get("gap_at_cross_s") is not None and cross["gap_at_cross_s"] <= MAX_GAP_S)
+    failed = [c for c in CRITERIA2 if not ok[c] and (c != "D2-12_session_end_continuity" or level == "L2")]
+    not_proven = ["D2-12_session_end_continuity"] if level == "L1" else []
+    passed = [c for c in CRITERIA2 if ok[c]]
+    return {"level": level, "failed": failed, "passed": passed, "not_proven": not_proven,
+            "verdict": "PASS" if not failed else "FAIL"}
+
+
+def probe_name(level: str, clock=time.time) -> str:
+    return f"DETACH2-PROBE-{level}-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(int(clock())))
+
+
+def probe_launch(runs_root, name: str, *, level: str, python: str, repo: str, interactive_session: int, run=None,
+                 alive=host.pid_alive, sleep=time.sleep, clock=time.time, wait_s: int = 60, anchors_dir=None) -> dict:
+    """Lanca a sonda pelo Task Scheduler (UMA tarefa) e TERMINA. O processo-sonda e o `detach_probe --detach2`."""
+    spec = LEVELS[level]
+    proc = detach.proc_dir(runs_root, name)
+    cli_args = f'--detach2 --proc-dir "{proc}" --interactive-session {int(interactive_session)} --cap-s {spec["cap_s"]}'
+    return detach.launch_detached(runs_root, name, python=python, repo=repo, cli_args=cli_args, env={"PYTHONUTF8": "1", "PYTHONPATH": repo},
+                                  ledger_state="PREFLIGHTED", python_info={"executable": python, "role": "detach2-probe", "level": level},
+                                  profile=spec["profile"], run=run, alive=alive, sleep=sleep, clock=clock, wait_s=wait_s,
+                                  anchors_dir=anchors_dir, module="sim.runner.detach_probe")
+
+
+def _read_json(path: Path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_alive, sleep=time.sleep, clock=time.time,
+                  poll_s: int = 10, session_end_t: int | None = None, anchors_dir=None, stop_wait_s: int = 90) -> dict:
+    """Processo NOVO (depois do fim do lancador): observa de fora, tenta uma 2a partida, pede STOP e coleta os fatos do monitor."""
+    run = run or sched.run_default
+    spec, proc = LEVELS[level], detach.proc_dir(runs_root, name)
+    anchors = anchors_dir or (Path(runs_root) / sched.ANCHOR_DIR)
+    audit = sched.Audit(proc, anchors, name, clock)
+    trail = audit.verify()
+    records = audit.records()
+    by_event = {r["event"]: r for r in records}
+    launch_doc = detach.read_launch(proc) or {}
+    launcher_pid = (by_event.get("STARTED") or {}).get("payload", {}).get("launcher_pid")
+    who = sched.identity(run)
+    first_seen_dead_t = None if launcher_pid is None or alive(launcher_pid) else int(clock())
+    launcher_alive = bool(launcher_pid) and alive(launcher_pid)
+    second_done, instances_after_second = False, None
+    t0 = clock()
+    while True:
+        beats = beat_series(proc)
+        stats = beat_stats(beats)
+        pid = (detach.read_heartbeat(proc) or {}).get("pid")
+        if not pid or not alive(pid):
+            break
+        if stats["duration_s"] >= spec["required_s"]:
+            break
+        if not second_done and stats["duration_s"] >= min(120, spec["required_s"] // 3):
+            sched.start(run, name)                       # IgnoreNew: nao pode criar 2a instancia
+            sleep(2)
+            instances_after_second = len(sched.info(run, name).get("instances", []))
+            audit.append("SECOND_START_ATTEMPT", {"instances_after": instances_after_second})
+            second_done = True
+        if clock() - t0 > spec["cap_s"] + 300:
+            break
+        sleep(poll_s)
+    pid = (detach.read_heartbeat(proc) or {}).get("pid")
+    probe_alive_before_stop = bool(pid) and alive(pid)
+    state_running = sched.info(run, name, want_xml=True)
+    chain = sched.process_chain(run, pid) if probe_alive_before_stop else []
+    beats_now = beat_series(proc)
+    heartbeat = detach.read_heartbeat(proc) or {}
+    if second_done is False and probe_alive_before_stop:
+        sched.start(run, name)
+        sleep(2)
+        instances_after_second = len(sched.info(run, name).get("instances", []))
+        audit.append("SECOND_START_ATTEMPT", {"instances_after": instances_after_second})
+    if probe_alive_before_stop:
+        detach.request_stop(proc, "DETACH-2 acceptance: controlled STOP")
+        audit.append("STOP_REQUESTED", {})
+        waited = 0
+        while not (proc / detach.EXIT).exists() and waited < stop_wait_s:
+            sleep(1)
+            waited += 1
+        sleep(3)
+    after = sched.info(run, name)
+    exit_doc = _read_json(proc / detach.EXIT)
+    audit.append("STOPPED", {"exit": exit_doc})
+    parsed = sched.parse_task_xml(state_running.get("xml") or "<Task/>") if state_running.get("found") else {"triggers": None, "tags": []}
+    stats = beat_stats(beats_now, after=first_seen_dead_t, cross=session_end_t)
+    monitor = {
+        "level": level, "task": launch_doc.get("task"), "xml_sha256": launch_doc.get("xml_sha256"),
+        "registered_verified": "EXPORT_VERIFIED" in by_event, "engine_pids": [i.get("pid") for i in state_running.get("instances", [])],
+        "chain": chain, "schedule_pid": who.get("schedule_pid"), "launcher_pid": launcher_pid, "launcher_alive": launcher_alive,
+        "first_seen_launcher_dead_t": first_seen_dead_t, "probe_alive_before_stop": probe_alive_before_stop,
+        "heartbeat_age_s": max(int(clock()) - int(heartbeat.get("t_epoch", 0)), 0) if heartbeat else None, "beats": stats,
+        "triggers": parsed.get("triggers"), "restart_on_failure": "RestartOnFailure" in parsed.get("tags", []),
+        "instances_after_second_start": instances_after_second, "exit": exit_doc,
+        "exit_code_txt": detach.read_exit_code(proc), "task_state_after": after.get("state"), "last_result_after": after.get("last_result"),
+        "audit_check": {"ok": trail["ok"], "problems": trail["problems"]},
+        "session_end": ({"t": session_end_t, "crosses": stats.get("crosses"), "gap_at_cross_s": stats.get("gap_at_cross_s")}
+                        if session_end_t is not None else None),
+    }
+    _atomic_json(proc / MONITOR_JSON, monitor)
+    return monitor
+
+
+def evidence_manifest(proc: Path) -> dict:
+    proc = Path(proc)
+    files = {p.relative_to(proc).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(proc.rglob("*"))
+             if p.is_file() and p.name not in (EVIDENCE_MANIFEST,) and not p.name.endswith(".tmp")}
+    return files
+
+
+REQUIRED_EVIDENCE = ("launch.json", "facts.json", "beats.jsonl", "sched_audit.jsonl", MONITOR_JSON, "evidence_pre_removal/manifest.json")
+
+
+def verify_evidence(proc: Path) -> bool:
+    """Evidencias minimas presentes e o manifesto pre-remocao confere com os arquivos (hash por arquivo)."""
+    proc = Path(proc)
+    if any(not (proc / rel).is_file() for rel in REQUIRED_EVIDENCE):
+        return False
+    folder = proc / sched.EVIDENCE_DIR
+    manifest = _read_json(folder / "manifest.json") or {}
+    if not manifest:
+        return False
+    return all((folder / n).is_file() and hashlib.sha256((folder / n).read_bytes()).hexdigest() == h for n, h in manifest.items())
+
+
+def probe_finish(runs_root, name: str, *, level: str, run=None, alive=host.pid_alive, clock=time.time, anchors_dir=None) -> dict:
+    """Preserva as evidencias, remove a tarefa (verificado), confere orfaos/trilha/manifesto e julga. Nao apaga evidencia."""
+    run = run or sched.run_default
+    proc = detach.proc_dir(runs_root, name)
+    anchors = anchors_dir or (Path(runs_root) / sched.ANCHOR_DIR)
+    audit = sched.Audit(proc, anchors, name, clock)
+    monitor = _read_json(proc / MONITOR_JSON)
+    if monitor is None:
+        raise detach.DetachError("monitor ausente: execute `sched-probe --phase monitor` antes de encerrar")
+    removal_ok = True
+    try:
+        removal = sched.remove_verified(run, name, proc, audit)
+    except sched.RemovalNotVerified as error:
+        removal, removal_ok = {"error": str(error)}, False
+    orphans = [p for p in sched.find_processes(run, name) if alive(p.get("pid"))]
+    folder = sched.list_folder(run)
+    trail = audit.verify()
+    manifest = evidence_manifest(proc)
+    (proc / EVIDENCE_MANIFEST).write_bytes(json.dumps(manifest, sort_keys=True).encode("utf-8"))
+    evidence_ok = verify_evidence(proc)
+    final = {**monitor, "removal_verified": removal_ok and (removal.get("removed") or removal.get("already_absent")),
+             "orphan_processes": len(orphans), "folder_clean": not folder.get("tasks"), "audit_ok": trail["ok"],
+             "evidence_manifest_ok": evidence_ok}
+    facts = _read_json(proc / FACTS) or {}
+    verdict = judge_detach2(facts, final, level)
+    doc = {"verdict": verdict, "removal": removal, "orphans": orphans, "evidence_files": len(manifest)}
+    _atomic_json(proc / VERDICT_JSON, doc)
+    return doc
+
+
 def main(argv=None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(prog="sim.runner.detach_probe")
     parser.add_argument("--proc-dir", required=True)
     parser.add_argument("--interactive-session", type=int, required=True)
+    parser.add_argument("--detach2", action="store_true", help="sonda DETACH-2 (Task Scheduler): fatos incrementais")
+    parser.add_argument("--cap-s", type=int, default=1500)
     args = parser.parse_args(argv)
-    collect(Path(args.proc_dir), interactive_session=args.interactive_session)
+    if args.detach2:
+        collect2(Path(args.proc_dir), interactive_session=args.interactive_session, cap_s=args.cap_s)
+    else:
+        collect(Path(args.proc_dir), interactive_session=args.interactive_session)
     return 0
 
 

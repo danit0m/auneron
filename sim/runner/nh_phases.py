@@ -31,6 +31,7 @@ from sim.runner import harness_side
 from sim.runner import host
 from sim.runner import rim as rim_mod
 from sim.runner import runner as runner_mod
+from sim.runner import sched
 from sim.runner.errors import PreflightFailed
 from sim.runner.errors import RunnerError
 from sim.runner.lab_ports import lab_ports
@@ -269,6 +270,7 @@ def collect_preflight_facts(lab, rim: dict, run_dir: Path, bundle: bundle_mod.Bu
         "P13": {"awake_acquired": host.keep_awake(), "foreign_docker_activity": len(others),
                 "dev_untouched": (lab.dir / "dev_snapshot_before.json").exists()},
         "P14": p14,
+        "P15": sched.scan_unreconciled(runs_root(), sched.run_default, alive=host.pid_alive),
     }
 
 

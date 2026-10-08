@@ -22,7 +22,8 @@ ledger.
 | `results.py` | digest FINAL dos resultados (`evaluation.json`, `surprises.json`, `claim.json`) vinculado ao ledger e ao digest do pacote |
 | `bundle.py` / `declare.py` | bundle de cenario (NH ou fixture SR-1) e parte declarada do RIM |
 | `runner.py` | `NhRunner`: laco do run, R0, abort com preservacao, parada controlada |
-| `detach.py` / `detach_probe.py` | processo destacado via WMI (lancador, monitor, `stop`/`kill`/`tail`) e sonda DETACH-1 (juiz puro) |
+| `sched.py` | adaptador do Windows Task Scheduler (SIM-1.5G): XML deterministico, validacao semantica, auditoria encadeada, reconciliacao, fatos do P15 |
+| `detach.py` / `detach_probe.py` | lancador padrao `launch_detached` (Task Scheduler), monitor, `stop`/`kill`/`tail`; WMI (`launch`) so como mecanismo REJEITADO (DETACH-1 FAIL); sonda DETACH-2 (fatos incrementais, juiz de 12 criterios) |
 | `live.py` / `lab_ports.py` / `nh_phases.py` / `harness_side.py` | ligacao ao lab (portas finas) e lado do harness no host. **Somente `harness_side` e `nh_phases` leem o Oracle** |
 | `host.py` | trava do runner, maquina acordada, `StopFlag` (sinal ou arquivo `STOP`), `HeartbeatWriter` |
 | `cli.py` | `python -m sim.runner.cli ...` |
@@ -42,3 +43,17 @@ ledger.
 
 Os adaptadores `lab_ports.py`/`nh_phases.py`/`detach.py` so foram conferidos com duplos (comandos e parsing); **nenhum processo
 destacado foi criado**. O modelo de balanco de massa vem do produto falso e do Discovery; o SR-1 o confirma.
+
+
+## Task Scheduler (SIM-1.5G, DETACH-2 - candidato, NAO provado)
+
+* Padrao: `launch` registra `\AuneronSim\<run_id>` (InteractiveToken, LeastPrivilege, usuario atual, sem gatilhos, sem reinicio,
+  `IgnoreNew`, limite explicito), valida o XML exportado, inicia e espera o heartbeat. Sem senha/S4U/elevacao; privilegio
+  diferente do medido => falha fechada. WMI so com `--mechanism wmi --allow-rejected-wmi` (reprovado no DETACH-1).
+* `sched-list`, `sched-audit-verify`, `sched-reconcile [--apply [--confirm]]` e `sched-probe --phase launch|monitor|finish
+  --level L1|L2` (sonda DETACH-2: exige autorizacao do PO para criar a tarefa temporaria).
+* Trilha `sched_audit.jsonl` (hash encadeado, ancoras em dois lugares) em `<run_id>.proc/`, fora do pacote: R0, RIM, ledger e
+  selos nao mudam. Evidencias sao preservadas ANTES de remover; remocao nao verificada bloqueia novos ensaios (P15).
+* Logoff e reinicio continuam encerrando o processo e o Docker Desktop: condicao operacional proibida; vale o R0 (sem retomada).
+* Limites de execucao: sondas L1 `PT30M`, L2 `PT2H`; SR-1 `PT7H`; NH `PT14H` (reservado ao futuro RUN).
+* Nada disto foi executado de verdade: os scripts PowerShell foram so verificados sintaticamente e os testes usam duplos.

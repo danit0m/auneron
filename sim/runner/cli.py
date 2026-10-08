@@ -12,8 +12,11 @@ CLI do plano de controle do run:
     python -m sim.runner.cli growth-model    --run-id RUN-... [--out <arquivo>]
     python -m sim.runner.cli contamination-scan --root <dir> [--allow <caminho relativo> ...]
 
-    # PROCESSO DESTACADO (monitor/parada; `launch` cria o processo via WMI)
+    # PROCESSO DESTACADO (padrao: Windows Task Scheduler, SIM-1.5G; WMI foi reprovado no DETACH-1 e esta desabilitado)
     python -m sim.runner.cli launch|status|stop|kill|tail --run-id RUN-...
+    python -m sim.runner.cli sched-list
+    python -m sim.runner.cli sched-audit-verify|sched-reconcile --run-id RUN-... [--apply [--confirm]]
+    python -m sim.runner.cli sched-probe --phase launch|monitor|finish --level L1|L2 [--name <sonda>]   # DETACH-2 (autorizacao do PO)
 
     # LIVE (precisam de um lab ja de pe; NAO exercitados nesta etapa)
     python -m sim.runner.cli stage|open|preflight|run --instance <id> [--bundle nh|sr1]
@@ -41,8 +44,9 @@ from sim.runner.registry import Registry
 OFFLINE = ("verify-ledger", "verify-package", "verify-results", "seal-unclean", "authorize-rehearsal", "claim", "evaluate",
            "growth-model", "contamination-scan")
 PROCESS = ("launch", "status", "stop", "kill", "tail")
+SCHED = ("sched-list", "sched-audit-verify", "sched-reconcile", "sched-probe")
 LIVE = ("stage", "open", "preflight", "run")
-NEEDS_RUN_ID = OFFLINE[:-1] + PROCESS + ("preflight", "run")
+NEEDS_RUN_ID = OFFLINE[:-1] + PROCESS + ("preflight", "run", "sched-audit-verify", "sched-reconcile")
 PROFILE_KEYS = {"ops": "ops_total", "accounts": "accounts_total", "days": "days_total"}
 
 
@@ -152,19 +156,34 @@ def _offline(args) -> int:
 
 def _process(args) -> int:
     from sim.runner import detach
+    from sim.runner import sched
 
     root = _runs_root(args)
     proc = detach.proc_dir(root, args.run_id)
     run_dir = root / args.run_id
     if args.command == "status":
         state = RunLedger(run_dir).state if run_dir.exists() else None
-        _print(detach.assess(proc, state))
+        launch_doc = detach.read_launch(proc)
+        task, task_error = None, None
+        if launch_doc and launch_doc.get("mechanism") == sched.MECHANISM:
+            try:
+                task = sched.info(sched.run_default, launch_doc["run_id"])
+            except sched.SchedError as error:
+                task_error = str(error)[:200]
+        report = detach.assess(proc, state, task=task)
+        if task_error:
+            report["task_error"] = task_error
+        _print(report)
         return 0
     if args.command == "stop":
         _print({"stop": str(detach.request_stop(proc, args.reason or "OPERATOR_STOP"))})
         return 0
     if args.command == "kill":
-        _print(detach.kill(proc, confirm=args.confirm))
+        launch_doc = detach.read_launch(proc)
+        if launch_doc and launch_doc.get("mechanism") == sched.MECHANISM:
+            _print(detach.kill_task(proc, confirm=args.confirm))
+        else:
+            _print(detach.kill(proc, confirm=args.confirm))
         return 0
     if args.command == "tail":
         for line in detach.tail(proc, args.stream, args.lines):
@@ -176,9 +195,62 @@ def _process(args) -> int:
     cli_args = f'run --run-id {args.run_id} --runs-root "{root}" --instance {args.instance}'
     env = {"AUNERON_SIM_HOME": args.sim_home or "", "PYTHONUTF8": "1", "PYTHONPATH": args.repo}
     info = {"executable": args.python}
-    _print(detach.launch(root, args.run_id, python=args.python, repo=args.repo, cli_args=cli_args,
-                         env={k: v for k, v in env.items() if v}, ledger_state=ledger.state, python_info=info))
+    _print(detach.launch_detached(root, args.run_id, python=args.python, repo=args.repo, cli_args=cli_args,
+                                  env={k: v for k, v in env.items() if v}, ledger_state=ledger.state, python_info=info,
+                                  mechanism=args.mechanism, allow_rejected=args.allow_rejected_wmi, profile=args.profile))
     return 0
+
+
+def _sched(args) -> int:
+    from sim.runner import detach
+    from sim.runner import detach_probe
+    from sim.runner import sched
+    from sim.runner.host import pid_alive
+
+    root = _runs_root(args)
+    if args.command == "sched-list":
+        _print(sched.list_folder(sched.run_default))
+        return 0
+    if args.command == "sched-probe":
+        return _sched_probe(args, root, detach_probe)
+    proc = detach.proc_dir(root, args.run_id)
+    if args.command == "sched-audit-verify":
+        report = sched.Audit(proc, root / sched.ANCHOR_DIR, args.run_id).verify()
+        _print(report)
+        return 0 if report["ok"] else 1
+    run_dir = root / args.run_id
+    state = RunLedger(run_dir).state if run_dir.exists() else None
+    report = sched.reconcile(sched.run_default, proc=proc, anchors_dir=root / sched.ANCHOR_DIR, name=args.run_id, ledger_state=state,
+                             alive=pid_alive, apply=args.apply, confirm=args.confirm, markers=[args.run_id])
+    _print(report)
+    return 0 if report["ok"] else 1
+
+
+def _sched_probe(args, root: Path, detach_probe) -> int:
+    from sim.runner import sched
+
+    if args.level not in detach_probe.LEVELS:
+        raise RunnerError("--level deve ser L1 ou L2")
+    if args.phase == "launch":
+        if not args.python or not args.repo:
+            raise RunnerError("sched-probe launch exige --python (venv estavel) e --repo")
+        name = args.name or detach_probe.probe_name(args.level)
+        doc = detach_probe.probe_launch(root, name, level=args.level, python=args.python, repo=args.repo,
+                                        interactive_session=detach_probe._session_id() or 0)
+        _print({"name": name, "task": doc["task"], "heartbeat_pid": doc["heartbeat_pid"], "engine_pids": doc["engine_pids"]})
+        return 0
+    if not args.name:
+        raise RunnerError("--name e obrigatorio em monitor/finish")
+    if args.phase == "monitor":
+        monitor = detach_probe.probe_monitor(root, args.name, level=args.level, session_end_t=args.session_end_epoch)
+        _print({"name": args.name, "beats": monitor["beats"], "probe_alive_before_stop": monitor["probe_alive_before_stop"],
+                "exit": monitor["exit"], "audit_ok": monitor["audit_check"]["ok"]})
+        return 0
+    if args.phase == "finish":
+        doc = detach_probe.probe_finish(root, args.name, level=args.level)
+        _print({"name": args.name, **doc["verdict"], "removal": doc["removal"], "orphans": len(doc["orphans"])})
+        return 0 if doc["verdict"]["verdict"] == "PASS" else 1
+    raise RunnerError("--phase deve ser launch, monitor ou finish")
 
 
 def _live(args) -> int:
@@ -203,7 +275,7 @@ def _live(args) -> int:
 
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sim.runner.cli")
-    parser.add_argument("command", choices=[*OFFLINE, *PROCESS, *LIVE])
+    parser.add_argument("command", choices=[*OFFLINE, *PROCESS, *SCHED, *LIVE])
     parser.add_argument("--run-id")
     parser.add_argument("--runs-root")
     parser.add_argument("--digest")
@@ -225,6 +297,14 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--python")
     parser.add_argument("--repo")
     parser.add_argument("--sim-home")
+    parser.add_argument("--mechanism", default="task_scheduler", choices=("task_scheduler", "wmi"))
+    parser.add_argument("--allow-rejected-wmi", action="store_true", help="WMI foi REPROVADO no DETACH-1; so para reproducao")
+    parser.add_argument("--profile", default="SR1", choices=("SR1", "NH_RUN"))
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--phase", choices=("launch", "monitor", "finish"))
+    parser.add_argument("--level", default="L1")
+    parser.add_argument("--name")
+    parser.add_argument("--session-end-epoch", type=int)
     args = parser.parse_args(argv)
     if args.command in NEEDS_RUN_ID and not args.run_id:
         parser.error("--run-id e obrigatorio")
@@ -232,11 +312,15 @@ def main(argv: list | None = None) -> int:
         parser.error("--root e obrigatorio")
     if args.command in ("stage", "open", "preflight", "run") and not args.instance:
         parser.error("--instance e obrigatorio nas fases live")
+    if args.command == "sched-probe" and not args.phase:
+        parser.error("--phase e obrigatorio em sched-probe")
     if args.command == "authorize-rehearsal" and not (args.by and args.reference):
         parser.error("--by e --reference sao obrigatorios")
     try:
         if args.command in OFFLINE:
             return _offline(args)
+        if args.command in SCHED:
+            return _sched(args)
         return _process(args) if args.command in PROCESS else _live(args)
     except RunnerError as error:
         print(f"CONTRATO VIOLADO ({type(error).__name__}): {error}")

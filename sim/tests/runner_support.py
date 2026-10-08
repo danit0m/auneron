@@ -78,6 +78,8 @@ def good_preflight_facts(rim: dict) -> dict:
         "P13": {"awake_acquired": True, "foreign_docker_activity": 0, "dev_untouched": True},
         "P14": {"volumes_created_after_previous_terminal": True, "driver_state_present": False, "collector_state_present": False,
                 "business_rows": 0, "marker_rows": 0, "previous_runs_non_terminal": False},
+        "P15": {"scheduler_running": True, "folder_tasks": 0, "unreconciled_runs": 0, "orphan_processes": 0,
+                "reboot_pending": False, "elevated": False},
     }
 
 
