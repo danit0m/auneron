@@ -172,11 +172,41 @@ def good_user_aliases(host: FakeHost) -> list:
     return [host.user, host.sid]
 
 
+class FakeHandle:
+    """Handle retido de um processo FALSO: preso ao objeto do processo ORIGINAL (a reutilizacao do PID nao o redireciona)."""
+
+    def __init__(self, fake, pid, entry) -> None:
+        self.fake, self.pid, self.entry = fake, pid, entry
+        self.closed = False
+
+    def created(self):
+        return self.fake.handle_created.get(self.pid, self.entry["created"])
+
+    def alive(self):
+        if self.pid in self.fake.indeterminate:
+            return None
+        return self.entry["alive"]
+
+    def terminate(self):
+        if self.pid in self.fake.refuse_terminate:
+            return False
+        self.fake.terminated.append((self.pid, self.entry["created"]))
+        self.entry["alive"] = False
+        return True
+
+    def close(self):
+        self.closed = True
+        self.fake.closed.append(self.pid)
+
+
 class FakeOS:
-    """Duplo do SO para IDENTIDADE de processo (SIM-1.5G.3): PID -> {criacao, estado, pai, nome}. Nenhum processo real e consultado."""
+    """Duplo do SO para IDENTIDADE de processo (SIM-1.5G.3/1.5G.4): PID -> {criacao, estado, pai, nome}; `open` devolve handle retido.
+    Nenhum processo real e consultado nem encerrado."""
 
     def __init__(self) -> None:
         self.procs, self.denied = {}, set()
+        self.terminated, self.closed, self.opened = [], [], []
+        self.refuse_terminate, self.handle_created, self.indeterminate = set(), {}, set()
 
     def add(self, pid, *, created=1_000, ppid=1, name="python.exe"):
         self.procs[pid] = {"created": created, "ppid": ppid, "name": name, "alive": True}
@@ -186,7 +216,17 @@ class FakeOS:
         self.procs[pid]["alive"] = False
 
     def reuse(self, pid, created):
-        self.procs[pid].update(created=created, alive=True)
+        old = self.procs[pid]                                                      # NOVO objeto: handles antigos continuam no processo original
+        self.procs[pid] = {"created": created, "ppid": old["ppid"], "name": old["name"], "alive": True}
+
+    def open(self, pid):
+        if pid in self.denied:
+            return {"state": "UNKNOWN", "error": "acesso negado"}
+        entry = self.procs.get(pid)
+        if entry is None or not entry["alive"]:
+            return {"state": "ABSENT", "error": "ausente"}
+        self.opened.append(pid)
+        return {"state": "ALIVE", "created": entry["created"], "handle": FakeHandle(self, pid, entry)}
 
     def deny(self, pid):
         self.denied.add(pid)

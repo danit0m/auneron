@@ -121,6 +121,82 @@ def snapshot_native() -> dict:
     return table
 
 
+class ProcHandle:
+    """Handle RETIDO de um processo (SIM-1.5G.4). Enquanto aberto, o Windows nao recicla o PID: a criacao lida por ele e o
+    encerramento por ele (`TerminateProcess(handle)`) sao imunes a reutilizacao de PID entre a verificacao e a acao."""
+
+    def __init__(self, pid: int, raw, kernel) -> None:
+        self.pid, self._raw, self._k = pid, raw, kernel
+
+    def _times(self):
+        import ctypes
+        import ctypes.wintypes as w
+
+        created, exited, kernel, user = w.FILETIME(), w.FILETIME(), w.FILETIME(), w.FILETIME()
+        if not self._k.GetProcessTimes(self._raw, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        return (created.dwHighDateTime << 32) | created.dwLowDateTime, (exited.dwHighDateTime << 32) | exited.dwLowDateTime
+
+    def created(self) -> int | None:
+        found = self._times()
+        return found[0] if found else None
+
+    def alive(self) -> bool | None:
+        """True/False pelo tempo de saida gravado; None se nao for possivel ler (indeterminado, nunca 'terminou')."""
+        found = self._times()
+        return None if found is None else found[1] == 0
+
+    def terminate(self) -> bool:
+        return bool(self._k.TerminateProcess(self._raw, 1))
+
+    def close(self) -> None:
+        if self._raw:
+            self._k.CloseHandle(self._raw)
+            self._raw = None
+
+
+def open_native(pid) -> dict:
+    """Abre (e RETEM) um handle com consulta + encerramento. -> {state: ALIVE, handle, created} | {state: ABSENT} | {state: UNKNOWN, error}.
+    Acesso negado ou qualquer falha => UNKNOWN (nunca 'ausente')."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return {"state": UNKNOWN, "error": "pid invalido"}
+    if sys.platform != "win32":
+        return {"state": UNKNOWN, "error": "plataforma sem OpenProcess"}
+    import ctypes
+    import ctypes.wintypes as w
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenProcess.restype = w.HANDLE
+    k.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+    k.GetProcessTimes.argtypes = [w.HANDLE, ctypes.POINTER(w.FILETIME), ctypes.POINTER(w.FILETIME), ctypes.POINTER(w.FILETIME),
+                                  ctypes.POINTER(w.FILETIME)]
+    k.TerminateProcess.argtypes = [w.HANDLE, w.UINT]
+    k.CloseHandle.argtypes = [w.HANDLE]
+    raw = k.OpenProcess(0x1000 | 0x0001, False, pid)                           # QUERY_LIMITED_INFORMATION | TERMINATE
+    if not raw:
+        error = ctypes.get_last_error()
+        if error == ERROR_INVALID_PARAMETER:
+            return {"state": ABSENT, "error": "OpenProcess: PID inexistente"}
+        return {"state": UNKNOWN, "error": f"OpenProcess falhou ({error})"}
+    handle = ProcHandle(pid, raw, k)
+    made, alive = handle.created(), handle.alive()
+    if made is None or alive is None:
+        handle.close()
+        return {"state": UNKNOWN, "error": "GetProcessTimes falhou"}
+    if not alive:
+        handle.close()
+        return {"state": ABSENT, "created": made, "error": "processo encerrado (handle ainda aberto)"}
+    return {"state": ALIVE, "handle": handle, "created": made}
+
+
+class NativeOps:
+    """Acesso ao SO usado pela contencao: consulta, tabela de processos e handle retido. Os testes injetam `FakeOS` (mesma interface)."""
+
+    query = staticmethod(query_native)
+    snapshot = staticmethod(snapshot_native)
+    open = staticmethod(open_native)
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # identidade, ancestrais e avaliacao de alvos (puros dado `query`/`snapshot`)
 # ---------------------------------------------------------------------------------------------------------------------

@@ -138,7 +138,8 @@ def test_an_exception_whose_exit_json_cannot_be_written_reports_the_secondary_fa
 
 
 @pytest.mark.parametrize("facts,expected", [({"exit_code": 0}, 0), ({"exit_code": 1}, 1), ({"exit_code": 2}, 2), ({"exit_code": 4}, 4),
-                                            ({"exit_code": 5}, 5), ({"exit_code": 3}, 1), ({"exit_code": 7}, 1), ({"exit_code": True}, 1),
+                                            ({"exit_code": 5}, 5), ({"exit_code": 6}, 6), ({"exit_code": 7}, 7), ({"exit_code": 3}, 1), ({"exit_code": 8}, 1),
+                                            ({"exit_code": True}, 1),
                                             ({"exit_code": "0"}, 1), ({"exit_code": None}, 1), ({}, 1), (None, 1), ("x", 1)])
 def test_the_process_exit_code_comes_from_the_table_and_a_missing_code_is_never_zero(facts, expected):
     assert detach_probe.process_exit_code(facts) == expected
@@ -328,4 +329,5 @@ def test_the_nh_run_phase_records_its_exit_through_the_single_contract_function(
     from sim.runner import nh_phases
 
     source = inspect.getsource(nh_phases.phase_run)
-    assert "detach.run_and_record_exit(proc, nh.run, cleanup)" in source and "detach.write_exit(" not in source
+    assert "detach.run_and_record_exit(proc, nh.run, cleanup, lost=lambda: bool(guard is not None and guard.lost))" in source
+    assert "detach.write_exit(" not in source and "start_containment(proc, stop)" in source and "guard.finish()" in source

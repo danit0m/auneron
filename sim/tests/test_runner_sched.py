@@ -13,6 +13,7 @@ import subprocess
 import pytest
 
 from sim.runner import cli
+from sim.runner import containment
 from sim.runner import detach
 from sim.runner import detach_probe
 from sim.runner import preflight
@@ -624,13 +625,14 @@ def test_scan_reports_residues_and_p15_blocks_every_kind_of_residue(tmp_path):
 
 
 GOOD_P15 = {"scheduler_running": True, "folder_tasks": 0, "unreconciled_runs": 0, "orphan_processes": 0, "reboot_pending": False,
-            "elevated": False}
+            "elevated": False, "owned_alive": 0, "owned_unknown": 0}
 
 
 def test_p15_accepts_only_a_clean_host_and_each_residue_fails_alone():
     assert preflight.judge_p15(dict(GOOD_P15)) == []
     for key, value in (("scheduler_running", False), ("folder_tasks", 1), ("unreconciled_runs", 2), ("orphan_processes", 1),
-                       ("reboot_pending", True), ("elevated", True), ("reboot_pending", None), ("folder_tasks", True)):
+                       ("reboot_pending", True), ("elevated", True), ("reboot_pending", None), ("folder_tasks", True), ("owned_alive", 1), ("owned_alive", None),
+                       ("owned_unknown", 1), ("owned_unknown", None)):
         assert preflight.judge_p15({**GOOD_P15, key: value}), key
 
 
@@ -642,6 +644,10 @@ def test_p15_is_part_of_the_preflight_and_a_missing_fact_fails_closed():
     assert [f["check"] for f in preflight.judge_preflight(bad, rim)] == ["P15"]
     gone = {k: v for k, v in facts.items() if k != "P15"}
     assert preflight.judge_preflight(gone, rim)[0]["check"] == "FACTS" and "P15" in preflight.REQUIRED
+    for fact in ("owned_alive", "owned_unknown"):                                    # SIM-1.5G.4: fato ausente = reprovado
+        partial = {**facts, "P15": {k: v for k, v in facts["P15"].items() if k != fact}}
+        missing = preflight.judge_preflight(partial, rim)
+        assert missing[0]["check"] == "FACTS" and f"P15.{fact}" in missing[0]["detail"]
 
 
 # ------------------------------------------------------------------------------------------------------ kill / assess
@@ -688,11 +694,12 @@ def good_monitor(level="L1"):
     """Monitor v2 (vigilia duravel): o fim do lancador e do CLI iniciador vem da tarefa, nao da hora de inicio do monitor."""
     required = detach_probe.LEVELS[level]["required_s"]
     return {"task": "\\AuneronSim\\X", "xml_sha256": "ab", "registered_verified": True, "evidence_version": "v2",
+            "containment": {"alive": 0, "unknown": 0, "suspects": 0},
             "schedule": {"pid": 555, "name": "svchost.exe", "session": 0},
             "engine": {"pid": 900, "ppid": 555, "name": "cmd.exe", "session": 1}, "engine_tree": [900, 902, 901],
             "heartbeat_pid_in_tree": True, "launcher_pid": 4084, "launcher_alive": False, "probe_alive_before_stop": True,
             "beats": {"max_gap_s": 5, "duration_s": required, "survived_after_s": 1, "survived_durable_s": required - 5},
-            "exit": {"code": 0, "reason": "STOP"}, "termination": {"class": "STOP_CLEAN", "success": True, "scheduler_checked": True},
+            "exit": {"code": 0, "reason": "STOP"}, "termination": {"class": "STOP_CLEAN", "success": True, "scheduler_checked": True, "owned_checked": True},
             "exit_code_txt": 0, "task_state_after": 3, "last_result_after": 0, "triggers": 0, "restart_on_failure": False,
             "instances": {"engines_max": 1, "engines_min_while_alive": 1, "distinct_engine_pids": [900], "samples": 120,
                           "sample_errors": 0, "second_start_attempted": True, "dense_samples_after_second_start": 20,
@@ -710,7 +717,7 @@ def legacy_monitor(level="L1"):
     """Monitor de evidencia HISTORICA verificavel (sem vigilia duravel): caminho legado de D2-08/D2-12."""
     required = detach_probe.LEVELS[level]["required_s"]
     doc = good_monitor(level)
-    for key in ("termination", "watch", "launcher_watch", "audit_write_failures"):
+    for key in ("termination", "watch", "launcher_watch", "audit_write_failures", "containment"):
         doc.pop(key)
     doc.update(evidence_version="legacy-1", session_end={"t": 100, "crosses": True, "gap_at_cross_s": 5})
     doc["beats"] = {"max_gap_s": 5, "duration_s": required, "survived_after_s": required - 5}
@@ -1009,7 +1016,8 @@ def test_probe_launch_uses_the_probe_module_the_probe_profile_and_one_task(tmp_p
     assert detach_probe.probe_name("L1", clock=lambda: 0) == "DETACH2-PROBE-L1-19700101T000000Z"
 
 
-def run_monitor_and_finish(tmp_path, host, name, proc, level="L1", *, probe_dies=False, tweak=None, outputs=None, new_session=True, **over):
+def run_monitor_and_finish(tmp_path, host, name, proc, level="L1", *, probe_dies=False, tweak=None, outputs=None, new_session=True, orphans=False,
+                           **over):
     write_probe_outputs(proc, level, **(outputs or {}))
     if new_session:                                  # o monitor roda numa NOVA sessao: cadeia propria, sem o CLI iniciador (7777)
         host.os.add(8000, created=150, ppid=1, name="claude.exe").add(8001, created=160, ppid=8000, name="bash.exe")
@@ -1023,13 +1031,25 @@ def run_monitor_and_finish(tmp_path, host, name, proc, level="L1", *, probe_dies
             (proc / detach.EXIT_CODE).write_text("0\n")
             host.tasks[name].update(state=sched.STATE_READY, instances=[], last=0)
             host.alive_pids -= {host.engine_pid, host.probe_pid, host.launcher_pid}        # so a arvore da tarefa termina
+            for pid in (901, 902, 900):
+                host.os.end(pid)
 
+    table_fn = None
     if probe_dies:
         host.alive_pids.clear()
+        if orphans:                                      # F-1: o Scheduler encerrou so o cmd; launcher e interpretador seguem vivos
+            host.os.end(900)
+            marker = containment.owner_marker(proc)
+            rows = [{"pid": 902, "ppid": 900, "name": "python.exe", "cmd": f'"C:\\venv\\python.exe"  {marker}'},
+                    {"pid": 901, "ppid": 902, "name": "python.exe", "cmd": f'"C:\\Python311\\python.exe" {marker}'}]
+            table_fn = lambda: rows                      # noqa: E731
+        else:
+            for pid in (901, 902, 900):
+                host.os.end(pid)
     # o lancador (passo A) ja terminou: o `launcher_pid` gravado na trilha nao esta vivo
     monitor = detach_probe.probe_monitor(tmp_path, name, level=level, run=host, alive=host.alive, sleep=sleep, clock=lambda: 3000,
-                                         poll_s=1, query=host.os.query, snapshot=host.os.snapshot, **over)
-    final = detach_probe.probe_finish(tmp_path, name, level=level, run=host, alive=host.alive, clock=lambda: 3100)
+                                         poll_s=1, ops=host.os, table_fn=table_fn, **over)
+    final = detach_probe.probe_finish(tmp_path, name, level=level, run=host, alive=host.alive, clock=lambda: 3100, ops=host.os, table_fn=table_fn)
     return monitor, final
 
 

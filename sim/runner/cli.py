@@ -14,6 +14,7 @@ CLI do plano de controle do run:
 
     # PROCESSO DESTACADO (padrao: Windows Task Scheduler, SIM-1.5G; WMI foi reprovado no DETACH-1 e esta desabilitado)
     python -m sim.runner.cli launch|status|stop|kill|tail --run-id RUN-...
+    python -m sim.runner.cli recover --run-id RUN-... [--confirm] [--grace-s N]   # SIM-1.5G.4: processos do run por identidade comprovada
     python -m sim.runner.cli sched-list
     python -m sim.runner.cli sched-audit-verify|sched-reconcile --run-id RUN-... [--apply [--confirm]]
     python -m sim.runner.cli sched-probe --phase launch|monitor|finish --level L1|L2 [--name <sonda>]   # DETACH-2 (autorizacao do PO)
@@ -45,7 +46,7 @@ from sim.runner.registry import Registry
 
 OFFLINE = ("verify-ledger", "verify-package", "verify-results", "seal-unclean", "authorize-rehearsal", "claim", "evaluate",
            "growth-model", "contamination-scan")
-PROCESS = ("launch", "status", "stop", "kill", "tail")
+PROCESS = ("launch", "status", "stop", "kill", "tail", "recover")
 SCHED = ("sched-list", "sched-audit-verify", "sched-reconcile", "sched-probe")
 LIVE = ("stage", "open", "preflight", "run")
 NEEDS_RUN_ID = OFFLINE[:-1] + PROCESS + ("preflight", "run", "sched-audit-verify", "sched-reconcile")
@@ -187,6 +188,14 @@ def _process(args) -> int:
         else:
             _print(detach.kill(proc, confirm=args.confirm))
         return 0
+    if args.command == "recover":
+        from sim.runner import containment
+
+        launch_doc = detach.read_launch(proc) or {}
+        report = containment.recover(proc, sched.run_default, launch_doc.get("run_id") or args.run_id, confirm=args.confirm, grace_s=args.grace_s,
+                                     anchors_dir=root / sched.ANCHOR_DIR)
+        _print(report)
+        return 0 if not report["blocked"] and report.get("owned_alive_after") == 0 else 1
     if args.command == "tail":
         for line in detach.tail(proc, args.stream, args.lines):
             print(line)
@@ -222,8 +231,12 @@ def _sched(args) -> int:
         return 0 if report["ok"] else 1
     run_dir = root / args.run_id
     state = RunLedger(run_dir).state if run_dir.exists() else None
+    from sim.runner import containment
+
+    owned = containment.owned_summary(proc, sched.run_default)               # SIM-1.5G.4: processos do run por identidade
     report = sched.reconcile(sched.run_default, proc=proc, anchors_dir=root / sched.ANCHOR_DIR, name=args.run_id, ledger_state=state,
-                             alive=pid_alive, apply=args.apply, confirm=args.confirm, markers=[args.run_id])
+                             alive=pid_alive, apply=args.apply, confirm=args.confirm, markers=[args.run_id], owned=owned)
+    report["owned"] = owned
     _print(report)
     return 0 if report["ok"] else 1
 
@@ -317,6 +330,7 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--allow-rejected-wmi", action="store_true", help="WMI foi REPROVADO no DETACH-1; so para reproducao")
     parser.add_argument("--profile", default="SR1", choices=("SR1", "NH_RUN"))
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--grace-s", type=float, default=20)
     parser.add_argument("--phase", choices=("launch", "monitor", "finish"))
     parser.add_argument("--level", default="L1")
     parser.add_argument("--name")

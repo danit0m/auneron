@@ -25,7 +25,8 @@ def doc(code, reason, **extra):
 
 # ------------------------------------------------------------------------------------------------------ tabela
 def test_the_exit_code_table_is_the_single_source_and_never_reuses_the_cli_contract_code():
-    assert termination.EXIT_CODES == {"STOP": 0, "COMPLETED": 0, "EXCEPTION": 1, "ABORTED": 2, "TIMEOUT": 4, "EVIDENCE_FAILURE": 5}
+    assert termination.EXIT_CODES == {"STOP": 0, "COMPLETED": 0, "EXCEPTION": 1, "ABORTED": 2, "TIMEOUT": 4, "EVIDENCE_FAILURE": 5,
+                                      "ENGINE_LOST": 6, "CONTAINMENT_UNAVAILABLE": 7}
     assert termination.CLI_CONTRACT_VIOLATION == 3 and 3 not in termination.EXIT_CODES.values()      # 3 = violacao de contrato da CLI
     assert [r for r, c in termination.EXIT_CODES.items() if c == 0] == ["STOP", "COMPLETED"]            # so STOP e COMPLETED saem 0
     for reason in ("TIMEOUT", "EXCEPTION", "ABORTED", "EVIDENCE_FAILURE"):
@@ -96,20 +97,47 @@ def test_without_exit_json_only_positive_evidence_names_a_cause():
 
 def test_forced_end_and_scheduler_limit_need_their_own_positive_evidence():
     T = termination.TASK_TERMINATED
-    assert C(None, None, T, ["STARTED", "FORCED_END"])["class"] == "FORCED_END"
-    assert C(None, None, T, [{"event": "FORCED_END"}])["class"] == "FORCED_END"                         # registros da trilha tambem servem
-    assert C(None, None, 0, ["FORCED_END"])["class"] == "UNKNOWN"                                        # a trilha diz, o Scheduler nao confirma
-    assert C(None, None, None, ["FORCED_END"])["class"] == "UNKNOWN"
-    assert C(None, None, T, [])["class"] == "UNKNOWN"                                                     # terminado, mas sem causa
-    assert C(None, None, T, [], elapsed_s=7200, limit_s=7200)["class"] == "SCHEDULER_LIMIT"
-    assert C(None, None, T, [], elapsed_s=7199, limit_s=7200)["class"] == "UNKNOWN"                      # antes do limite
-    assert C(None, None, T, [], elapsed_s=None, limit_s=7200)["class"] == "UNKNOWN"
-    assert C(None, None, T, [], elapsed_s=8000, limit_s=0)["class"] == "UNKNOWN"
-    assert C(None, None, 0, [], elapsed_s=8000, limit_s=7200)["class"] == "UNKNOWN"                      # sem 0x41306 nao e limite
-    assert C(None, None, T, ["FORCED_END"], elapsed_s=8000, limit_s=7200)["class"] == "FORCED_END"       # com FORCED_END, nunca LIMIT
-    for forged in (C(None, None, T, [], elapsed_s=True, limit_s=True), C(None, None, T, ["forced_end"])):
+    assert C(None, None, T, ["STARTED", "FORCED_END"], owned_alive=0)["class"] == "FORCED_END"
+    assert C(None, None, T, [{"event": "FORCED_END"}], owned_alive=0)["class"] == "FORCED_END"          # registros da trilha tambem servem
+    assert C(None, None, 0, ["FORCED_END"], owned_alive=0)["class"] == "UNKNOWN"                         # a trilha diz, o Scheduler nao confirma
+    assert C(None, None, None, ["FORCED_END"], owned_alive=0)["class"] == "UNKNOWN"
+    assert C(None, None, T, [], owned_alive=0)["class"] == "UNKNOWN"                                      # terminado, mas sem causa
+    assert C(None, None, T, [], elapsed_s=7200, limit_s=7200, owned_alive=0)["class"] == "SCHEDULER_LIMIT"
+    assert C(None, None, T, [], elapsed_s=7199, limit_s=7200, owned_alive=0)["class"] == "UNKNOWN"       # antes do limite
+    assert C(None, None, T, [], elapsed_s=None, limit_s=7200, owned_alive=0)["class"] == "UNKNOWN"
+    assert C(None, None, T, [], elapsed_s=8000, limit_s=0, owned_alive=0)["class"] == "UNKNOWN"
+    assert C(None, None, 0, [], elapsed_s=8000, limit_s=7200, owned_alive=0)["class"] == "UNKNOWN"       # sem 0x41306 nao e limite
+    assert C(None, None, T, ["FORCED_END"], elapsed_s=8000, limit_s=7200, owned_alive=0)["class"] == "FORCED_END"   # com FORCED_END, nunca LIMIT
+    for forged in (C(None, None, T, [], elapsed_s=True, limit_s=True, owned_alive=0), C(None, None, T, ["forced_end"], owned_alive=0)):
         assert forged["class"] == "UNKNOWN"
-    assert C(None, None, T, ["FORCED_END"])["success"] is False and C(None, None, T, [], elapsed_s=9, limit_s=9)["success"] is False
+    assert C(None, None, T, ["FORCED_END"], owned_alive=0)["success"] is False
+    assert C(None, None, T, [], elapsed_s=9, limit_s=9, owned_alive=0)["success"] is False
+
+
+def test_the_end_of_the_engine_never_proves_the_end_of_the_runner():
+    """F-1 do L1-C: limite/parada forcada com 0x41306 e SEM arquivos, mas processos do run ainda vivos => ORPHAN_RUNNING."""
+    T = termination.TASK_TERMINATED
+    for args in ((None, None, T, [], 3), (None, None, T, ["FORCED_END"], 1)):
+        result = C(*args[:4], elapsed_s=9000, limit_s=60, owned_alive=args[4])
+        assert result["class"] == "ORPHAN_RUNNING" and result["success"] is False and result["owned_checked"] is True
+    # processos vivos tambem desqualificam um "sucesso" aparente: nunca STOP_CLEAN com o runner ainda ativo
+    assert C(doc(0, "STOP"), 0, 0, owned_alive=1)["class"] == "ORPHAN_RUNNING"
+    # nao medido => nao ha FORCED_END/SCHEDULER_LIMIT por inferencia (e o motivo registrado distingue os dois casos)
+    assert C(None, None, T, ["FORCED_END"], owned_alive=None)["class"] == "UNKNOWN"
+    assert "nao foram verificados" in C(None, None, T, ["FORCED_END"], owned_alive=None)["detail"]
+    assert "nao confirma" in C(None, None, 0, ["FORCED_END"], owned_alive=0)["detail"]
+    assert "nao confirma" in C(None, None, None, ["FORCED_END"], owned_alive=None)["detail"]
+    assert C(None, None, T, [], elapsed_s=9000, limit_s=60, owned_alive=None)["class"] == "UNKNOWN"
+    assert C(None, None, T, [], elapsed_s=9000, limit_s=60, owned_alive=True)["class"] == "UNKNOWN"      # bool nao e contagem
+    assert C(doc(0, "STOP"), 0, 0, owned_alive=0)["owned_checked"] is True and C(doc(0, "STOP"), 0, 0)["owned_checked"] is False
+
+
+def test_engine_lost_and_containment_unavailable_are_classified_from_the_table():
+    assert C(doc(6, "ENGINE_LOST", process_code=1), 1, 1, owned_alive=0)["class"] == "ENGINE_LOST"
+    assert C(doc(6, "ENGINE_LOST"), 6, 6, owned_alive=0)["class"] == "ENGINE_LOST" and C(doc(6, "ENGINE_LOST"), 6, 6)["success"] is False
+    assert C(doc(7, "CONTAINMENT_UNAVAILABLE", process_code=3), 3, 3, owned_alive=0)["class"] == "CONTAINMENT_UNAVAILABLE"
+    assert C(doc(1, "ENGINE_LOST"), 1, 1)["class"] == "INCONSISTENT_SIGNALS"                              # codigo fora da tabela
+    assert termination.exit_code_for("ENGINE_LOST") == 6 and termination.exit_code_for("CONTAINMENT_UNAVAILABLE") == 7
 
 
 def test_a_terminated_scheduler_result_never_overrides_files_that_exist():

@@ -14,9 +14,11 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
+from sim.runner import containment
 from sim.runner import detach
 from sim.runner import host
 from sim.runner import sched
@@ -218,6 +220,7 @@ def collect2(proc: Path, *, interactive_session: int | None, cap_s: int, ports: 
     prefix = (ports.get("prefix") or (lambda: (sys.prefix, sys.base_prefix, sys.executable)))()
     query = ports.get("query") or watch.query_native
     terminal = {"written": False}
+    guard = None
     try:
         writer.record("start", pid=os.getpid(), session_id=(ports.get("session") or _session_id)(), interactive_session=interactive_session,
                       interpreter={"prefix": prefix[0], "base_prefix": prefix[1], "executable": prefix[2],
@@ -241,6 +244,17 @@ def collect2(proc: Path, *, interactive_session: int | None, cap_s: int, ports: 
         stop_flag = host.StopFlag(proc / detach.STOP)
         watcher = watch.Watcher.open(proc, query=query, clock=clock, period_s=BEAT_EVERY_S,
                                      **({"write": ports["watch_write"]} if "watch_write" in ports else {}))
+        lost_event = threading.Event()
+
+        def hard_exit() -> None:                                  # passada a graca: termino ENGINE_LOST + saida dura (so o proprio processo)
+            detach.write_terminal(proc, termination.EXIT_CODES["ENGINE_LOST"], "ENGINE_LOST", clock, detail="motor perdido: saida dura apos a graca")
+            (ports.get("hard_exit") or os._exit)(termination.EXIT_CODES["ENGINE_LOST"])
+
+        identity, guard = containment.install(
+            proc, ops=ports.get("ops") or containment.native_ops(), cmdline_of=ports.get("cmdline_of") or _cmdline_of,
+            schedule_pid=launch_doc.get("schedule_pid"), graceful=lost_event.set, hard_exit=hard_exit, grace_s=containment.PROBE_GRACE_S,
+            applicable=launch_doc.get("mechanism") == sched.MECHANISM, clock=clock, require=False,
+            interval_s=ports.get("guard_interval_s", containment.WATCH_INTERVAL_S))
         seq, started = 0, clock()
 
         def beat() -> None:
@@ -253,24 +267,31 @@ def collect2(proc: Path, *, interactive_session: int | None, cap_s: int, ports: 
                 watcher.step()
 
         beat()
-        writer.record("heartbeat", heartbeat_written=(proc / detach.HEARTBEAT).exists(), watch_armed=watcher is not None)
+        writer.record("heartbeat", heartbeat_written=(proc / detach.HEARTBEAT).exists(), watch_armed=watcher is not None,
+                      containment={"applicable": identity is not None, "engine_verified": bool(identity and identity["engine_verified"]),
+                                   "reason": identity and identity["reason"], "guard": guard is not None})
         last_beat = clock()
-        while not stop_flag.requested and clock() - started < cap_s:
+        while not stop_flag.requested and not lost_event.is_set() and clock() - started < cap_s:
             sleep(1)
             if clock() - last_beat >= BEAT_EVERY_S:
                 beat()
                 last_beat = clock()
         obeyed = stop_flag.requested
+        engine_lost = bool(guard is not None and guard.lost and not obeyed)
         beat()
-        reason = "STOP" if obeyed else "TIMEOUT"
+        reason = "STOP" if obeyed else ("ENGINE_LOST" if engine_lost else "TIMEOUT")
         code = termination.exit_code_for(reason)
         failure = detach.write_terminal(proc, code, reason, clock)
         terminal["written"] = failure is None
         if failure is not None:                                   # a causa (STOP/TIMEOUT) fica em `exit_reason`; o processo falha
             code = termination.EXIT_CODES["EVIDENCE_FAILURE"]
         writer.record("exit", stop_obeyed=bool(obeyed), exit_reason=reason, exit_code=code, exit_write_error=failure,
-                      watch_write_errors=watcher.write_errors if watcher is not None else 0)
+                      watch_write_errors=watcher.write_errors if watcher is not None else 0, engine_lost=engine_lost)
+        if guard is not None:
+            guard.finish()
     except BaseException as error:                                # noqa: BLE001 - registra o termino e relanca
+        if guard is not None:
+            guard.finish()
         if not terminal["written"]:
             secondary = detach.write_terminal(proc, termination.EXIT_CODES["EXCEPTION"], "EXCEPTION", clock,
                                               detail=f"{type(error).__name__}: {error}")
@@ -278,6 +299,12 @@ def collect2(proc: Path, *, interactive_session: int | None, cap_s: int, ports: 
                 print(f"SECUNDARIO: exit.json nao gravado ({secondary})", file=sys.stderr)
         raise
     return writer.facts
+
+
+def _cmdline_of(pid):
+    """Linha de comando de um processo (CIM, uma consulta); None se nao for possivel ler."""
+    found = sched.process_chain(sched.run_default, pid)
+    return found[0].get("cmd") if found and found[0].get("pid") == pid else None
 
 
 def beat_series(proc: Path) -> list:
@@ -357,8 +384,10 @@ def judge_detach2(facts: dict, monitor: dict, level: str = "L1") -> dict:
     ok["D2-09_stop_exit_clean"] = (facts.get("stop_obeyed") is True and exit_doc.get("code") == 0 and exit_doc.get("reason") == "STOP"
                                    and monitor.get("exit_code_txt") == 0 and monitor.get("task_state_after") == sched.STATE_READY
                                    and monitor.get("last_result_after") == 0 and facts.get("exit_write_error") is None
-                                   and (legacy or (v2 and term.get("class") == "STOP_CLEAN" and term.get("scheduler_checked") is True)))
+                                   and (legacy or (v2 and term.get("class") == "STOP_CLEAN" and term.get("scheduler_checked") is True
+                                                   and term.get("owned_checked") is True)))
     inst = monitor.get("instances") or {}
+    cont = monitor.get("containment") or {}
     ok["D2-10_no_trigger_restart_parallel"] = (monitor.get("triggers") == 0 and monitor.get("restart_on_failure") is False
                                                and inst.get("second_start_attempted") is True and inst.get("engines_max") == 1
                                                and inst.get("engines_min_while_alive") == 1
@@ -368,7 +397,8 @@ def judge_detach2(facts: dict, monitor: dict, level: str = "L1") -> dict:
                                                and inst.get("sample_errors") == 0)
     ok["D2-11_removed_clean_evidence"] = (monitor.get("removal_verified") is True and monitor.get("orphan_processes") == 0
                                           and monitor.get("evidence_manifest_ok") is True and monitor.get("audit_ok") is True
-                                          and monitor.get("folder_clean") is True and not monitor.get("audit_write_failures"))
+                                          and monitor.get("folder_clean") is True and not monitor.get("audit_write_failures")
+                                          and (legacy or (cont.get("alive") == 0 and cont.get("unknown") == 0 and cont.get("suspects") == 0)))
     cross = monitor.get("session_end") or {}
     legacy_12 = (legacy and cross.get("t") is not None and cross.get("crosses") is True
                  and cross.get("gap_at_cross_s") is not None and cross["gap_at_cross_s"] <= MAX_GAP_S)
@@ -514,7 +544,7 @@ def _link(entry: dict) -> dict:
 
 def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_alive, sleep=time.sleep, clock=time.time,
                   poll_s: int = 10, session_end_t: int | None = None, anchors_dir=None, stop_wait_s: int = 90,
-                  query=None, snapshot=None) -> dict:
+                  query=None, snapshot=None, ops=None, table_fn=None) -> dict:
     """Processo NOVO (depois do fim do lancador): observa de fora, tenta uma 2a partida, pede STOP e coleta os fatos do monitor.
     Parentesco e instancias vem da TABELA DE PROCESSOS (nao do COM `GetInstances`, vazio no host real, nem do heartbeat).
 
@@ -522,7 +552,8 @@ def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_
     de inicio deste monitor; `session_end_t` (hora informada pelo operador) so vale para evidencia historica `legacy-1`. A
     auditoria so registra `STOPPED` se um STOP foi pedido e o `exit.json` apareceu."""
     run = run or sched.run_default
-    query, snapshot = query or watch.query_native, snapshot or watch.snapshot_native
+    ops = ops or containment.native_ops()
+    query, snapshot = query or ops.query, snapshot or ops.snapshot
     spec, proc = LEVELS[level], detach.proc_dir(runs_root, name)
     anchors = anchors_dir or (Path(runs_root) / sched.ANCHOR_DIR)
     audit = _SafeAudit(sched.Audit(proc, anchors, name, clock))
@@ -590,8 +621,10 @@ def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_
     exit_doc = detach.read_exit(proc)
     exit_code_txt = detach.read_exit_code(proc)
     elapsed = int(clock()) - int(launch_doc.get("t_launch") or clock())
+    owned = containment.owned_summary(proc, run, ops=ops, table_fn=table_fn)
     termination_doc = termination.classify_termination(exit_doc, exit_code_txt, after.get("last_result"), audit.records(), elapsed_s=elapsed,
-                                                       limit_s=_limit_seconds(launch_doc.get("limit")))
+                                                       limit_s=_limit_seconds(launch_doc.get("limit")),
+                                                       owned_alive=owned["alive"] if not owned["unknown"] and not owned["suspects"] else None)
     if probe_alive_before_stop and exit_doc:
         audit.append("STOPPED", {"exit": exit_doc, "termination": termination_doc["class"]})
     elif probe_alive_before_stop:
@@ -623,7 +656,7 @@ def probe_monitor(runs_root, name: str, *, level: str, run=None, alive=host.pid_
                       "sample_errors": stats["sample_errors"], "second_start_attempted": stats["second_start_attempted"],
                       "dense_samples_after_second_start": stats["dense_samples_after_second_start"],
                       "start_records": _start_records(proc), "beat_pids": sorted({b.get("pid") for b in beats_now})},
-        "exit": exit_doc, "exit_code_txt": exit_code_txt, "termination": termination_doc,
+        "exit": exit_doc, "exit_code_txt": exit_code_txt, "termination": termination_doc, "containment": owned,
         "task_state_after": after.get("state"), "last_result_after": after.get("last_result"),
         "audit_check": {"ok": trail["ok"], "problems": trail["problems"]}, "audit_write_failures": list(audit.failures),
         "watch": wsum, "launcher_watch": launcher_watch, "stop": {"t": stop_t, "requester": requester},
@@ -706,7 +739,8 @@ def verify_evidence(proc: Path) -> bool:
     return all((folder / n).is_file() and hashlib.sha256((folder / n).read_bytes()).hexdigest() == h for n, h in manifest.items())
 
 
-def probe_finish(runs_root, name: str, *, level: str, run=None, alive=host.pid_alive, clock=time.time, anchors_dir=None) -> dict:
+def probe_finish(runs_root, name: str, *, level: str, run=None, alive=host.pid_alive, clock=time.time, anchors_dir=None, ops=None,
+                 table_fn=None) -> dict:
     """Preserva as evidencias, remove a tarefa (verificado), confere orfaos/trilha/manifesto e julga. Nao apaga evidencia."""
     run = run or sched.run_default
     proc = detach.proc_dir(runs_root, name)
@@ -735,7 +769,8 @@ def probe_finish(runs_root, name: str, *, level: str, run=None, alive=host.pid_a
     evidence_ok = verify_evidence(proc)
     final = {**_refresh_from_evidence(proc, monitor), "removal_verified": removal_ok and (removal.get("removed") or removal.get("already_absent")),
              "orphan_processes": orphan_count, "folder_clean": not folder.get("tasks"), "audit_ok": trail["ok"],
-             "evidence_manifest_ok": evidence_ok, "audit_write_failures": write_failures}
+             "evidence_manifest_ok": evidence_ok, "audit_write_failures": write_failures,
+             "containment": containment.owned_summary(proc, run, ops=ops, table_fn=table_fn)}
     facts = _read_json(proc / FACTS) or {}
     verdict = judge_detach2(facts, final, level)
     doc = {"verdict": verdict, "removal": removal, "orphans": orphans, "inspector_tree_excluded": excluded,

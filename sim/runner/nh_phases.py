@@ -24,6 +24,7 @@ from sim.live import env as E
 from sim.live import flow
 from sim.live.fingerprint import fingerprint
 from sim.runner import bundle as bundle_mod
+from sim.runner import containment
 from sim.runner import declare
 from sim.runner import detach
 from sim.runner import growth as growth_mod
@@ -32,6 +33,7 @@ from sim.runner import host
 from sim.runner import rim as rim_mod
 from sim.runner import runner as runner_mod
 from sim.runner import sched
+from sim.runner import termination
 from sim.runner.errors import PreflightFailed
 from sim.runner.errors import RunnerError
 from sim.runner.lab_ports import lab_ports
@@ -270,7 +272,8 @@ def collect_preflight_facts(lab, rim: dict, run_dir: Path, bundle: bundle_mod.Bu
         "P13": {"awake_acquired": host.keep_awake(), "foreign_docker_activity": len(others),
                 "dev_untouched": (lab.dir / "dev_snapshot_before.json").exists()},
         "P14": p14,
-        "P15": sched.scan_unreconciled(runs_root(), sched.run_default, alive=host.pid_alive),
+        "P15": sched.scan_unreconciled(runs_root(), sched.run_default, alive=host.pid_alive,
+                                       owned_of=lambda found_proc: containment.owned_summary(found_proc, sched.run_default)),
     }
 
 
@@ -314,10 +317,36 @@ def apply_launch_env(proc: Path) -> dict:
     return doc
 
 
+def start_containment(proc: Path, stop):
+    """Vigia do motor (SIM-1.5G.4). So sob o Task Scheduler (launch.json); la o motor `cmd` DEVE ser verificavel, senao o run NAO
+    inicia (exit.json CONTAINMENT_UNAVAILABLE, `process_code` 3 = violacao de contrato da CLI) e nada e executado. Ao perder o motor:
+    STOP gracioso e, passados 120 s, `exit.json` ENGINE_LOST + saida dura (o R0 sela UNCLEAN_EXIT na proxima partida)."""
+    launch = detach.read_launch(proc) or {}
+
+    def hard_exit() -> None:
+        detach.write_terminal(proc, termination.EXIT_CODES["ENGINE_LOST"], "ENGINE_LOST", process_code=1, detail="motor perdido: saida dura apos a graca")
+        os._exit(termination.EXIT_CODES["ENGINE_LOST"])
+
+    def cmdline_of(pid):
+        found = sched.process_chain(sched.run_default, pid)
+        return found[0].get("cmd") if found and found[0].get("pid") == pid else None
+
+    try:
+        _, guard = containment.install(proc, ops=containment.native_ops(), cmdline_of=cmdline_of, schedule_pid=launch.get("schedule_pid"),
+                                       graceful=lambda: stop.request("ENGINE_LOST"), hard_exit=hard_exit, grace_s=containment.NH_GRACE_S,
+                                       applicable=launch.get("mechanism") == sched.MECHANISM, require=True)
+    except containment.ContainmentUnavailable as error:
+        detach.write_terminal(proc, termination.EXIT_CODES["CONTAINMENT_UNAVAILABLE"], "CONTAINMENT_UNAVAILABLE", process_code=3, detail=str(error)[:300])
+        raise
+    return guard
+
+
 def phase_run(lab, run_id: str) -> dict:
     registry = Registry(runs_root())
     run_dir = runs_root() / run_id
     proc = detach.proc_dir(runs_root(), run_id)
+    stop = host.StopFlag(proc / detach.STOP)
+    guard = start_containment(proc, stop)                    # SIM-1.5G.4: antes de qualquer trabalho; motor nao verificavel => nao inicia
     rim = _json(run_dir / "rim.json")
     bundle = bundle_for_scenario(rim["declared"]["scenario_id"])
     ledger = runner_mod.RunLedger(run_dir)
@@ -336,7 +365,6 @@ def phase_run(lab, run_id: str) -> dict:
         expected_containers={k: v["started_at"] for k, v in containers.items()},
         expected_networks={k: v["networks"] for k, v in containers.items()},
         barrier_hard_ms=int(lab.config["quiescence"]["hard_timeout_s"]) * 1000)
-    stop = host.StopFlag(proc / detach.STOP)
     stop.install()
     services = live.services(hooks, awake=host.keep_awake)
     if model is not None:
@@ -344,11 +372,14 @@ def phase_run(lab, run_id: str) -> dict:
     nh = runner_mod.NhRunner(run_dir=run_dir, rim=rim, ledger=ledger, registry=registry, services=services, stop=stop)
     beat = host.HeartbeatWriter(proc / detach.HEARTBEAT, lambda: nh.status)
     beat.start()
+
     def cleanup() -> None:
         beat.stop()
         host.release_awake()
+        if guard is not None:
+            guard.finish()
 
     # exit.json: `code` semantico inalterado (0 COMPLETED / 2 outro estado / 1 excecao); `process_code` = o que a CLI devolve
     # (0 / 1 / 1 ou 3 se RunnerError). Falha ao gravar a evidencia nunca vira sucesso; a causa original e preservada.
-    result = detach.run_and_record_exit(proc, nh.run, cleanup)
+    result = detach.run_and_record_exit(proc, nh.run, cleanup, lost=lambda: bool(guard is not None and guard.lost))
     return lab.record("NH-RUN", result["state"] == "COMPLETED", result)

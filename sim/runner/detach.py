@@ -19,6 +19,7 @@ from pathlib import Path
 
 from sim.generator.canonical import canonical_bytes
 from sim.runner import sched
+from sim.runner import watch as watch_mod
 from sim.runner.errors import RunnerError
 from sim.runner.host import pid_alive
 
@@ -216,7 +217,7 @@ def kill(proc: Path, *, confirm: bool, run=subprocess.run, alive=pid_alive) -> d
 def launch_detached(runs_root, run_id: str, *, python: str, repo: str, cli_args: str, env: dict, ledger_state: str,
                     python_info: dict, mechanism: str = sched.MECHANISM, allow_rejected: bool = False, profile: str = "SR1",
                     run=None, alive=pid_alive, sleep=time.sleep, clock=time.time, wait_s: int = 60, anchors_dir=None,
-                    module: str = "sim.runner.cli", watch: dict | None = None) -> dict:
+                    module: str = "sim.runner.cli", watch: dict | None = None, query=None) -> dict:
     """Lancador padrao. `task_scheduler`: registra (XML deterministico, validado apos o registro), inicia e espera o heartbeat.
     `wmi` so com `allow_rejected=True` (mecanismo reprovado no DETACH-1).
 
@@ -247,7 +248,8 @@ def launch_detached(runs_root, run_id: str, *, python: str, repo: str, cli_args:
     xml = sched.build_task_xml(name, who["user"], arguments, repo, limit)
     doc = {"run_id": run_id, "python": python, "python_info": python_info, "repo": repo, "cmdline": sched.CMD_EXE + " " + arguments,
            "env": dict(sorted(env.items())), "pid": None, "t_launch": int(clock()), "mechanism": sched.MECHANISM,
-           "task": sched.FOLDER + name, "xml_sha256": sched.xml_sha256(xml), "limit": limit, "profile": profile, "user": who["user"]}
+           "task": sched.FOLDER + name, "xml_sha256": sched.xml_sha256(xml), "limit": limit, "profile": profile, "user": who["user"],
+           "schedule_pid": who["schedule_pid"], "owner_marker": f"-m {module} {cli_args}"}
     if watch is not None:
         doc["evidence_schema"], doc["watch_sha256"] = 2, watch["sha256"]
     try:
@@ -286,15 +288,23 @@ def launch_detached(runs_root, run_id: str, *, python: str, repo: str, cli_args:
                 audit.append("ENGINE_LOOKUP_FAILED", {"error": str(error)[:200]})
             doc["pid"] = engine[0] if engine else beat["pid"]
             _atomic_write(launch_path, doc)
-            audit.append("HEARTBEAT_SEEN", {"pid": beat["pid"], "engine_pids": engine})
+            identities = [i for i in (watch_mod.identity_of(p, query or watch_mod.query_native) for p in engine) if i]
+            audit.append("HEARTBEAT_SEEN", {"pid": beat["pid"], "engine_pids": engine, "engine_identity": identities})
             return {**doc, "heartbeat_pid": beat["pid"], "engine_pids": engine}
         sleep(1)
     audit.append("START_TIMEOUT", {"wait_s": wait_s})
     raise DetachError("o processo da tarefa nao escreveu heartbeat no prazo (nao esta saudavel; use sched-reconcile)")
 
 
-def kill_task(proc: Path, *, confirm: bool, run=None, anchors_dir=None, clock=time.time) -> dict:
-    """Fim FORCADO da instancia da tarefa (`Stop-ScheduledTask`): ultimo recurso, exige confirmacao. Nao remove a tarefa."""
+def kill_task(proc: Path, *, confirm: bool, run=None, anchors_dir=None, clock=time.time, ops=None, sleep=time.sleep, grace_s: float = 20,
+              table_fn=None) -> dict:
+    """Fim FORCADO da instancia da tarefa (`Stop-ScheduledTask`): ultimo recurso, exige confirmacao. Nao remove a tarefa.
+
+    SIM-1.5G.4: o Scheduler encerra so o `cmd`; por isso, DEPOIS do `Stop-ScheduledTask`, os processos do run (identidade comprovada,
+    P1/P2) sao tratados: gracioso, depois forcado POR HANDLE. A evidencia e preservada ANTES de qualquer acao. `instances_after`
+    continua contando motores `cmd`; `owned_alive_after` conta os processos do run ainda vivos (a medida que importa)."""
+    from sim.runner import containment
+
     if confirm is not True:
         raise DetachError("kill exige --confirm (ultimo recurso; use stop)")
     doc = read_launch(proc)
@@ -302,6 +312,11 @@ def kill_task(proc: Path, *, confirm: bool, run=None, anchors_dir=None, clock=ti
         raise DetachError("este run nao foi lancado pelo Task Scheduler")
     run = run or sched.run_default
     name = sched.validate_name(doc["run_id"])
+    ops = ops or containment.native_ops()
+    try:
+        snapshot = containment.snapshot_proc(proc, clock=clock)
+    except OSError as error:
+        raise DetachError(f"evidencia nao preservada antes do fim forcado ({error}): nada foi encerrado") from error
     audit = sched.Audit(proc, anchors_dir or (Path(proc).parent / sched.ANCHOR_DIR), name, clock)
     sched.end(run, name)
     audit.append("FORCED_END", {"by": "operator", "confirm": True})
@@ -309,8 +324,12 @@ def kill_task(proc: Path, *, confirm: bool, run=None, anchors_dir=None, clock=ti
     who = sched.identity(run)
     table = sched.process_table(run, who["schedule_pid"])
     count = len(sched.task_instances(table, who["schedule_pid"], str(proc))["engines"])
-    _atomic_write(proc / KILLED, {"task": doc["task"], "state_after": after.get("state"), "instances_after": count})
-    return {"task": doc["task"], "state_after": after.get("state"), "instances_after": count}
+    recovery = containment.recover(proc, run, name, ops=ops, table_fn=table_fn, confirm=True, grace_s=grace_s, sleep=sleep, clock=clock,
+                                   anchors_dir=anchors_dir, preserve=False)
+    result = {"task": doc["task"], "state_after": after.get("state"), "instances_after": count,
+              "owned_alive_after": recovery["owned_alive_after"], "blocked": recovery["blocked"], "snapshot": snapshot}
+    _atomic_write(proc / KILLED, {k: result[k] for k in ("task", "state_after", "instances_after", "owned_alive_after", "blocked")})
+    return result
 
 
 def tail(proc: Path, which: str = "stdout", lines: int = 50) -> list:
@@ -347,7 +366,7 @@ def write_terminal(proc: Path, code: int, reason: str, clock=time.time, *, proce
     return None
 
 
-def run_and_record_exit(proc: Path, run_fn, cleanup, clock=time.time):
+def run_and_record_exit(proc: Path, run_fn, cleanup, clock=time.time, lost=lambda: False):
     """Executa `run_fn()` (devolve {state, ...}) e grava SEMPRE o `exit.json` terminal (fluxo NH; contrato da CLI preservado).
 
     `code` semantico: 0 COMPLETED | 2 outro estado terminal | 1 excecao. `process_code` = o que a CLI devolve: 0 | 1 | 1 (excecao
@@ -363,6 +382,8 @@ def run_and_record_exit(proc: Path, run_fn, cleanup, clock=time.time):
     else:
         if result["state"] == "COMPLETED":
             code, reason, process = 0, "COMPLETED", 0
+        elif lost():                                                # motor perdido (SIM-1.5G.4): o motivo do termino e ENGINE_LOST
+            code, reason, process = 6, "ENGINE_LOST", 1
         else:
             code, reason, process = 2, result["state"], 1
     try:

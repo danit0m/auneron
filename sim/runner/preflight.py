@@ -28,7 +28,8 @@ REQUIRED = {
     "P13": ("awake_acquired", "foreign_docker_activity", "dev_untouched"),
     "P14": ("volumes_created_after_previous_terminal", "driver_state_present", "collector_state_present", "business_rows",
             "marker_rows", "previous_runs_non_terminal"),
-    "P15": ("scheduler_running", "folder_tasks", "unreconciled_runs", "orphan_processes", "reboot_pending", "elevated"),
+    "P15": ("scheduler_running", "folder_tasks", "unreconciled_runs", "orphan_processes", "reboot_pending", "elevated", "owned_alive",
+            "owned_unknown"),
 }
 NETWORKS_BACKEND = frozenset({"auneron_sim_driver", "auneron_sim_internal"})
 NETWORKS_DRIVER = frozenset({"auneron_sim_driver"})
@@ -40,7 +41,9 @@ def judge_p15(group: dict) -> list:
     if group["scheduler_running"] is not True:
         out.append("servico Task Scheduler nao esta ativo")
     for key, label in (("folder_tasks", "tarefa(s) residual(is) em \\AuneronSim\\"), ("unreconciled_runs", "trilha(s) nao reconciliada(s)"),
-                       ("orphan_processes", "processo(s) orfao(s)")):
+                       ("orphan_processes", "processo(s) orfao(s)"),
+                       ("owned_alive", "processo(s) de run comprovadamente vivo(s) (por identidade), com ou sem tarefa"),
+                       ("owned_unknown", "processo(s) de run com identidade indeterminada ou P3 (UNKNOWN nunca e 'terminado')")):
         value = group[key]
         if not isinstance(value, int) or isinstance(value, bool) or value != 0:
             out.append(f"{value!r} {label}")

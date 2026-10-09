@@ -645,7 +645,7 @@ TERMINAL = ("COMPLETED", "ABORTED", "INVALID")
 
 
 def reconcile(run, *, proc: Path, anchors_dir, name: str, ledger_state: str | None, alive, apply: bool = False,
-              confirm: bool = False, markers: list | None = None) -> dict:
+              confirm: bool = False, markers: list | None = None, owned: dict | None = None) -> dict:
     """-> {ok, findings, recorded_state, observed, actions}. So remove com `apply` (e `confirm` se a trilha estiver comprometida)."""
     audit = Audit(proc, anchors_dir, name)
     check = audit.verify()
@@ -662,13 +662,29 @@ def reconcile(run, *, proc: Path, anchors_dir, name: str, ledger_state: str | No
         heartbeat = json.loads((Path(proc) / "heartbeat.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
-    process_alive = bool(heartbeat and alive(heartbeat.get("pid")))
+    owned_alive = int((owned or {}).get("alive") or 0)
+    owned_unknown = int((owned or {}).get("unknown") or 0) + int((owned or {}).get("suspects") or 0)
+    process_alive = bool(heartbeat and alive(heartbeat.get("pid"))) or owned_alive > 0
     exit_present = (Path(proc) / "exit.json").exists()
+    try:
+        events = {r.get("event") for r in audit.records()}
+    except (ValueError, UnicodeDecodeError, OSError):
+        events = set()
+    # SIM-1.5G.4: fim do Scheduler (0x41306 / FORCED_END) so conta como "terminado" com 0 processos do run vivos e nenhum UNKNOWN
+    positive_end = (owned is not None and owned_alive == 0 and owned_unknown == 0
+                    and ((observed.get("last_result") or 0) & 0xFFFFFFFF == 0x41306 or "FORCED_END" in events))
     if recorded == "UNREGISTERED" and found:
         findings.append({"code": "STATE_DIVERGENCE", "detail": "a trilha registra a remocao, mas a tarefa existe"})
     if recorded in ("REGISTERED", "EXPORT_VERIFIED", "STARTED", "STOPPED") and check["records"] and not found:
         findings.append({"code": "STATE_DIVERGENCE", "detail": "a trilha registra a tarefa, mas ela nao existe no Scheduler"})
-    finished = terminal or (ledger_state is None and exit_present)
+    finished = terminal or (ledger_state is None and (exit_present or positive_end))
+    if owned_alive > 0 and not found:
+        findings.append({"code": "SUPERVISION_LOST", "detail": f"{owned_alive} processo(s) do run vivo(s) sem tarefa registrada"})
+    elif owned_alive > 0 and observed.get("state") != STATE_RUNNING:
+        findings.append({"code": "ORPHAN_RUNNING", "detail": f"{owned_alive} processo(s) do run vivo(s) com a tarefa fora de execucao (o Scheduler encerra so o cmd)",
+                         "action": "recover"})
+    if owned_unknown:
+        findings.append({"code": "IDENTITY_UNKNOWN", "detail": f"{owned_unknown} processo(s) com identidade indeterminada/P3: nada e removido"})
     unexpected = (recorded == "STARTED" and not terminal and not exit_present
                   and (not process_alive or (found and observed.get("state") == STATE_READY)))
     if unexpected:
@@ -689,7 +705,7 @@ def reconcile(run, *, proc: Path, anchors_dir, name: str, ledger_state: str | No
     if recorded in ("REMOVAL_FAILED",):
         findings.append({"code": "REMOVAL_FAILED", "detail": "remocao anterior nao verificada"})
     actions = []
-    removable = found and finished and not process_alive and observed.get("state") != STATE_RUNNING
+    removable = found and finished and not process_alive and observed.get("state") != STATE_RUNNING and owned_unknown == 0
     if apply and removable:
         if check["ok"] or confirm:
             actions.append(remove_verified(run, name, proc, audit) | {"action": "remove"})
@@ -702,13 +718,14 @@ def reconcile(run, *, proc: Path, anchors_dir, name: str, ledger_state: str | No
             "process_alive": process_alive, "actions": actions}
 
 
-def scan_unreconciled(runs_root, run, *, alive) -> dict:
+def scan_unreconciled(runs_root, run, *, alive, owned_of=None) -> dict:
     """Fatos do P15 SEM mutar: tarefas na pasta, trilhas nao reconciliadas, processos orfaos, reboot pendente, privilegio."""
     who = identity(run)
     listing = list_folder(run)
     tasks = [t["name"] for t in listing.get("tasks", [])]
     unreconciled = []
     orphans = 0
+    owned_alive, owned_unknown = (0, 0) if owned_of is not None else (None, None)
     root = Path(runs_root)
     for proc in sorted(root.glob("*.proc")) if root.exists() else []:
         trail = proc / AUDIT_NAME
@@ -728,6 +745,13 @@ def scan_unreconciled(runs_root, run, *, alive) -> dict:
             beat = None
         if beat and alive(beat.get("pid")) and name not in tasks:
             orphans += 1
+        if owned_of is not None:                                    # SIM-1.5G.4: processo do run vivo e orfao com ou sem tarefa registrada
+            found = owned_of(proc)
+            owned_alive += int(found.get("alive") or 0)
+            owned_unknown += int(found.get("unknown") or 0) + int(found.get("suspects") or 0)
+            if found.get("alive"):
+                orphans += 1
     return {"scheduler_running": who.get("schedule_state") == "Running", "folder_tasks": len(tasks),
             "unreconciled_runs": len(unreconciled), "orphan_processes": orphans, "reboot_pending": bool(who.get("reboot_pending")),
-            "elevated": not is_unelevated(who), "tasks": sorted(tasks), "unreconciled": sorted(unreconciled)}
+            "elevated": not is_unelevated(who), "tasks": sorted(tasks), "unreconciled": sorted(unreconciled),
+            "owned_alive": owned_alive, "owned_unknown": owned_unknown}
