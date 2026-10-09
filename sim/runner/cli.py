@@ -17,6 +17,8 @@ CLI do plano de controle do run:
     python -m sim.runner.cli sched-list
     python -m sim.runner.cli sched-audit-verify|sched-reconcile --run-id RUN-... [--apply [--confirm]]
     python -m sim.runner.cli sched-probe --phase launch|monitor|finish --level L1|L2 [--name <sonda>]   # DETACH-2 (autorizacao do PO)
+        # SIM-1.5G.3: o L2 exige descobrir o CLI da sessao iniciadora (ambiguo => nada e registrado); --watch-pid vigia um PID
+        # auxiliar (controles); --session-end-epoch so vale para evidencia historica (na v2 o fim vem da vigilia duravel)
 
     # LIVE (precisam de um lab ja de pe; NAO exercitados nesta etapa)
     python -m sim.runner.cli stage|open|preflight|run --instance <id> [--bundle nh|sr1]
@@ -235,9 +237,23 @@ def _sched_probe(args, root: Path, detach_probe) -> int:
         if not args.python or not args.repo:
             raise RunnerError("sched-probe launch exige --python (venv estavel) e --repo")
         name = args.name or detach_probe.probe_name(args.level)
+        initiator, excluded = None, []
+        if args.level == "L2":                                  # a vigilia do CLI iniciador e obrigatoria: ambiguidade => nada e registrado
+            import os
+
+            from sim.runner import watch
+
+            def cmdline_of(pid):
+                found = sched.process_chain(sched.run_default, pid)
+                return (found[0].get("cmd") if found and found[0].get("pid") == pid else None)
+
+            initiator, excluded = watch.discover_initiator(watch.ancestors(os.getpid()), cmdline_of)
         doc = detach_probe.probe_launch(root, name, level=args.level, python=args.python, repo=args.repo,
-                                        interactive_session=detach_probe._session_id() or 0)
-        _print({"name": name, "task": doc["task"], "heartbeat_pid": doc["heartbeat_pid"], "engine_pids": doc["engine_pids"]})
+                                        interactive_session=detach_probe._session_id() or 0, initiator=initiator, excluded=excluded,
+                                        helpers=args.watch_pid or ())
+        _print({"name": name, "task": doc["task"], "heartbeat_pid": doc["heartbeat_pid"], "engine_pids": doc["engine_pids"],
+                "initiator": ({k: initiator[k] for k in ("pid", "created", "iso", "resume_id")} if initiator else None),
+                "excluded": excluded})
         return 0
     if not args.name:
         raise RunnerError("--name e obrigatorio em monitor/finish")
@@ -304,7 +320,8 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--phase", choices=("launch", "monitor", "finish"))
     parser.add_argument("--level", default="L1")
     parser.add_argument("--name")
-    parser.add_argument("--session-end-epoch", type=int)
+    parser.add_argument("--session-end-epoch", type=int, help="so evidencia historica legacy-1; na v2 o fim vem da vigilia duravel")
+    parser.add_argument("--watch-pid", type=int, action="append", help="PID auxiliar (controle) a vigiar na sonda; repetivel")
     args = parser.parse_args(argv)
     if args.command in NEEDS_RUN_ID and not args.run_id:
         parser.error("--run-id e obrigatorio")

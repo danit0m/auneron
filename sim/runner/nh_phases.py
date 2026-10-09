@@ -344,12 +344,11 @@ def phase_run(lab, run_id: str) -> dict:
     nh = runner_mod.NhRunner(run_dir=run_dir, rim=rim, ledger=ledger, registry=registry, services=services, stop=stop)
     beat = host.HeartbeatWriter(proc / detach.HEARTBEAT, lambda: nh.status)
     beat.start()
-    code, reason = 1, "EXCEPTION"
-    try:
-        result = nh.run()
-        code, reason = (0 if result["state"] == "COMPLETED" else 2), result["state"]
-    finally:
+    def cleanup() -> None:
         beat.stop()
         host.release_awake()
-        detach.write_exit(proc, code, reason)
+
+    # exit.json: `code` semantico inalterado (0 COMPLETED / 2 outro estado / 1 excecao); `process_code` = o que a CLI devolve
+    # (0 / 1 / 1 ou 3 se RunnerError). Falha ao gravar a evidencia nunca vira sucesso; a causa original e preservada.
+    result = detach.run_and_record_exit(proc, nh.run, cleanup)
     return lab.record("NH-RUN", result["state"] == "COMPLETED", result)

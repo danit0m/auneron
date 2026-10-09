@@ -51,12 +51,16 @@ def build_cmd_arguments(python: str, cli_args: str, proc: Path, module: str = "s
 
     `/v:on` + `!errorlevel!`: expansao no MOMENTO da execucao (depois do Python terminar) e nao no parse da linha; o
     redirecionamento vem ANTES do `echo` (`>arq echo N`), porque `echo 0> arq` seria lido como redirecionamento do handle 0
-    (arquivo vazio). Sem `%`, `!`, `^`, `&`, `|`, `<`, `>` nos componentes (fail-closed)."""
+    (arquivo vazio). Sem `%`, `!`, `^`, `&`, `|`, `<`, `>` nos componentes (fail-closed).
+
+    SIM-1.5G.3: o `cmd` PROPAGA o codigo do Python. O codigo de saida do `cmd /c` e o do ULTIMO comando; com o `echo` por ultimo
+    ele era sempre 0 e o `LastTaskResult` nao via falha alguma. O codigo e capturado (`set "RC=!errorlevel!"`) ANTES do `echo`
+    (se gravar o arquivo falhar, o codigo do Python nao se perde) e o `cmd` termina com ele (`exit !RC!`)."""
     for label, value in (("python", python), ("cli_args", cli_args), ("module", module), ("proc", str(proc))):
         if CMD_UNSAFE.search(value):
             raise DetachError(f"caractere especial do cmd em {label}: o comando nao e montado")
     inner = f'"{python}" -m {module} {cli_args} 1>>"{proc / STDOUT}" 2>>"{proc / STDERR}"'
-    return f'/d /v:on /s /c "{inner} & >"{proc / EXIT_CODE}" echo !errorlevel!"'
+    return f'/d /v:on /s /c "{inner} & set "RC=!errorlevel!" & >"{proc / EXIT_CODE}" echo !RC! & exit !RC!"'
 
 
 def build_cmdline(python: str, cli_args: str, proc: Path) -> str:
@@ -212,9 +216,12 @@ def kill(proc: Path, *, confirm: bool, run=subprocess.run, alive=pid_alive) -> d
 def launch_detached(runs_root, run_id: str, *, python: str, repo: str, cli_args: str, env: dict, ledger_state: str,
                     python_info: dict, mechanism: str = sched.MECHANISM, allow_rejected: bool = False, profile: str = "SR1",
                     run=None, alive=pid_alive, sleep=time.sleep, clock=time.time, wait_s: int = 60, anchors_dir=None,
-                    module: str = "sim.runner.cli") -> dict:
+                    module: str = "sim.runner.cli", watch: dict | None = None) -> dict:
     """Lancador padrao. `task_scheduler`: registra (XML deterministico, validado apos o registro), inicia e espera o heartbeat.
-    `wmi` so com `allow_rejected=True` (mecanismo reprovado no DETACH-1)."""
+    `wmi` so com `allow_rejected=True` (mecanismo reprovado no DETACH-1).
+
+    `watch` (SIM-1.5G.3, so a sonda DETACH-2): {data: bytes de watch.json, sha256, targets}. `watch.json` e gravado ANTES do
+    registro da tarefa, o hash entra no `launch.json` (`evidence_schema` 2) e na trilha (`WATCH_ARMED`, depois do XML verificado)."""
     if mechanism == "wmi":
         if allow_rejected is not True:
             raise DetachError("WMI foi reprovado no DETACH-1 (REJECTED_BY_DETACH1): desabilitado por padrao")
@@ -241,16 +248,28 @@ def launch_detached(runs_root, run_id: str, *, python: str, repo: str, cli_args:
     doc = {"run_id": run_id, "python": python, "python_info": python_info, "repo": repo, "cmdline": sched.CMD_EXE + " " + arguments,
            "env": dict(sorted(env.items())), "pid": None, "t_launch": int(clock()), "mechanism": sched.MECHANISM,
            "task": sched.FOLDER + name, "xml_sha256": sched.xml_sha256(xml), "limit": limit, "profile": profile, "user": who["user"]}
+    if watch is not None:
+        doc["evidence_schema"], doc["watch_sha256"] = 2, watch["sha256"]
     try:
         fd = os.open(launch_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError as error:
         raise DetachError("este run ja foi lancado (launch.json existe): relancar e retry com novo run_id") from error
     os.close(fd)
     _atomic_write(launch_path, doc)
+    if watch is not None:
+        watch_path = proc / "watch.json"
+        tmp = watch_path.with_suffix(".json.tmp")
+        tmp.write_bytes(watch["data"])
+        os.replace(tmp, watch_path)
     audit = sched.Audit(proc, anchors_dir or (Path(runs_root) / sched.ANCHOR_DIR), name, clock)
     aliases = [who["user"], who.get("sid", who["user"])]
     try:
         sched.register_verified(run, name, xml, user_aliases=aliases, arguments=arguments, workdir=repo, limit=limit, audit=audit)
+        if watch is not None:
+            try:
+                audit.append("WATCH_ARMED", {"sha256": watch["sha256"], "targets": watch.get("targets", [])})
+            except OSError as error:                                     # a tarefa NAO e iniciada sem a vigilia na trilha
+                raise DetachError(f"a trilha nao gravou WATCH_ARMED ({error}): a tarefa nao foi iniciada; use sched-reconcile") from error
         sched.start(run, name)
     except sched.SchedError as error:
         raise DetachError(f"Task Scheduler: {error}") from error
@@ -302,6 +321,76 @@ def tail(proc: Path, which: str = "stdout", lines: int = 50) -> list:
         return []
 
 
-def write_exit(proc: Path, code: int, reason: str, clock=time.time) -> None:
+def write_exit(proc: Path, code: int, reason: str, clock=time.time, *, process_code: int | None = None, detail: str | None = None) -> None:
+    """`exit.json` = registro SEMANTICO do termino. `process_code` (aditivo, so quando difere do contrato `code == processo`) e o
+    codigo que o PROCESSO de fato devolve (NH: contrato da CLI 0/1/3); `detail` e texto curto de diagnostico."""
     proc.mkdir(parents=True, exist_ok=True)
-    _atomic_write(proc / EXIT, {"code": int(code), "reason": reason, "t_epoch": int(clock())})
+    doc = {"code": int(code), "reason": reason, "t_epoch": int(clock())}
+    if process_code is not None:
+        doc["process_code"] = int(process_code)
+    if detail:
+        doc["detail"] = str(detail)[:300]
+    _atomic_write(proc / EXIT, doc)
+
+
+class EvidenceWriteError(DetachError):
+    """Falha ao gravar a evidencia terminal: a execucao NUNCA e classificada como sucesso."""
+
+
+def write_terminal(proc: Path, code: int, reason: str, clock=time.time, *, process_code: int | None = None,
+                   detail: str | None = None) -> str | None:
+    """Grava `exit.json` sem lancar: devolve None se gravou ou o texto da falha (secundaria). Quem chama preserva a causa original."""
+    try:
+        write_exit(proc, code, reason, clock, process_code=process_code, detail=detail)
+    except OSError as error:
+        return f"{type(error).__name__}: {error}"[:200]
+    return None
+
+
+def run_and_record_exit(proc: Path, run_fn, cleanup, clock=time.time):
+    """Executa `run_fn()` (devolve {state, ...}) e grava SEMPRE o `exit.json` terminal (fluxo NH; contrato da CLI preservado).
+
+    `code` semantico: 0 COMPLETED | 2 outro estado terminal | 1 excecao. `process_code` = o que a CLI devolve: 0 | 1 | 1 (excecao
+    comum) ou 3 (`RunnerError`). A causa original e preservada: se gravar o `exit.json` falhar durante uma excecao, a falha
+    secundaria vai como nota da excecao; se falhar apos um resultado, levanta `EvidenceWriteError` (nunca sucesso)."""
+    code, reason, process, pending, result = 1, "EXCEPTION", 1, None, None
+    try:
+        result = run_fn()
+    except BaseException as error:                                  # noqa: BLE001 - registra o termino e relanca
+        pending = error
+        if isinstance(error, RunnerError):
+            process = 3
+    else:
+        if result["state"] == "COMPLETED":
+            code, reason, process = 0, "COMPLETED", 0
+        else:
+            code, reason, process = 2, result["state"], 1
+    try:
+        cleanup()
+    except BaseException as error:                                  # noqa: BLE001
+        if pending is None:                                         # a limpeza falhou depois de um resultado: o termino e EXCECAO
+            pending = error
+            code, reason, process = 1, "EXCEPTION", 3 if isinstance(error, RunnerError) else 1
+        else:
+            pending.add_note(f"SECUNDARIO: limpeza falhou ({type(error).__name__}: {error})")
+    secondary = write_terminal(proc, code, reason, clock, process_code=process,
+                               detail=f"{type(pending).__name__}: {pending}" if pending is not None else None)
+    if pending is not None:
+        if secondary:
+            pending.add_note(f"SECUNDARIO: exit.json nao gravado ({secondary})")
+        raise pending
+    if secondary:
+        raise EvidenceWriteError(f"o run terminou ({reason}) mas o exit.json nao foi gravado: {secondary}")
+    return result
+
+
+def read_exit(proc: Path):
+    """`exit.json`: None = ausente; `{}` = presente mas ilegivel/invalido (nunca confundido com ausente); dict = conteudo."""
+    path = Path(proc) / EXIT
+    if not path.exists():
+        return None
+    try:
+        doc = json.loads(path.read_bytes().decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}

@@ -17,10 +17,13 @@ from sim.runner import detach
 from sim.runner import detach_probe
 from sim.runner import preflight
 from sim.runner import sched
+from sim.runner import termination
+from sim.runner import watch
 from sim.tests.runner_support import good_preflight_facts
 from sim.tests.runner_support import make_rim
 from sim.tests.sched_support import THIRD_PARTY
 from sim.tests.sched_support import FakeHost
+from sim.tests.sched_support import probe_os
 
 RUN = "RUN-aaaaaaaaaaaa-A01"
 USER = "PC-X\\tomaz"
@@ -677,22 +680,41 @@ def good_facts():
             "interpreter": {"prefix": "C:\\Users\\x\\.auneron-sim\\venv", "base_prefix": "C:\\Python311", "executable": "C:\\py",
                             "expected_prefix": "C:\\Users\\x\\.auneron-sim\\venv", "include_system_site_packages": "false"},
             "import_sim": True, "launch_json_read": True, "docker": [0, "29.6.2"], "git": [0, "git version"],
-            "path": {"docker": True, "git": True}, "keep_awake": True, "heartbeat_written": True, "stop_obeyed": True}
+            "path": {"docker": True, "git": True}, "keep_awake": True, "heartbeat_written": True, "stop_obeyed": True,
+            "watch_armed": True, "watch_write_errors": 0, "exit_write_error": None, "exit_code": 0}
 
 
 def good_monitor(level="L1"):
+    """Monitor v2 (vigilia duravel): o fim do lancador e do CLI iniciador vem da tarefa, nao da hora de inicio do monitor."""
     required = detach_probe.LEVELS[level]["required_s"]
-    return {"task": "\\AuneronSim\\X", "xml_sha256": "ab", "registered_verified": True,
+    return {"task": "\\AuneronSim\\X", "xml_sha256": "ab", "registered_verified": True, "evidence_version": "v2",
             "schedule": {"pid": 555, "name": "svchost.exe", "session": 0},
             "engine": {"pid": 900, "ppid": 555, "name": "cmd.exe", "session": 1}, "engine_tree": [900, 902, 901],
             "heartbeat_pid_in_tree": True, "launcher_pid": 4084, "launcher_alive": False, "probe_alive_before_stop": True,
-            "beats": {"max_gap_s": 5, "duration_s": required, "survived_after_s": required - 5}, "exit": {"code": 0, "reason": "STOP"},
+            "beats": {"max_gap_s": 5, "duration_s": required, "survived_after_s": 1, "survived_durable_s": required - 5},
+            "exit": {"code": 0, "reason": "STOP"}, "termination": {"class": "STOP_CLEAN", "success": True, "scheduler_checked": True},
             "exit_code_txt": 0, "task_state_after": 3, "last_result_after": 0, "triggers": 0, "restart_on_failure": False,
             "instances": {"engines_max": 1, "engines_min_while_alive": 1, "distinct_engine_pids": [900], "samples": 120,
                           "sample_errors": 0, "second_start_attempted": True, "dense_samples_after_second_start": 20,
                           "start_records": 1, "beat_pids": [901]},
-            "removal_verified": True, "orphan_processes": 0, "evidence_manifest_ok": True,
-            "audit_ok": True, "folder_clean": True, "session_end": {"t": 100, "crosses": True, "gap_at_cross_s": 5}}
+            "removal_verified": True, "orphan_processes": 0, "evidence_manifest_ok": True, "audit_write_failures": [],
+            "audit_ok": True, "folder_clean": True,
+            "watch": {"armed": True, "integrity_ok": True, "records": 10, "corrupt_lines": 0, "observing": True, "period_s": 5},
+            "launcher_watch": {"pid": 4084, "how": "absent", "last_seen_alive_t": 2990, "first_seen_ended_t": 2992},
+            "session_end": {"source": "watch", "role": "initiator", "how": "absent", "last_seen_alive_t": 2990, "first_seen_ended_t": 2995,
+                            "period_s": 5, "crosses": True, "gap_at_cross_s": 5, "survived_after_end_s": 2400, "stop_after_end": True,
+                            "requester_outside_initiator": True, "probe_lineage_unchanged": True}}
+
+
+def legacy_monitor(level="L1"):
+    """Monitor de evidencia HISTORICA verificavel (sem vigilia duravel): caminho legado de D2-08/D2-12."""
+    required = detach_probe.LEVELS[level]["required_s"]
+    doc = good_monitor(level)
+    for key in ("termination", "watch", "launcher_watch", "audit_write_failures"):
+        doc.pop(key)
+    doc.update(evidence_version="legacy-1", session_end={"t": 100, "crosses": True, "gap_at_cross_s": 5})
+    doc["beats"] = {"max_gap_s": 5, "duration_s": required, "survived_after_s": required - 5}
+    return doc
 
 
 def test_detach2_has_exactly_twelve_binary_criteria_and_l1_passes_with_d2_12_not_proven():
@@ -734,7 +756,22 @@ def test_detach2_has_exactly_twelve_binary_criteria_and_l1_passes_with_d2_12_not
     ("D2-07_heartbeat_continuous", lambda f, m: m["beats"].update(duration_s=899)),
     ("D2-08_survives_launcher", lambda f, m: m.update(launcher_alive=True)),
     ("D2-08_survives_launcher", lambda f, m: m.update(probe_alive_before_stop=False)),
-    ("D2-08_survives_launcher", lambda f, m: m["beats"].update(survived_after_s=839)),
+    ("D2-08_survives_launcher", lambda f, m: m["beats"].update(survived_durable_s=839)),
+    ("D2-08_survives_launcher", lambda f, m: m["beats"].update(survived_durable_s=None)),
+    ("D2-08_survives_launcher", lambda f, m: m["launcher_watch"].update(how=None)),
+    ("D2-08_survives_launcher", lambda f, m: m["launcher_watch"].update(how="unknown")),
+    ("D2-08_survives_launcher", lambda f, m: m["launcher_watch"].update(first_seen_ended_t=None)),
+    ("D2-08_survives_launcher", lambda f, m: m.update(launcher_watch=None)),
+    ("D2-08_survives_launcher", lambda f, m: m["watch"].update(integrity_ok=False)),
+    ("D2-08_survives_launcher", lambda f, m: m["watch"].update(armed=False)),
+    ("D2-08_survives_launcher", lambda f, m: f.update(watch_write_errors=1)),
+    ("D2-08_survives_launcher", lambda f, m: f.update(watch_armed=False)),
+    ("D2-08_survives_launcher", lambda f, m: f.pop("watch_write_errors")),
+    ("D2-09_stop_exit_clean", lambda f, m: m["termination"].update({"class": "INCONSISTENT_SIGNALS"})),
+    ("D2-09_stop_exit_clean", lambda f, m: m["termination"].update(scheduler_checked=False)),
+    ("D2-09_stop_exit_clean", lambda f, m: m.update(termination=None)),
+    ("D2-09_stop_exit_clean", lambda f, m: f.update(exit_write_error="OSError: disco cheio")),
+    ("D2-11_removed_clean_evidence", lambda f, m: m.update(audit_write_failures=[{"event": "STOPPED", "error": "OSError"}])),
     ("D2-09_stop_exit_clean", lambda f, m: f.update(stop_obeyed=False)),
     ("D2-09_stop_exit_clean", lambda f, m: m.update(exit={"code": 1, "reason": "TIMEOUT"})),
     ("D2-09_stop_exit_clean", lambda f, m: m.update(exit_code_txt=None)),
@@ -767,14 +804,66 @@ def test_each_detach2_criterion_failing_alone_rejects_the_probe(criterion, mutat
     assert verdict["verdict"] == "FAIL" and criterion in verdict["failed"] and len(verdict["failed"]) == 1
 
 
-@pytest.mark.parametrize("mutate", [lambda m: m.update(session_end=None), lambda m: m["session_end"].update(crosses=False),
-                                    lambda m: m["session_end"].update(gap_at_cross_s=16), lambda m: m["session_end"].update(t=None)])
+SESSION_END_MUTATIONS = [
+    lambda m, f: m.update(session_end=None),
+    lambda m, f: m["session_end"].update(source="operator"),
+    lambda m, f: m["session_end"].update(role="launcher"),
+    lambda m, f: m["session_end"].update(how=None),
+    lambda m, f: m["session_end"].update(how="unknown"),
+    lambda m, f: m["session_end"].update(last_seen_alive_t=None),
+    lambda m, f: m["session_end"].update(first_seen_ended_t=None),
+    lambda m, f: m["session_end"].update(period_s=None),
+    lambda m, f: m["session_end"].update(crosses=False),
+    lambda m, f: m["session_end"].update(crosses=None),
+    lambda m, f: m["session_end"].update(gap_at_cross_s=16),
+    lambda m, f: m["session_end"].update(gap_at_cross_s=None),
+    lambda m, f: m["session_end"].update(survived_after_end_s=599),
+    lambda m, f: m["session_end"].update(survived_after_end_s=None),
+    lambda m, f: m["session_end"].update(stop_after_end=False),
+    lambda m, f: m["session_end"].update(stop_after_end=None),
+    lambda m, f: m["session_end"].update(requester_outside_initiator=False),
+    lambda m, f: m["session_end"].update(requester_outside_initiator=None),
+    lambda m, f: m["session_end"].update(probe_lineage_unchanged=False),
+    lambda m, f: m["session_end"].update(probe_lineage_unchanged=None),
+    lambda m, f: m["watch"].update(integrity_ok=False),
+    lambda m, f: f.update(watch_write_errors=2),
+    lambda m, f: m.update(evidence_version=None),
+    lambda m, f: m.update(evidence_version="legacy-2"),
+]
+
+
+@pytest.mark.parametrize("mutate", SESSION_END_MUTATIONS)
 def test_session_end_continuity_is_required_for_l2_only(mutate):
+    monitor, facts = good_monitor("L2"), good_facts()
+    mutate(monitor, facts)
+    assert "D2-12_session_end_continuity" in detach_probe.judge_detach2(facts, monitor, "L2")["failed"]
+    if monitor["evidence_version"] == "v2":                           # em L1 o D2-12 nunca reprova: fica NOT PROVEN
+        l1 = detach_probe.judge_detach2(facts, monitor, "L1")
+        assert l1["not_proven"] == ["D2-12_session_end_continuity"] and "D2-12_session_end_continuity" not in l1["failed"]
+
+
+def test_operator_supplied_session_end_never_proves_d2_12_on_new_evidence():
     monitor = good_monitor("L2")
-    mutate(monitor)
-    assert detach_probe.judge_detach2(good_facts(), monitor, "L2")["failed"] == ["D2-12_session_end_continuity"]
-    l1 = detach_probe.judge_detach2(good_facts(), monitor, "L1")
-    assert l1["verdict"] == "PASS" and l1["not_proven"] == ["D2-12_session_end_continuity"]
+    monitor["session_end"] = {"t": 100, "crosses": True, "gap_at_cross_s": 5}                       # formato legado informado a mao
+    assert "D2-12_session_end_continuity" in detach_probe.judge_detach2(good_facts(), monitor, "L2")["failed"]
+    assert detach_probe.judge_detach2(good_facts(), legacy_monitor("L2"), "L2")["verdict"] == "PASS"  # so a historica verificavel
+
+
+def test_legacy_path_is_only_for_verifiably_historic_evidence_and_never_rescues_new_evidence():
+    assert detach_probe.judge_detach2(good_facts(), legacy_monitor("L1"), "L1")["verdict"] == "PASS"
+    legacy = legacy_monitor("L1")
+    legacy["beats"]["survived_after_s"] = 839
+    assert detach_probe.judge_detach2(good_facts(), legacy, "L1")["failed"] == ["D2-08_survives_launcher"]    # limiar inalterado
+    new_but_incomplete = good_monitor("L1")                      # evidencia nova: tira a vigilia mas deixa o numero do caminho antigo
+    new_but_incomplete.update(launcher_watch=None, watch=None)
+    new_but_incomplete["beats"]["survived_after_s"] = 10_000
+    assert "D2-08_survives_launcher" in detach_probe.judge_detach2(good_facts(), new_but_incomplete, "L1")["failed"]
+    unknown = legacy_monitor("L1")
+    unknown["evidence_version"] = None
+    assert {"D2-08_survives_launcher", "D2-09_stop_exit_clean"} <= set(detach_probe.judge_detach2(good_facts(), unknown, "L1")["failed"])
+    legacy_d209 = legacy_monitor("L1")
+    legacy_d209["exit"] = {"code": 1, "reason": "TIMEOUT"}
+    assert detach_probe.judge_detach2(good_facts(), legacy_d209, "L1")["failed"] == ["D2-09_stop_exit_clean"]
 
 
 def test_detach2_treats_missing_facts_as_failure():
@@ -805,7 +894,10 @@ class Clock:
 def probe_ports(**over):
     ports = {"job": lambda: {"in_job": True, "kill_on_close": False}, "session": lambda: 1, "run": lambda cmd: (0, "ok"),
              "keep_awake": lambda: True, "which": lambda n: "C:\\bin\\" + n,
-             "prefix": lambda: ("C:\\venv", "C:\\Python311", "C:\\venv\\Scripts\\python.exe")}
+             "prefix": lambda: ("C:\\venv", "C:\\Python311", "C:\\venv\\Scripts\\python.exe"),
+             "lineage": lambda: {"self": {"pid": 901, "created": 520, "name": "python.exe"},
+                                 "parent": {"pid": 902, "created": 510, "name": "python.exe"},
+                                 "grandparent": {"pid": 900, "created": 500, "name": "cmd.exe"}}}
     ports.update(over)
     return ports
 
@@ -839,7 +931,8 @@ def test_probe_writes_facts_incrementally_beats_and_obeys_stop(tmp_path):
 def test_probe_without_stop_times_out_and_records_it(tmp_path):
     proc, clock = probe_proc(tmp_path), Clock()
     facts = detach_probe.collect2(proc, interactive_session=1, cap_s=30, ports=probe_ports(), sleep=clock.sleep, clock=clock)
-    assert facts["stop_obeyed"] is False and json.loads((proc / detach.EXIT).read_text()) == {"code": 1, "reason": "TIMEOUT", "t_epoch": clock.t}
+    assert facts["stop_obeyed"] is False and json.loads((proc / detach.EXIT).read_text()) == {"code": 4, "reason": "TIMEOUT", "t_epoch": clock.t}
+    assert facts["exit_code"] == 4 and detach_probe.process_exit_code(facts) == 4 and facts["exit_write_error"] is None
 
 
 def test_facts_written_before_a_mid_run_death_are_preserved(tmp_path):
@@ -852,38 +945,59 @@ def test_facts_written_before_a_mid_run_death_are_preserved(tmp_path):
         detach_probe.collect2(proc, interactive_session=1, cap_s=600, ports=probe_ports(run=dies), sleep=clock.sleep, clock=clock)
     saved = json.loads((proc / detach_probe.FACTS).read_text())
     assert saved["phase"] == "job" and saved["pid"] == os.getpid() and saved["job"]["in_job"] is True and saved["import_sim"] is True
-    assert "docker" not in saved and not (proc / detach.EXIT).exists()
+    assert "docker" not in saved
+    # SIM-1.5G.3: a morte vira evidencia terminal (EXCEPTION, codigo 1) em vez de ausencia de exit.json
+    exit_doc = json.loads((proc / detach.EXIT).read_text())
+    assert exit_doc["code"] == 1 and exit_doc["reason"] == "EXCEPTION" and "KeyboardInterrupt" in exit_doc["detail"]
 
 
 def test_probe_cli_entry_selects_the_detach2_collector(tmp_path, monkeypatch):
     seen = {}
-    monkeypatch.setattr(detach_probe, "collect2", lambda proc, **kw: seen.update(kw, proc=str(proc)))
+    monkeypatch.setattr(detach_probe, "collect2", lambda proc, **kw: seen.update(kw, proc=str(proc)) or {"exit_code": 4})
     monkeypatch.setattr(detach_probe, "collect", lambda proc, **kw: seen.update(old=True))
-    assert detach_probe.main(["--proc-dir", str(tmp_path), "--interactive-session", "1", "--detach2", "--cap-s", "99"]) == 0
+    assert detach_probe.main(["--proc-dir", str(tmp_path), "--interactive-session", "1", "--detach2", "--cap-s", "99"]) == 4
     assert seen["cap_s"] == 99 and "old" not in seen
     assert detach_probe.main(["--proc-dir", str(tmp_path), "--interactive-session", "1"]) == 0 and seen["old"] is True
 
 
 # ------------------------------------------------------------------------------------------------------ orquestracao da sonda
-def probe_world(tmp_path, level="L1", **host_over):
+def probe_world(tmp_path, level="L1", *, initiator=None, fake_os=None, **host_over):
+    """Mundo da sonda com duplos: Scheduler falso (`host`) e SO falso (`host.os`: identidade de processo)."""
     host = FakeHost(tmp_path, **host_over)
+    host.os = fake_os or probe_os()
     name = "DETACH2-PROBE-L1-20261008T120000Z" if level == "L1" else "DETACH2-PROBE-L2-20261008T120000Z"
+    if level == "L2" and initiator is None:
+        initiator = watch.make_target("initiator", 7777, host.os.query, exe="claude.exe", resume_id=None)
     doc = detach_probe.probe_launch(tmp_path, name, level=level, python="C:\\venv\\Scripts\\python.exe", repo=REPO, interactive_session=1,
-                                    run=host, alive=host.alive, sleep=lambda s: None, clock=lambda: 1000)
+                                    run=host, alive=host.alive, sleep=lambda s: None, clock=lambda: 1000, initiator=initiator,
+                                    excluded=[{"role": "shared_app", "pid": 7000}] if initiator else [], query=host.os.query)
     return host, name, doc, detach.proc_dir(tmp_path, name)
 
 
-def write_probe_outputs(proc, level, *, start=2990, gap=5, good=True):
+def write_probe_outputs(proc, level, *, start=2990, gap=5, launcher_ends=True, initiator_ends=True, fake_os=None, lineage=True):
+    """O que a sonda real deixaria na pasta: batimentos, fatos (com a linhagem) e a vigilia duravel do lancador e do iniciador."""
     required = detach_probe.LEVELS[level]["required_s"]
     with (proc / detach_probe.BEATS).open("w", encoding="utf-8") as handle:
         for i in range(required // gap + 2):
             handle.write(json.dumps({"seq": i + 1, "t": start + i * gap, "pid": 901}) + "\n")
     facts = good_facts()
     facts["interpreter"]["expected_prefix"] = facts["interpreter"]["prefix"]
+    if lineage:
+        facts["lineage"] = {"self": {"pid": 901, "created": 520, "name": "python.exe"}, "parent": {"pid": 902, "created": 510, "name": "python.exe"},
+                            "grandparent": {"pid": 900, "created": 500, "name": "cmd.exe"}}
     (proc / detach_probe.FACTS).write_text(json.dumps(facts))
     (proc / detach_probe.FACTS_LOG).write_text(json.dumps({"phase": "start", "pid": 901}, sort_keys=True) + "\n"
                                                + json.dumps({"phase": "exit", "stop_obeyed": True}, sort_keys=True) + "\n")
     (proc / detach.HEARTBEAT).write_text(json.dumps({"pid": 901, "t_epoch": start + required, "status": {}}))
+    declared = {t["role"]: t for t in watch.read_watch(proc)["targets"]}
+    records = [{"event": "OBSERVING", "t": start, "period_s": 5, "states": {}}]
+    if launcher_ends:
+        records.append({"event": "ENDED", "t": start + 2, "role": "launcher", "pid": declared["launcher"]["pid"], "created": declared["launcher"]["created"],
+                        "last_seen_alive_t": start, "first_seen_ended_t": start + 2, "how": "absent", "unknown_observations": 0, "period_s": 5})
+    if initiator_ends and "initiator" in declared:
+        records.append({"event": "ENDED", "t": start + 5, "role": "initiator", "pid": 7777, "created": declared["initiator"]["created"],
+                        "last_seen_alive_t": start, "first_seen_ended_t": start + 5, "how": "absent", "unknown_observations": 0, "period_s": 5})
+    (proc / watch.WATCH_LOG).write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in records))
 
 
 def test_probe_launch_uses_the_probe_module_the_probe_profile_and_one_task(tmp_path):
@@ -895,8 +1009,11 @@ def test_probe_launch_uses_the_probe_module_the_probe_profile_and_one_task(tmp_p
     assert detach_probe.probe_name("L1", clock=lambda: 0) == "DETACH2-PROBE-L1-19700101T000000Z"
 
 
-def run_monitor_and_finish(tmp_path, host, name, proc, level="L1", *, probe_dies=False, tweak=None, **over):
-    write_probe_outputs(proc, level)
+def run_monitor_and_finish(tmp_path, host, name, proc, level="L1", *, probe_dies=False, tweak=None, outputs=None, new_session=True, **over):
+    write_probe_outputs(proc, level, **(outputs or {}))
+    if new_session:                                  # o monitor roda numa NOVA sessao: cadeia propria, sem o CLI iniciador (7777)
+        host.os.add(8000, created=150, ppid=1, name="claude.exe").add(8001, created=160, ppid=8000, name="bash.exe")
+        host.os.procs[os.getpid()]["ppid"] = 8001
     if tweak:
         tweak(proc)
 
@@ -911,7 +1028,7 @@ def run_monitor_and_finish(tmp_path, host, name, proc, level="L1", *, probe_dies
         host.alive_pids.clear()
     # o lancador (passo A) ja terminou: o `launcher_pid` gravado na trilha nao esta vivo
     monitor = detach_probe.probe_monitor(tmp_path, name, level=level, run=host, alive=host.alive, sleep=sleep, clock=lambda: 3000,
-                                         poll_s=1, **over)
+                                         poll_s=1, query=host.os.query, snapshot=host.os.snapshot, **over)
     final = detach_probe.probe_finish(tmp_path, name, level=level, run=host, alive=host.alive, clock=lambda: 3100)
     return monitor, final
 
@@ -933,13 +1050,54 @@ def test_end_to_end_l1_probe_with_doubles_passes_and_leaves_nothing_behind(tmp_p
     assert audit.verify()["ok"] and audit.verify()["state"] == "UNREGISTERED"
 
 
-def test_end_to_end_l2_requires_the_session_end_marker_to_be_crossed(tmp_path):
+def test_end_to_end_l2_proves_the_session_end_from_the_durable_watch_not_from_the_operator(tmp_path):
     host, name, doc, proc = probe_world(tmp_path, "L2")
-    monitor, final = run_monitor_and_finish(tmp_path, host, name, proc, "L2", session_end_t=3500)
-    assert final["verdict"]["verdict"] == "PASS" and final["verdict"]["not_proven"] == []
+    monitor, final = run_monitor_and_finish(tmp_path, host, name, proc, "L2")                  # sem --session-end-epoch
+    assert final["verdict"]["verdict"] == "PASS" and final["verdict"]["not_proven"] == [], final["verdict"]
+    end = monitor["session_end"]
+    assert end["source"] == "watch" and end["first_seen_ended_t"] == 2995 and end["last_seen_alive_t"] == 2990 and end["crosses"] is True
+    assert end["survived_after_end_s"] >= 600 and end["stop_after_end"] is True and end["requester_outside_initiator"] is True
+    assert end["probe_lineage_unchanged"] is True and monitor["evidence_version"] == "v2" and monitor["watch"]["integrity_ok"] is True
+    assert monitor["beats"]["survived_durable_s"] == 5695 - 2992                              # ultimo batimento - 1o instante em que o lancador foi visto encerrado
+    assert monitor["launcher_watch"]["first_seen_ended_t"] == 2992
+    # a hora dada pelo operador e so registrada: nunca decide
+    host1, name1, doc1, proc1 = probe_world(tmp_path / "hint", "L2")
+    monitor1, final1 = run_monitor_and_finish(tmp_path / "hint", host1, name1, proc1, "L2", session_end_t=1, outputs={"initiator_ends": False})
+    assert monitor1["session_end"]["operator_hint_session_end_t"] == 1 and final1["verdict"]["failed"] == ["D2-12_session_end_continuity"]
+    # o iniciador nunca terminou durante a observacao => nao provado (sem ENDED); o L1 equivalente continua passando
     host2, name2, doc2, proc2 = probe_world(tmp_path / "x", "L2")
-    monitor2, final2 = run_monitor_and_finish(tmp_path / "x", host2, name2, proc2, "L2")
-    assert final2["verdict"]["failed"] == ["D2-12_session_end_continuity"]
+    monitor2, final2 = run_monitor_and_finish(tmp_path / "x", host2, name2, proc2, "L2", outputs={"initiator_ends": False})
+    assert final2["verdict"]["failed"] == ["D2-12_session_end_continuity"] and monitor2["session_end"]["first_seen_ended_t"] is None
+
+
+def test_end_to_end_l2_requires_the_stop_to_come_after_the_end_from_outside_the_initiator_chain(tmp_path):
+    host, name, doc, proc = probe_world(tmp_path, "L2")
+    # o monitor ainda e DESCENDENTE do CLI iniciador (7777 <- 7778 <- este processo): quem da o STOP nao e a nova sessao
+    monitor, final = run_monitor_and_finish(tmp_path, host, name, proc, "L2", new_session=False)
+    assert monitor["session_end"]["requester_outside_initiator"] is False and final["verdict"]["failed"] == ["D2-12_session_end_continuity"]
+    assert [c["pid"] for c in monitor["stop"]["requester"]] == [os.getpid(), 7778, 7777, 7000]
+    # fim do iniciador DEPOIS do STOP (o monitor roda em 3000): nao ha continuidade provada
+    host3, name3, doc3, proc3 = probe_world(tmp_path / "after", "L2")
+    monitor3, final3 = run_monitor_and_finish(tmp_path / "after", host3, name3, proc3, "L2", outputs={"start": 3000})
+    assert monitor3["session_end"]["stop_after_end"] is False and "D2-12_session_end_continuity" in final3["verdict"]["failed"]
+
+
+def test_end_to_end_l2_lineage_changed_or_unknown_is_never_proof(tmp_path):
+    host, name, doc, proc = probe_world(tmp_path, "L2")
+    host.os.end(902)                                                              # o launcher do venv da sonda sumiu
+    monitor, final = run_monitor_and_finish(tmp_path, host, name, proc, "L2")
+    assert monitor["session_end"]["probe_lineage_unchanged"] is False and "D2-12_session_end_continuity" in final["verdict"]["failed"]
+    host2, name2, doc2, proc2 = probe_world(tmp_path / "reuse", "L2")
+    host2.os.reuse(901, created=99_999)                                           # PID da sonda reutilizado por outro processo
+    monitor2, final2 = run_monitor_and_finish(tmp_path / "reuse", host2, name2, proc2, "L2")
+    assert monitor2["session_end"]["probe_lineage_unchanged"] is False
+    host3, name3, doc3, proc3 = probe_world(tmp_path / "denied", "L2")
+    host3.os.deny(900)                                                            # acesso negado: indeterminado, nunca "inalterado"
+    monitor3, final3 = run_monitor_and_finish(tmp_path / "denied", host3, name3, proc3, "L2")
+    assert monitor3["session_end"]["probe_lineage_unchanged"] is None and "D2-12_session_end_continuity" in final3["verdict"]["failed"]
+    host4, name4, doc4, proc4 = probe_world(tmp_path / "nolin", "L2")
+    monitor4, final4 = run_monitor_and_finish(tmp_path / "nolin", host4, name4, proc4, "L2", outputs={"lineage": False})
+    assert monitor4["session_end"]["probe_lineage_unchanged"] is None
 
 
 def test_a_probe_that_died_fails_and_the_task_is_still_removed_with_evidence(tmp_path):
@@ -1264,7 +1422,8 @@ def test_def5_the_monitor_waits_for_the_exit_code_that_cmd_writes_after_python_e
             if state["stop_seen"] == 5:                                    # o `cmd` grava o codigo DEPOIS do Python
                 (proc / detach.EXIT_CODE).write_text("0\r\n")
 
-    monitor = detach_probe.probe_monitor(tmp_path, name, level="L1", run=host, alive=host.alive, sleep=sleep, clock=lambda: 3000, poll_s=1)
+    monitor = detach_probe.probe_monitor(tmp_path, name, level="L1", run=host, alive=host.alive, sleep=sleep, clock=lambda: 3000, poll_s=1,
+                                         query=host.os.query, snapshot=host.os.snapshot)
     assert monitor["exit_code_txt"] == 0 and state["stop_seen"] >= 5
     # exit.json NUNCA substitui exit_code.txt: sem o arquivo, o criterio D2-09 reprova
     host2, name2, doc2, proc2 = probe_world(tmp_path / "b")
@@ -1276,7 +1435,7 @@ def test_def5_the_monitor_waits_for_the_exit_code_that_cmd_writes_after_python_e
             host2.tasks[name2].update(state=sched.STATE_READY, instances=[], last=0)
 
     monitor2 = detach_probe.probe_monitor(tmp_path / "b", name2, level="L1", run=host2, alive=host2.alive, sleep=sleep2,
-                                          clock=lambda: 3000, poll_s=1)
+                                          clock=lambda: 3000, poll_s=1, query=host2.os.query, snapshot=host2.os.snapshot)
     assert monitor2["exit"]["code"] == 0 and monitor2["exit_code_txt"] is None
     verdict = detach_probe.judge_detach2(good_facts(), {**good_monitor(), "exit_code_txt": monitor2["exit_code_txt"]}, "L1")
     assert verdict["failed"] == ["D2-09_stop_exit_clean"]

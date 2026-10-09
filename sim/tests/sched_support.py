@@ -170,3 +170,48 @@ class FakeHost:
 
 def good_user_aliases(host: FakeHost) -> list:
     return [host.user, host.sid]
+
+
+class FakeOS:
+    """Duplo do SO para IDENTIDADE de processo (SIM-1.5G.3): PID -> {criacao, estado, pai, nome}. Nenhum processo real e consultado."""
+
+    def __init__(self) -> None:
+        self.procs, self.denied = {}, set()
+
+    def add(self, pid, *, created=1_000, ppid=1, name="python.exe"):
+        self.procs[pid] = {"created": created, "ppid": ppid, "name": name, "alive": True}
+        return self
+
+    def end(self, pid):
+        self.procs[pid]["alive"] = False
+
+    def reuse(self, pid, created):
+        self.procs[pid].update(created=created, alive=True)
+
+    def deny(self, pid):
+        self.denied.add(pid)
+
+    def query(self, pid):
+        if pid in self.denied:
+            return {"state": "UNKNOWN", "created": None, "error": "acesso negado"}
+        found = self.procs.get(pid)
+        if found is None or not found["alive"]:
+            return {"state": "ABSENT", "created": None, "error": "ausente"}
+        return {"state": "ALIVE", "created": found["created"]}
+
+    def snapshot(self):
+        return {pid: {"ppid": p["ppid"], "name": p["name"]} for pid, p in self.procs.items() if p["alive"]}
+
+
+def probe_os(*, initiator=True) -> FakeOS:
+    """SO do mundo da sonda: lancador (este processo de teste) <- bash <- claude CLI <- app compartilhado; sonda 901 <- 902 <- motor 900."""
+    fake = FakeOS()
+    fake.add(7000, created=100, ppid=1, name="claude.exe")                       # app compartilhado
+    fake.add(7777, created=200, ppid=7000, name="claude.exe")                    # CLI da sessao iniciadora
+    fake.add(7778, created=300, ppid=7777, name="bash.exe")
+    fake.add(os.getpid(), created=400, ppid=7778, name="python.exe")             # o lancador / monitor (este teste)
+    fake.add(900, created=500, ppid=555, name="cmd.exe")
+    fake.add(902, created=510, ppid=900, name="python.exe")
+    fake.add(901, created=520, ppid=902, name="python.exe")
+    fake.add(555, created=50, ppid=1, name="svchost.exe")
+    return fake
