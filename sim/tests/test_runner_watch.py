@@ -3,11 +3,15 @@ SIM-1.5G.3 -- identidade de processo (PID + data de criacao), descoberta do CLI 
 versao verificavel da evidencia e replay historico.
 
 Parte usa a API REAL do Windows apenas para LER processos do proprio teste (o proprio PID, um filho curto criado e encerrado
-aqui, um PID inexistente e um processo protegido); nenhum processo alheio e encerrado. O resto usa `FakeOS`.
+aqui, um PID inexistente e o processo System, cuja legibilidade DEPENDE DO PRIVILEGIO do usuario: o teste real so exige a
+coerencia de cada estado, nunca um estado especifico); nenhum processo alheio e encerrado. A traducao dos erros do Win32 por
+`query_native` e verificada de forma DETERMINISTICA com um `kernel32` falso (sem handle, processo ou privilegio reais). O resto usa
+`FakeOS`.
 """
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -40,13 +44,67 @@ def test_real_identity_of_this_process_is_alive_with_a_stable_creation_time():
     assert ident["pid"] == os.getpid() and ident["iso"].startswith("20") and ident["iso"].endswith("Z")
 
 
+def assert_coherent_query(found: dict) -> None:
+    """Coerencia de UM resultado de `query_native` para um processo que pode ou nao ser legivel conforme o privilegio do usuario (PID 4,
+    o System). Contrato: NUNCA ABSENT (ABSENT exige prova de inexistencia ou de termino); ALIVE exige data de criacao inteira positiva e
+    nenhum erro; UNKNOWN exige criacao None e o motivo de uma falha de CONSULTA (nao o de PID invalido)."""
+    state = found["state"]
+    assert state in (watch.ALIVE, watch.UNKNOWN), found
+    if state == watch.ALIVE:
+        assert isinstance(found["created"], int) and not isinstance(found["created"], bool) and found["created"] > 0, found
+        assert "error" not in found, found
+    else:
+        assert found["created"] is None, found
+        assert isinstance(found.get("error"), str) and found["error"].startswith(("OpenProcess falhou (", "GetProcessTimes falhou (")), found
+
+
+@pytest.mark.parametrize("found", [
+    {"state": "ALIVE", "created": 133_000_000_000_000_000},                                           # lido com privilegio (administrador)
+    {"state": "UNKNOWN", "created": None, "error": "OpenProcess falhou (5)"},                         # acesso negado (usuario comum)
+    {"state": "UNKNOWN", "created": None, "error": "GetProcessTimes falhou (6)"},
+])
+def test_the_coherence_check_accepts_what_each_privilege_level_may_legitimately_observe(found):
+    assert_coherent_query(found)
+
+
+@pytest.mark.parametrize("found", [
+    {"state": "ABSENT", "created": None, "error": "OpenProcess: PID inexistente"},                    # um processo que existe nunca e ABSENT
+    {"state": "ABSENT", "created": 5, "error": "processo encerrado (handle ainda aberto)"},
+    {"state": "ABSENT", "created": None, "error": "OpenProcess falhou (5)"},                         # nem com um motivo de falha de consulta
+    {"state": "ALIVE", "created": None},
+    {"state": "ALIVE", "created": True},
+    {"state": "ALIVE", "created": 0},
+    {"state": "ALIVE", "created": 5, "error": "x"},
+    {"state": "UNKNOWN", "created": 5, "error": "OpenProcess falhou (5)"},
+    {"state": "UNKNOWN", "created": None},
+    {"state": "UNKNOWN", "created": None, "error": "pid invalido"},
+    {"state": "???", "created": None},
+])
+def test_the_coherence_check_rejects_every_incoherent_result(found):
+    with pytest.raises(AssertionError):
+        assert_coherent_query(found)
+
+
 @windows
 def test_real_absent_unreadable_and_invalid_pids_are_never_confused():
-    assert watch.query_native(0x7FFFFFF0)["state"] == watch.ABSENT                    # PID inexistente (ERROR_INVALID_PARAMETER)
-    assert watch.query_native(4)["state"] == watch.UNKNOWN                            # processo protegido do sistema: acesso negado
+    missing = watch.query_native(0x7FFFFFF0)
+    assert missing["state"] == watch.ABSENT and missing["created"] is None and "inexistente" in missing["error"]    # ERROR_INVALID_PARAMETER
+    # PID 4 (System): legivel so com privilegio suficiente. UNKNOWN (acesso negado, usuario comum) e ALIVE (administrador, runner hospedado)
+    # sao ambos validos; o contrato exige apenas a coerencia de cada estado e que NUNCA seja ABSENT.
+    first = watch.query_native(4)
+    assert_coherent_query(first)
+    ident = watch.identity_of(4)                                                      # consulta propria: pode, em tese, ver outro estado
+    second = watch.query_native(4)
+    assert_coherent_query(second)
+    if first["state"] == second["state"]:                                             # so se compara quando o estado nao mudou entre as leituras
+        if first["state"] == watch.ALIVE:
+            assert ident is not None and ident["pid"] == 4 and ident["created"] == first["created"] == second["created"]
+            assert ident["iso"] == watch.filetime_iso(ident["created"])
+        else:
+            assert ident is None
     for bad in (0, -1, None, True, "12", 1.5):
         assert watch.query_native(bad)["state"] == watch.UNKNOWN
-    assert watch.identity_of(4) is None and watch.identity_of(0x7FFFFFF0) is None
+    assert watch.identity_of(0x7FFFFFF0) is None
 
 
 @windows
@@ -73,6 +131,152 @@ def test_real_snapshot_and_ancestors_follow_the_parent_chain_with_decreasing_cre
     lineage = watch.self_lineage()
     assert lineage["self"]["pid"] == os.getpid() and lineage["parent"]["pid"] == os.getppid()
     assert watch.lineage_unchanged(lineage) is True
+
+
+# ------------------------------------------------------------------------------------------------------ contrato Win32 (deterministico)
+class Win32Function:
+    """Chamavel que aceita `restype`/`argtypes` como as funcoes de `ctypes.WinDLL` e delega a um metodo do kernel32 falso."""
+
+    def __init__(self, action) -> None:
+        self.action, self.restype, self.argtypes = action, None, None
+
+    def __call__(self, *args):
+        return self.action(*args)
+
+
+class FakeKernel32:
+    """`kernel32` falso: nenhum handle, processo ou privilegio reais; registra cada chamada em `calls`."""
+
+    HANDLE = 0x5EED
+
+    def __init__(self, *, open_ok=True, error=0, times_ok=True, created=(0, 0), exited=(0, 0), raise_in_times=None) -> None:
+        self.calls, self.last_error = [], error
+        self.open_ok, self.times_ok, self.created, self.exited, self.raise_in_times = open_ok, times_ok, created, exited, raise_in_times
+        self.OpenProcess = Win32Function(self._open)
+        self.GetProcessTimes = Win32Function(self._times)
+        self.CloseHandle = Win32Function(self._close)
+
+    def _open(self, access, inherit, pid):
+        self.calls.append(("OpenProcess", access, inherit, pid))
+        return self.HANDLE if self.open_ok else 0
+
+    def _times(self, handle, created, exited, kernel, user):
+        self.calls.append(("GetProcessTimes", handle))
+        if self.raise_in_times is not None:
+            raise self.raise_in_times
+        if not self.times_ok:
+            return 0
+        for reference, (high, low) in ((created, self.created), (exited, self.exited), (kernel, (0, 0)), (user, (0, 0))):
+            reference._obj.dwHighDateTime, reference._obj.dwLowDateTime = high, low         # `byref(FILETIME)` -> a estrutura em `_obj`
+        return 1
+
+    def _close(self, handle):
+        self.calls.append(("CloseHandle", handle))
+        return 1
+
+    def names(self) -> list:
+        return [call[0] for call in self.calls]
+
+
+@pytest.fixture
+def win32(monkeypatch):
+    """Instala um `kernel32` falso no lugar de `ctypes.WinDLL` e finge a plataforma Windows (as importacoes de `query_native` sao feitas
+    na chamada, entao o fake vale ate o teste terminar). Pode ser chamada de novo no mesmo teste para trocar o comportamento."""
+
+    def install(**kwargs):
+        fake = FakeKernel32(**kwargs)
+
+        def fake_windll(name, use_last_error=False):
+            assert name == "kernel32" and use_last_error is True, (name, use_last_error)
+            return fake
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(ctypes, "WinDLL", fake_windll, raising=False)
+        monkeypatch.setattr(ctypes, "get_last_error", lambda: fake.last_error, raising=False)
+        return fake
+
+    return install
+
+
+def forbid_the_os(monkeypatch, platform: str) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("kernel32 nao pode ser carregado neste caminho")
+
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(ctypes, "WinDLL", forbidden, raising=False)
+
+
+HIGH, LOW = 0x01DC1234, 0x89ABCDEF
+MADE = (HIGH << 32) | LOW
+
+
+@pytest.mark.parametrize("error,state,fragment", [
+    (5, watch.UNKNOWN, "OpenProcess falhou (5)"),                  # ERROR_ACCESS_DENIED: indeterminado, nunca "ausente"
+    (87, watch.ABSENT, "PID inexistente"),                         # ERROR_INVALID_PARAMETER: a unica prova de inexistencia
+    (2, watch.UNKNOWN, "OpenProcess falhou (2)"),                  # ERROR_FILE_NOT_FOUND
+    (1314, watch.UNKNOWN, "OpenProcess falhou (1314)"),            # ERROR_PRIVILEGE_NOT_HELD
+    (998, watch.UNKNOWN, "OpenProcess falhou (998)"),
+    (0, watch.UNKNOWN, "OpenProcess falhou (0)"),                  # falha sem codigo: tambem indeterminada
+])
+def test_open_process_errors_are_translated_and_no_handle_is_ever_closed(win32, error, state, fragment):
+    fake = win32(open_ok=False, error=error)
+    found = watch.query_native(1234)
+    assert found["state"] == state and found["created"] is None and fragment in found["error"]
+    assert fake.calls == [("OpenProcess", 0x1000, False, 1234)]            # QUERY_LIMITED_INFORMATION, sem herdar; nada para fechar
+
+
+def test_a_failing_get_process_times_is_unknown_and_the_handle_is_closed_exactly_once(win32):
+    fake = win32(times_ok=False, error=6)
+    found = watch.query_native(77)
+    assert found == {"state": watch.UNKNOWN, "created": None, "error": "GetProcessTimes falhou (6)"}
+    assert fake.calls == [("OpenProcess", 0x1000, False, 77), ("GetProcessTimes", fake.HANDLE), ("CloseHandle", fake.HANDLE)]
+
+
+@pytest.mark.parametrize("exited", [(0, 1), (1, 0), (HIGH, LOW)])
+def test_a_recorded_exit_time_means_absent_with_the_creation_time_and_one_close(win32, exited):
+    fake = win32(created=(HIGH, LOW), exited=exited)
+    found = watch.query_native(77)
+    assert found == {"state": watch.ABSENT, "created": MADE, "error": "processo encerrado (handle ainda aberto)"}
+    assert fake.names() == ["OpenProcess", "GetProcessTimes", "CloseHandle"] and fake.calls[-1] == ("CloseHandle", fake.HANDLE)
+
+
+@pytest.mark.parametrize("high,low", [(0, 1), (1, 0), (0xFFFFFFFF, 0xFFFFFFFF), (HIGH, LOW)])
+def test_a_live_process_is_alive_with_the_exact_filetime_and_one_close(win32, high, low):
+    fake = win32(created=(high, low))
+    found = watch.query_native(77)
+    assert found == {"state": watch.ALIVE, "created": (high << 32) | low}                    # as duas palavras de 32 bits, na ordem certa
+    assert fake.names() == ["OpenProcess", "GetProcessTimes", "CloseHandle"] and fake.calls[-1] == ("CloseHandle", fake.HANDLE)
+
+
+def test_the_handle_is_closed_even_if_reading_the_times_raises(win32):
+    fake = win32(raise_in_times=RuntimeError("boom"))
+    with pytest.raises(RuntimeError, match="boom"):
+        watch.query_native(77)
+    assert fake.names() == ["OpenProcess", "GetProcessTimes", "CloseHandle"]
+
+
+@pytest.mark.parametrize("bad", [0, -1, -5, None, True, False, "12", 1.5, 4.0])
+def test_invalid_pids_are_unknown_without_touching_the_os(monkeypatch, bad):
+    forbid_the_os(monkeypatch, "win32")
+    assert watch.query_native(bad) == {"state": watch.UNKNOWN, "created": None, "error": "pid invalido"}
+
+
+def test_other_platforms_are_unknown_without_touching_the_os(monkeypatch):
+    forbid_the_os(monkeypatch, "linux")
+    assert watch.query_native(1234) == {"state": watch.UNKNOWN, "created": None, "error": "plataforma sem GetProcessTimes"}
+
+
+def test_identity_and_evaluation_follow_the_translated_states(win32):
+    win32(created=(HIGH, LOW))
+    assert watch.identity_of(77) == {"pid": 77, "created": MADE, "iso": watch.filetime_iso(MADE)}
+    target = watch.make_target("helper", 77)
+    assert watch.evaluate(target) == (watch.ALIVE, None, "")
+    win32(open_ok=False, error=5)
+    assert watch.identity_of(77) is None
+    verdict, how, detail = watch.evaluate(target)
+    assert (verdict, how) == (watch.UNKNOWN, None) and "OpenProcess falhou (5)" in detail          # acesso negado nunca e termino
+    win32(open_ok=False, error=87)
+    assert watch.evaluate(target)[:2] == ("ENDED", "absent")
 
 
 # ------------------------------------------------------------------------------------------------------ evaluate / make_target
