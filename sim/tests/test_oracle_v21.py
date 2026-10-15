@@ -254,6 +254,7 @@ ALLOWED = [
     r"^sim/stack/(docker-compose\.sim\.driver\.yml|driver\.Dockerfile|collector\.Dockerfile|DRIVER_LAB\.md)$",
     r"^sim/stack/lab/(driver_lab|run_orchestrator)\.py$",
     r"^sim/live/(container/)?[^/]+$",                  # SIM-1.5A: harness live versionado
+    r"^\.github/workflows/sim-ci\.yml$",               # SIM CI (8o commit): caminho EXATO do workflow
     r"^sim/tests/[^/]+$",
 ]
 HISTORICAL = (".claude/", "Claude outputs/", "backend/DW3_patch_review_v2.patch",
