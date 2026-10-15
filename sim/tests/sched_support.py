@@ -22,7 +22,7 @@ LABELS = {sched.PS_IDENTITY: "identity", sched.PS_REGISTER: "register", sched.PS
 
 
 class FakeHost:
-    def __init__(self, runs_root, *, user="PC-X\\tomaz", sid="S-1-5-21-1-1000", admin=False, integrity=0x2000,
+    def __init__(self, runs_root, *, user="PC-X\\sim_operator", sid="S-1-5-21-1-1000", admin=False, integrity=0x2000,
                  schedule="Running", reboot=False, export=None, fail_unregister=False, keep_after_unregister=False, heartbeat=True,
                  engine_pid=900, probe_pid=901, launcher_pid=902, session=1, schedule_pid=555, chain=None, procs=None, hook=None,
                  inspector_chain=None, engine_parent=None, table_extra=None, ptable_errors=(), table_probe_pid=None, end_leaves_running=False):

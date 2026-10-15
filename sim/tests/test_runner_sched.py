@@ -27,7 +27,7 @@ from sim.tests.sched_support import FakeHost
 from sim.tests.sched_support import probe_os
 
 RUN = "RUN-aaaaaaaaaaaa-A01"
-USER = "PC-X\\tomaz"
+USER = "PC-X\\sim_operator"
 ARGS = '/d /v:on /s /c ""C:\\v\\python.exe" -m sim.runner.cli run --run-id X 1>>"C:\\p\\stdout.log" & >"C:\\p\\e.txt" echo !errorlevel!"'
 REPO = "C:\\repo"
 
@@ -94,7 +94,7 @@ def test_xml_escapes_special_characters_and_rejects_control_characters():
     with pytest.raises(sched.SchedError):
         sched.build_task_xml(RUN, USER, "a\nb", REPO, "PT30M")
     with pytest.raises(sched.SchedError):
-        sched.build_task_xml(RUN, "tomaz", ARGS, REPO, "PT30M")                         # usuario sem DOMINIO\\
+        sched.build_task_xml(RUN, "sim_operator", ARGS, REPO, "PT30M")                         # usuario sem DOMINIO\\
 
 
 @pytest.mark.parametrize("old,new,needle", [
@@ -113,7 +113,7 @@ def test_xml_escapes_special_characters_and_rejects_control_characters():
     ("<StartWhenAvailable>false", "<StartWhenAvailable>true", "StartWhenAvailable"),
     ("<ExecutionTimeLimit>PT30M", "<ExecutionTimeLimit>PT72H", "ExecutionTimeLimit"),
     ("<ExecutionTimeLimit>PT30M</ExecutionTimeLimit>", "", "ExecutionTimeLimit"),
-    ("<UserId>PC-X\\tomaz</UserId>", "<UserId>PC-X\\other</UserId>", "principal"),
+    ("<UserId>PC-X\\sim_operator</UserId>", "<UserId>PC-X\\other</UserId>", "principal"),
     ("<Command>C:\\Windows\\System32\\cmd.exe</Command>", "<Command>C:\\x\\evil.exe</Command>", "comando"),
     ("<WorkingDirectory>C:\\repo", "<WorkingDirectory>C:\\other", "diretorio"),
     ("</Exec>", "</Exec><ComHandler><ClassId>{x}</ClassId></ComHandler>", "proibido"),
@@ -130,7 +130,7 @@ def test_semantic_validation_catches_every_deviation_from_the_design(old, new, n
 
 
 def test_semantics_accept_the_windows_normalised_export_form_and_sid_alias():
-    exported = good_xml().replace("<RegistrationInfo>", "<RegistrationInfo><Author>PC-X\\tomaz</Author><Date>2026-10-08T12:00:00</Date>", 1)
+    exported = good_xml().replace("<RegistrationInfo>", "<RegistrationInfo><Author>PC-X\\sim_operator</Author><Date>2026-10-08T12:00:00</Date>", 1)
     exported = exported.replace("<UserId>" + USER + "</UserId>", "<UserId>S-1-5-21-1-1000</UserId>", 1)
     assert sem(exported, user_aliases=[USER, "S-1-5-21-1-1000"]) == []
     assert sem(exported, user_aliases=[USER])                                           # SID desconhecido => reprova
@@ -230,7 +230,7 @@ def test_def3_diagnostic_falls_back_to_stdout_and_unreadable_output_is_never_a_s
 @pytest.mark.parametrize("field,value", [("admin_role", True), ("admin_role", None), ("integrity_rid", 0x3000), ("integrity_rid", 0x4000),
                                          ("integrity_rid", 0x1000), ("integrity_rid", 0), ("integrity_rid", -1), ("integrity_rid", None),
                                          ("integrity_rid", True), ("integrity_rid", "8192"), ("integrity_rid", 8192.0), ("integrity_rid", 8193),
-                                         ("schedule_state", "Stopped"), ("user", "tomaz")])
+                                         ("schedule_state", "Stopped"), ("user", "sim_operator")])
 def test_unexpected_privilege_or_service_state_fails_closed_without_registering(tmp_path, field, value):
     host = FakeHost(tmp_path)
     host.who[field] = value
@@ -241,7 +241,7 @@ def test_unexpected_privilege_or_service_state_fails_closed_without_registering(
 
 
 def test_require_unelevated_returns_the_identity_when_it_matches_the_measured_one(tmp_path):
-    assert sched.require_unelevated(FakeHost(tmp_path).who)["user"] == "PC-X\\tomaz"
+    assert sched.require_unelevated(FakeHost(tmp_path).who)["user"] == "PC-X\\sim_operator"
     with pytest.raises(sched.UnexpectedPrivilege):
         sched.require_unelevated({"admin_role": False, "integrity_rid": None, "schedule_state": "Running", "user": USER})
     with pytest.raises(sched.UnexpectedPrivilege):
