@@ -1,0 +1,373 @@
+# SIM CI - validacao automatica do laboratorio SIM (Windows, Python 3.11).
+#
+# Limites declarados (este workflow NAO e isolamento de rede nem prova de ausencia de descendentes):
+#  - A camada de rede e um sitecustomize: deteccao e prevencao PARCIAL, so para processos Python que o carreguem.
+#    Nao cobre processos que nao sejam Python (git, cmd, pwsh, pip), subprocessos com ambiente substituido ou iniciados
+#    com -I/-S, uso direto de Winsock por ctypes, nem conexoes assincronas do Windows (ConnectEx).
+#  - A deteccao de processos remanescentes e best-effort: (a) python/cmd cuja linha de comando contem o caminho do
+#    workspace; (b) python/cmd novos desde o inicio, por PID e hora de criacao. Nao identifica todos os descendentes
+#    (filho sem o caminho na linha de comando, filho cujo pai ja terminou, outros nomes de executavel).
+#  - Destinos de rede brutos ficam SO no diretorio privado do runner efemero e nunca sao enviados; o artefato publico
+#    recebe apenas contagens por tipo de evento.
+#  - O piso SIM_MIN_TESTS vem da coleta real do pytest e deve ser atualizado de proposito quando a suite crescer.
+
+name: SIM CI
+
+on:
+  push:
+    branches:
+      - main
+      - "review/**"
+    paths:
+      - "sim/**"
+      - ".github/workflows/sim-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "sim/**"
+      - ".github/workflows/sim-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sim-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  sim-tests:
+    name: SIM / Windows / Python 3.11
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUTF8: "1"
+      SIM_MIN_TESTS: "1501"
+
+    steps:
+      - name: Baixar o repositório (histórico completo, sem credenciais persistidas)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: sim/requirements.txt
+
+      - name: Instalar dependências do SIM (somente sim/requirements.txt)
+        run: |
+          python -m pip install -r sim/requirements.txt
+          python -m pip check
+
+      - name: Pré-condições (histórico Git, diretórios isolados, linha de base do host)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse --is-shallow-repository) -ne 'false') { throw 'shallow checkout: boundary tests would skip silently' }
+          foreach ($c in 'ba7d70d079c6d649621d4a5fa9c34308793840c5', 'd100ce23462989dd1047ceabf0a30dc7e5b0d62d', '248b2fe62781103df449e7347f81dd44871365b9', '0d353766fbcbb9a85dbbfb7eab3cf36b035649b6') {
+            git cat-file -e "$c^{commit}"
+            if ($LASTEXITCODE -ne 0) { throw "base commit missing from history: $c" }
+          }
+          $public = Join-Path $env:RUNNER_TEMP 'sim-public'
+          $private = Join-Path $env:RUNNER_TEMP 'sim-private'
+          $simHome = Join-Path $env:RUNNER_TEMP 'auneron-sim-home'
+          $trapDir = Join-Path $env:RUNNER_TEMP 'sim-net-trap'
+          New-Item -ItemType Directory -Force -Path $public, $private, $simHome, $trapDir | Out-Null
+          foreach ($d in $public, $private, $simHome, $trapDir) {
+            if ($d.StartsWith($env:GITHUB_WORKSPACE, [System.StringComparison]::OrdinalIgnoreCase)) { throw "directory inside the workspace: $d" }
+          }
+          "AUNERON_SIM_HOME=$simHome" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "SIM_EVIDENCE_DIR=$public" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "SIM_PRIVATE_DIR=$private" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "SIM_NET_TRAP_DIR=$trapDir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Get-ScheduledTask | Select-Object TaskPath, TaskName | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $private 'tasks_before.json') -Encoding utf8
+          $names = '^(python|pythonw|py|cmd)\.exe$'
+          $procs = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match $names } | ForEach-Object { [pscustomobject]@{ Id = $_.ProcessId; Created = $_.CreationDate.ToFileTimeUtc() } })
+          ConvertTo-Json -InputObject $procs -Compress | Set-Content -LiteralPath (Join-Path $private 'procs_before.json') -Encoding utf8
+          if (git status --porcelain=v1) { throw 'working tree is not clean before the tests' }
+          Set-Content -LiteralPath (Join-Path $public 'precondition.ok') -Value 'ok' -Encoding ascii
+
+      - name: Camada de detecção de rede (Python, parcial)
+        run: |
+          $trap = @'
+          import os
+          import socket
+
+          _LOOP = {"127.0.0.1", "::1", "localhost", ""}
+          _LOG = os.environ.get("SIM_NET_TRAP_LOG")
+
+
+          def _name(address):
+              host = address[0] if isinstance(address, tuple) else address
+              return host.decode("ascii", "replace") if isinstance(host, bytes) else str(host)
+
+
+          def _deny(kind, target):
+              if _LOG:
+                  with open(_LOG, "a", encoding="utf-8") as fh:
+                      fh.write(kind + " " + target + "\n")
+              raise OSError("external network blocked by the SIM CI detection layer: " + kind)
+
+
+          def _wrap_address(name):
+              real = getattr(socket.socket, name)
+
+              def wrapper(self, address, *a, **k):
+                  if _name(address) not in _LOOP:
+                      _deny(name, _name(address))
+                  return real(self, address, *a, **k)
+
+              setattr(socket.socket, name, wrapper)
+
+
+          def _wrap_sendto():
+              real = socket.socket.sendto
+
+              def wrapper(self, data, *rest):
+                  if rest and _name(rest[-1]) not in _LOOP:
+                      _deny("sendto", _name(rest[-1]))
+                  return real(self, data, *rest)
+
+              socket.socket.sendto = wrapper
+
+
+          def _wrap_host(name):
+              real = getattr(socket, name)
+
+              def wrapper(host, *a, **k):
+                  if host is not None and str(host) not in _LOOP:
+                      _deny(name, str(host))
+                  return real(host, *a, **k)
+
+              setattr(socket, name, wrapper)
+
+
+          for _n in ("connect", "connect_ex"):
+              _wrap_address(_n)
+          _wrap_sendto()
+          for _n in ("getaddrinfo", "gethostbyname", "gethostbyname_ex"):
+              _wrap_host(_n)
+          '@
+          Set-Content -LiteralPath (Join-Path $env:SIM_NET_TRAP_DIR 'sitecustomize.py') -Value $trap -Encoding utf8
+
+      - name: Executar a suíte completa do SIM
+        timeout-minutes: 18
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $env:PYTHONPATH = $env:SIM_NET_TRAP_DIR
+          $env:SIM_NET_TRAP_LOG = Join-Path $env:SIM_PRIVATE_DIR 'net_trap.log'
+          $env:HTTP_PROXY = 'http://127.0.0.1:9'
+          $env:HTTPS_PROXY = 'http://127.0.0.1:9'
+          $env:ALL_PROXY = 'http://127.0.0.1:9'
+          $env:NO_PROXY = '127.0.0.1,localhost,::1'
+          python -m pytest sim/tests -p no:cacheprovider -ra --tb=short --junitxml="$env:SIM_EVIDENCE_DIR\sim-junit.xml" 2>&1 | Tee-Object -FilePath "$env:SIM_EVIDENCE_DIR\sim-pytest.log"
+          $code = $LASTEXITCODE
+          Set-Content -LiteralPath (Join-Path $env:SIM_EVIDENCE_DIR 'pytest.exit') -Value $code -Encoding ascii
+          exit $code
+
+      - name: Coletar fatos de pós-condição (somente indicadores sanitizados)
+        if: ${{ always() }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $public = $env:SIM_EVIDENCE_DIR
+          if (-not $public -or -not (Test-Path -LiteralPath $public)) { exit 0 }
+          $facts = [ordered]@{}
+          try {
+            $before = @((Get-Content -LiteralPath (Join-Path $env:SIM_PRIVATE_DIR 'tasks_before.json') -Raw | ConvertFrom-Json) | ForEach-Object { $_.TaskPath + $_.TaskName })
+            $after = @(Get-ScheduledTask | ForEach-Object { $_.TaskPath + $_.TaskName })
+            $facts.new_tasks = @($after | Where-Object { $_ -notin $before })
+          } catch { $facts.new_tasks_error = $_.Exception.GetType().Name }
+          try {
+            $facts.dirty_files = @(git status --porcelain=v1).Count
+            if ($LASTEXITCODE -ne 0) { throw 'git status failed' }
+          } catch { $facts.dirty_files_error = $_.Exception.GetType().Name }
+          $names = '^(python|pythonw|py|cmd)\.exe$'
+          try {
+            $now = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match $names })
+            $facts.leftover_workspace_processes = @($now | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:GITHUB_WORKSPACE) }).Count
+          } catch { $facts.leftover_workspace_processes_error = $_.Exception.GetType().Name }
+          try {
+            $known = @((Get-Content -LiteralPath (Join-Path $env:SIM_PRIVATE_DIR 'procs_before.json') -Raw | ConvertFrom-Json) | ForEach-Object { "$($_.Id):$($_.Created)" })
+            $facts.leftover_new_processes = @($now | Where-Object { $known -notcontains ("$($_.ProcessId):$($_.CreationDate.ToFileTimeUtc())") }).Count
+          } catch { $facts.leftover_new_processes_error = $_.Exception.GetType().Name }
+          try {
+            $raw = Join-Path $env:SIM_PRIVATE_DIR 'net_trap.log'
+            $total = 0
+            $byKind = [ordered]@{}
+            if (Test-Path -LiteralPath $raw) {
+              foreach ($line in Get-Content -LiteralPath $raw) {
+                if ($line) {
+                  $total++
+                  $kind = ($line -split ' ', 2)[0]
+                  if ($kind -notmatch '^[a-z_]+$') { $kind = 'unknown' }
+                  $byKind[$kind] = 1 + [int]$byKind[$kind]
+                }
+              }
+            }
+            $facts.net_events_total = $total
+            $facts.net_events_by_kind = $byKind
+          } catch { $facts.net_events_error = $_.Exception.GetType().Name }
+          $facts | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $public 'facts.json') -Encoding utf8
+          exit 0
+
+      - name: Veredito (funcional, infraestrutura, isolamento, evidência)
+        if: ${{ always() }}
+        run: |
+          $verdict = @'
+          import json
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          CATEGORIES = {"FUNCTIONAL": 1, "INFRASTRUCTURE": 2, "ISOLATION": 4, "EVIDENCE": 8}
+          found = {name: [] for name in CATEGORIES}
+          evidence = os.environ.get("SIM_EVIDENCE_DIR", "")
+          floor = int(os.environ.get("SIM_MIN_TESTS", "0") or 0)
+          totals = {}
+
+
+          def add(category, message):
+              found[category].append(message)
+
+
+          def read_json(name):
+              path = os.path.join(evidence, name)
+              if not os.path.isfile(path):
+                  return None
+              try:
+                  with open(path, encoding="utf-8-sig") as fh:
+                      return json.load(fh)
+              except (OSError, ValueError):
+                  add("EVIDENCE", name + " is unreadable or not valid JSON")
+                  return {}
+
+
+          def read_junit():
+              path = os.path.join(evidence, "sim-junit.xml")
+              if not os.path.isfile(path):
+                  add("EVIDENCE", "JUnit file is missing")
+                  return None
+              if os.path.getsize(path) == 0:
+                  add("EVIDENCE", "JUnit file is empty")
+                  return None
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError as exc:
+                  add("EVIDENCE", "JUnit is not valid XML (position " + str(exc.position) + ")")
+                  return None
+              suites = [root] if root.tag == "testsuite" else [e for e in root.iter() if e.tag == "testsuite"]
+              leaves = [s for s in suites if s.find("testsuite") is None]
+              if not leaves:
+                  add("EVIDENCE", "JUnit has no testsuite element")
+                  return None
+              cases = [c for s in leaves for c in s.findall("testcase")]
+              result = {
+                  "suites": len(leaves),
+                  "tests": len(cases),
+                  "failures": sum(1 for c in cases if c.find("failure") is not None),
+                  "errors": sum(1 for c in cases if c.find("error") is not None),
+                  "skipped": sum(1 for c in cases if c.find("skipped") is not None),
+              }
+              for key in ("tests", "failures", "errors", "skipped"):
+                  try:
+                      declared = sum(int(s.get(key, "0")) for s in leaves)
+                  except ValueError:
+                      add("EVIDENCE", "JUnit attribute " + key + " is not numeric")
+                      continue
+                  if declared != result[key]:
+                      add("EVIDENCE", "JUnit attribute " + key + "=" + str(declared) + " disagrees with the testcase elements (" + str(result[key]) + ")")
+              return result
+
+
+          if not evidence or not os.path.isdir(evidence):
+              add("INFRASTRUCTURE", "evidence directory is missing: the preconditions step did not complete")
+          else:
+              if not os.path.isfile(os.path.join(evidence, "precondition.ok")):
+                  add("INFRASTRUCTURE", "preconditions marker is missing: the guard step failed or did not run")
+              exit_code = None
+              exit_path = os.path.join(evidence, "pytest.exit")
+              if os.path.isfile(exit_path):
+                  try:
+                      with open(exit_path, encoding="ascii") as fh:
+                          exit_code = int(fh.read().strip())
+                  except (OSError, ValueError):
+                      add("EVIDENCE", "pytest.exit is unreadable")
+              else:
+                  add("INFRASTRUCTURE", "pytest did not report an exit code: the step did not run or was killed")
+              if exit_code == 1:
+                  add("FUNCTIONAL", "pytest reported test failures (exit code 1)")
+              elif exit_code == 5:
+                  add("FUNCTIONAL", "pytest collected no tests (exit code 5)")
+              elif exit_code not in (None, 0):
+                  add("INFRASTRUCTURE", "pytest ended abnormally (exit code " + str(exit_code) + ": interrupted, internal or usage error, or killed)")
+              totals = read_junit() or {}
+              if totals:
+                  if totals["failures"] or totals["errors"]:
+                      add("FUNCTIONAL", "failures=" + str(totals["failures"]) + " errors=" + str(totals["errors"]))
+                      if exit_code == 0:
+                          add("EVIDENCE", "pytest exit code 0 contradicts the failures recorded in the JUnit")
+                  if totals["skipped"]:
+                      add("FUNCTIONAL", "unexpected skips: " + str(totals["skipped"]) + " (boundary tests skip on shallow clones)")
+                  if totals["tests"] < floor:
+                      add("FUNCTIONAL", "the suite shrank: " + str(totals["tests"]) + " < " + str(floor))
+              facts = read_json("facts.json")
+              if facts is None:
+                  add("EVIDENCE", "facts.json is missing: the post-condition step did not run")
+              elif facts:
+                  indicators = (
+                      ("new_tasks", "new scheduled tasks"),
+                      ("dirty_files", "files changed in the working tree"),
+                      ("leftover_workspace_processes", "python/cmd processes whose command line contains the workspace path (best effort)"),
+                      ("leftover_new_processes", "python/cmd processes created since the start and still alive (best effort)"),
+                      ("net_events_total", "external network attempts recorded by the partial detection layer (counts only)"),
+                  )
+                  for key, label in indicators:
+                      if key + "_error" in facts:
+                          add("INFRASTRUCTURE", label + " could not be collected (" + str(facts[key + "_error"]) + ")")
+                      elif key not in facts:
+                          add("EVIDENCE", "fact " + key + " is absent from facts.json")
+                      else:
+                          value = facts[key]
+                          size = len(value) if isinstance(value, list) else (1 if isinstance(value, str) and value else int(value or 0))
+                          if size:
+                              add("ISOLATION", label + ": " + str(size))
+
+          bitmask = sum(CATEGORIES[name] for name, items in found.items() if items)
+          report = {"bitmask": bitmask, "categories": {name: items for name, items in found.items() if items}, "totals": totals}
+          if evidence and os.path.isdir(evidence):
+              with open(os.path.join(evidence, "ci-verdict.json"), "w", encoding="utf-8") as fh:
+                  json.dump(report, fh, indent=2, sort_keys=True)
+          lines = ["SIM CI verdict: " + ("OK" if bitmask == 0 else "FAILED (bitmask " + str(bitmask) + ")")]
+          lines.append("totals: " + json.dumps(totals, sort_keys=True))
+          for name, items in found.items():
+              for item in items:
+                  lines.append("[" + name + "] " + item)
+          text = "\n".join(lines)
+          print(text)
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write("```\n" + text + "\n```\n")
+          sys.exit(bitmask)
+          '@
+          $verdict | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publicar evidências mínimas (retenção curta)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-ci-evidence
+          path: ${{ runner.temp }}\sim-public
+          retention-days: 7
+          if-no-files-found: warn

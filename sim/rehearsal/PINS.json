@@ -1,0 +1,22 @@
+{
+ "1000": {
+  "bundle_sha256": "9963cd3830416ec7c68e5c540990769a5aaba2af622bf4361fc61d865e36864e",
+  "files": {
+   "manifest.json": "13c173a3d7e1622c450d656459e198be321737a86354a4dbc9ef5004ee6ecb94",
+   "oracle.json": "7d1e7cc0338ac7155d7b73c9648e14b5951e4881e2f0b02b28763f57bc74e9fd",
+   "public_agenda.json": "66b8b4823d9d153b705d2c136d88aa6526f59a749f22a7c530e5e2a30f209748",
+   "world.json": "a470354def024497d4b2e1eb8488f3556b884522e10adb44fe17308899238c13"
+  }
+ },
+ "300": {
+  "bundle_sha256": "f07675c22440db3568acc52d4a47dc8388c9186224061fd67003be3d27e02e4f",
+  "files": {
+   "manifest.json": "4bc164139f3ead2f5593714e1b450ecc4e95e907d6a129761ab7a21e39be479c",
+   "oracle.json": "d9fc57763105c670fc035f4895d7eaf1d1845e090906dc42c24f7f68e4fb37d7",
+   "public_agenda.json": "f7f388c473d8d75455e8c52829b54835418ae9df174d399b3b66c5decd45b2c4",
+   "world.json": "f7b6df5e25370f5ae4efde545d017b314471076e81427f9efb577ae4d9dfec66"
+  }
+ },
+ "generator_version": "sim-rehearsal-1.0.0",
+ "profile_sha256": "a6f68eac158c2ef1471bd7dace1977d4608b74c8ab486cd0df010d92b3194d86"
+}
