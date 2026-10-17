@@ -78,6 +78,8 @@ def _clean_database() -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    intelligence_model_calls,
+                    intelligence_budgets,
                     work_skill_executions,
                     approval_consumptions,
                     approval_decisions,

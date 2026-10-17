@@ -68,6 +68,14 @@ _SENSITIVE_KEY_PARTS = (
     "password",
     "secret",
     "token",
+    # INTELLIGENCE-IMPL-0: conteudo de prompt/resposta de modelo
+    # nunca vai para log (partes especificas; "content" seria amplo
+    # demais: content_length/content_type sao campos HTTP legitimos).
+    "completion",
+    "model_input",
+    "model_output",
+    "prompt",
+    "system_instructions",
 )
 
 

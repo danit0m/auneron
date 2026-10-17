@@ -39,6 +39,8 @@ from app.models.policy_authority_consumption import (
     PolicyAuthorityConsumption,
 )
 from app.models.policy_authority_grant import PolicyAuthorityGrant
+from app.models.intelligence_budget import IntelligenceBudget
+from app.models.intelligence_budget import IntelligenceModelCall
 
 __all__ = [
     "Account",
@@ -72,4 +74,6 @@ __all__ = [
     "NbaRecommendationSnapshot",
     "PolicyAuthorityConsumption",
     "PolicyAuthorityGrant",
+    "IntelligenceBudget",
+    "IntelligenceModelCall",
 ]

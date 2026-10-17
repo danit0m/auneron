@@ -196,7 +196,10 @@ def test_migration_is_the_single_head_and_follows_the_previous_head() -> None:
 
     assert 'revision = "5c1e7a90d2b4"' in text
     assert 'down_revision = "7432a1c2dd66"' in text
-    assert expected_schema_revision() == "5c1e7a90d2b4"
+    # O head corrente do produto avancou para a7d3e91c4b26 (INTELLIGENCE-
+    # IMPL-0, add_intelligence_budget_ledger, filha desta migracao). As
+    # duas asserts acima continuam congelando a identidade desta migracao.
+    assert expected_schema_revision() == "a7d3e91c4b26"
 
 
 def test_migration_is_additive_not_valid_and_has_no_backfill() -> None:
