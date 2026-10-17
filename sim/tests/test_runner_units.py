@@ -361,22 +361,25 @@ BASE_COMMIT = "248b2fe62781103df449e7347f81dd44871365b9"
 UNTOUCHED = ("sim/driver", "sim/collector", "sim/stack", "sim/live", "sim/scenarios", "sim/company", "sim/generator",
              "sim/oracle/v2_1.py", "sim/oracle/expectations.py", "sim/oracle/expectations_v2.py", "sim/oracle/rules.py",
              "sim/oracle/rules_v2.py", "sim/oracle/schema.py", "sim/oracle/collection_plan.py",
-             "sim/oracle/artifacts/nh-small-v2-s340001-oracle-v2.1", "backend", "frontend")
+             "sim/oracle/artifacts/nh-small-v2-s340001-oracle-v2.1")
 
 
 def test_the_1_5e_candidate_leaves_driver_collector_stack_live_generator_v21_oracle_backend_and_frontend_untouched():
     import shutil
-    import subprocess
+
+    from sim.tests import freeze_support as fs
 
     if shutil.which("git") is None:
         pytest.skip("git indisponivel")
     repo = SIM_ROOT.parent
-    if subprocess.run(["git", "cat-file", "-e", f"{BASE_COMMIT}^{{commit}}"], cwd=repo, capture_output=True).returncode != 0:
+    if not fs.require_commit(repo, BASE_COMMIT):
         pytest.skip("commit base do 1.5E ausente (clone raso)")
-    diff = subprocess.run(["git", "diff", "--name-status", BASE_COMMIT, "--", *UNTOUCHED], cwd=repo, capture_output=True, text=True)
-    assert diff.stdout.strip() == "", diff.stdout
-    staged = subprocess.run(["git", "diff", "--cached", "--name-only", "--", *UNTOUCHED], cwd=repo, capture_output=True, text=True)
-    assert staged.stdout.strip() == ""
+    # componentes do SIM: igualdade exata com a base (arvore de trabalho e indice)
+    assert fs.frozen_component_diff(repo, BASE_COMMIT, UNTOUCHED) == []
+    # SIM-FREEZE-IMPL-01: backend/frontend nao sao mais comparados por igualdade absoluta; prova-se que a base tem as
+    # arvores congeladas e que nenhum commit do SIM, desde a base, altera o produto (commits mistos, merges, renames).
+    assert fs.provenance_violations(repo, {"base_1_5e": BASE_COMMIT}) == []
+    assert [str(v) for v in fs.mixed_commit_violations(repo, BASE_COMMIT)] == []
 
 
 def test_floor_and_restart_are_the_versioned_mechanisms_and_the_runner_adds_no_second_implementation():
