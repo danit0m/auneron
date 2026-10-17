@@ -543,20 +543,16 @@ def test_five_hundred_is_ambiguous_and_never_a_blind_retry_for_create(tmp_path):
 
 
 def test_product_under_test_is_unchanged_since_the_proven_images():
-    import shutil
-    import subprocess
+    """SIM-FREEZE-IMPL-01: a prova das imagens e HISTORICA. Elas sao construidas por `git archive d100ce2` (fora do
+    repositorio), entao o que importa e que as arvores contidas nelas sejam os literais congelados e que o SIM
+    nunca tenha alterado o produto. A igualdade estrita HEAD x imagens (e a arvore limpa de backend/frontend) NAO
+    e uma propriedade do CI estatico: e exigida pelos gates vivos LIVE-PREP e P1/P2/P5, protegidos em
+    sim/tests/test_product_freeze.py. O backend pode evoluir em commits proprios."""
+    from sim.tests import freeze_support as fs
 
-    if shutil.which("git") is None:
-        pytest.skip("git indisponivel")
-    probe = subprocess.run(["git", "cat-file", "-e", "d100ce23462989dd1047ceabf0a30dc7e5b0d62d"], cwd=REPO,
-                           capture_output=True)
-    if probe.returncode != 0:
+    lab_target = fs.HISTORICAL_COMMITS["lab_target"]
+
+    if not fs.require_commit(REPO, lab_target):
         pytest.skip("commit d100ce2 ausente neste clone")
-    for tree in ("backend", "frontend"):
-        old = subprocess.run(["git", "rev-parse", f"d100ce23462989dd1047ceabf0a30dc7e5b0d62d:{tree}"], cwd=REPO,
-                             capture_output=True, text=True).stdout.strip()
-        new = subprocess.run(["git", "rev-parse", f"HEAD:{tree}"], cwd=REPO, capture_output=True, text=True).stdout.strip()
-        assert old and old == new, f"{tree}/ mudou entre d100ce2 e HEAD"
-    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", "backend", "frontend"],
-                           cwd=REPO, capture_output=True, text=True).stdout.strip()
-    assert dirty == ""
+    assert fs.provenance_violations(REPO, {"lab_target": lab_target}) == []
+    assert [str(v) for v in fs.mixed_commit_violations(REPO, lab_target)] == []

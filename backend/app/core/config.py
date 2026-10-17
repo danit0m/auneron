@@ -384,6 +384,65 @@ class Settings(BaseSettings):
         le=86400,
     )
 
+    # INTELLIGENCE-IMPL-0: fundacao do gateway multi-modelo. Somente
+    # off|shadow sao aceitos; governed/bounded sao recusados no startup
+    # (fases futuras). Valores de laboratorio: ver
+    # docs/intelligence/GATEWAY_CONTRACT.md. REAL_DATA_ALLOWED nao e
+    # configuracao -- e constante de codigo (app/intelligence/gateway/
+    # contracts.py).
+    intelligence_mode: str = Field(
+        default="off",
+        validation_alias="INTELLIGENCE_MODE",
+    )
+    intelligence_max_attempts: int = Field(
+        default=2,
+        validation_alias="INTELLIGENCE_MAX_ATTEMPTS",
+        ge=1,
+        le=3,
+    )
+    intelligence_call_timeout_seconds: int = Field(
+        default=30,
+        validation_alias="INTELLIGENCE_CALL_TIMEOUT_SECONDS",
+        ge=1,
+        le=120,
+    )
+    intelligence_max_concurrent_calls: int = Field(
+        default=2,
+        validation_alias="INTELLIGENCE_MAX_CONCURRENT_CALLS",
+        ge=1,
+        le=8,
+    )
+    intelligence_reservation_margin_bps: int = Field(
+        default=2000,
+        validation_alias="INTELLIGENCE_RESERVATION_MARGIN_BPS",
+        ge=0,
+        le=10000,
+    )
+    intelligence_unknown_fraction_bps: int = Field(
+        default=2500,
+        validation_alias="INTELLIGENCE_UNKNOWN_FRACTION_BPS",
+        ge=1,
+        le=10000,
+    )
+    intelligence_recovery_grace_seconds: int = Field(
+        default=30,
+        validation_alias="INTELLIGENCE_RECOVERY_GRACE_SECONDS",
+        ge=0,
+        le=3600,
+    )
+    intelligence_breaker_failure_threshold: int = Field(
+        default=3,
+        validation_alias="INTELLIGENCE_BREAKER_FAILURE_THRESHOLD",
+        ge=1,
+        le=20,
+    )
+    intelligence_breaker_cooldown_seconds: int = Field(
+        default=30,
+        validation_alias="INTELLIGENCE_BREAKER_COOLDOWN_SECONDS",
+        ge=1,
+        le=3600,
+    )
+
     log_level: Literal[
         "DEBUG",
         "INFO",
@@ -590,6 +649,33 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("intelligence_mode", mode="before")
+    @classmethod
+    def validate_intelligence_mode(cls, value: object) -> str:
+        # Fail-closed: valor ausente/vazio = off; qualquer valor
+        # desconhecido ou de fase futura falha no startup, nunca
+        # degrada em silencio para um modo mais permissivo.
+        if value is None:
+            return "off"
+        if not isinstance(value, str):
+            raise ValueError("INTELLIGENCE_MODE invalido.")
+
+        normalized = value.strip().lower()
+
+        if not normalized:
+            return "off"
+        if normalized in ("off", "shadow"):
+            return normalized
+        if normalized in ("governed", "bounded"):
+            raise ValueError(
+                "INTELLIGENCE_MODE=governed/bounded nao e "
+                "suportado nesta fase (somente off|shadow)."
+            )
+
+        raise ValueError(
+            "INTELLIGENCE_MODE invalido (somente off|shadow)."
+        )
+
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
         try:
@@ -689,6 +775,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "MAINTENANCE_ENABLED=false não é "
                     "permitido em production."
+                )
+
+            if self.intelligence_mode != "off":
+                raise ValueError(
+                    "INTELLIGENCE_MODE deve ser off "
+                    "em production."
                 )
 
             if not self.expected_database_name:

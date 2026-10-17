@@ -271,20 +271,19 @@ def _git(*args) -> subprocess.CompletedProcess:
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git indisponivel")
 def test_candidate_file_boundary_is_exactly_the_authorized_set():
-    """O SIM-1.5 e ADITIVO sobre a baseline `ba7d70d`: tudo o que difere dela (arvore de trabalho, indice, commits e
-    arquivos nao rastreados) e ADICAO de arquivo e esta na lista autorizada. Vale antes do staging, com o candidato
-    staged, ja commitado ou com edicoes posteriores (SIM-1.5C)."""
-    if _git("cat-file", "-e", f"{BASELINE}^{{commit}}").returncode != 0:
+    """O SIM-1.5 e ADITIVO sobre a baseline `ba7d70d`: tudo o que no SIM difere dela (arvore de trabalho, indice,
+    commits e arquivos nao rastreados) e ADICAO de arquivo e esta na lista autorizada. Vale antes do staging, com o
+    candidato staged, ja commitado ou com edicoes posteriores (SIM-1.5C). SIM-FREEZE-IMPL-01: a fronteira com o
+    produto passou a ser verificada NO HISTORICO -- nenhum commit que toque o SIM toca backend/frontend (ou qualquer
+    coisa fora do SIM), inclusive em commits mistos, ramos laterais de merges, merges malignos e renomeacoes. O
+    backend evolui em commits proprios sem violar este contrato."""
+    from sim.tests import freeze_support as fs
+
+    if not fs.require_commit(REPO, BASELINE):
         pytest.skip("baseline do SIM-1.4 ausente (clone raso)")
-    diff = _git("diff", "--name-status", BASELINE).stdout.splitlines()
-    not_additions = [line for line in diff if not line.startswith("A	")]
-    assert not_additions == [], "alteracao/remocao de arquivo da baseline (o SIM-1.5 e 100% aditivo)"
-    added = [line.split("	", 1)[1] for line in diff]
-    untracked = _git("ls-files", "--others", "--exclude-standard").stdout.splitlines()
-    candidate = [p for p in [*added, *untracked] if not p.startswith(HISTORICAL)]
-    stray = [p for p in candidate if not any(re.match(rule, p) for rule in ALLOWED)]
-    assert stray == [], stray
-    assert not any(p.startswith(("backend/", "frontend/")) for p in candidate)
+    assert fs.additivity_violations(REPO, BASELINE, ALLOWED, historical_prefixes=HISTORICAL) == []
+    assert [str(v) for v in fs.mixed_commit_violations(REPO, BASELINE)] == []
+    candidate = fs.candidate_paths(REPO, BASELINE, historical_prefixes=HISTORICAL)
     assert "sim/stack/lab/gates.py" not in candidate and not [p for p in candidate if p.endswith("__pycache__")]
 
 

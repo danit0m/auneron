@@ -161,18 +161,23 @@ def test_rehearsal_cli_generates_verifies_and_scans(tmp_path, capsys):
 # ------------------------------------------------------------------------------------------------- fronteira do 1.5F
 BASE_COMMIT = "0d353766fbcbb9a85dbbfb7eab3cf36b035649b6"
 FROZEN = ("sim/driver", "sim/collector", "sim/stack", "sim/live", "sim/scenarios", "sim/company", "sim/generator",
-          "sim/oracle", "sim/evaluator", "backend", "frontend")
+          "sim/oracle", "sim/evaluator")
 
 
 def test_the_1_5f_candidate_changes_no_frozen_component_nor_the_evaluator_nor_the_oracle():
     if shutil.which("git") is None:
         pytest.skip("git indisponivel")
+    from sim.tests import freeze_support as fs
+
     repo = SIM_ROOT.parent
-    if subprocess.run(["git", "cat-file", "-e", f"{BASE_COMMIT}^{{commit}}"], cwd=repo, capture_output=True).returncode != 0:
+    if not fs.require_commit(repo, BASE_COMMIT):
         pytest.skip("commit base do 1.5F ausente (clone raso)")
-    for args in (["diff", "--name-status", BASE_COMMIT, "--", *FROZEN], ["diff", "--cached", "--name-status", BASE_COMMIT, "--", *FROZEN]):
-        out = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
-        assert out.stdout.strip() == "", out.stdout
+    # componentes congelados do SIM: igualdade exata com a base (arvore de trabalho e indice)
+    assert fs.frozen_component_diff(repo, BASE_COMMIT, FROZEN) == []
+    # SIM-FREEZE-IMPL-01: backend/frontend deixaram de ser comparados por igualdade absoluta com a base; o que se
+    # prova e que nenhum commit do SIM, desde a base, altera o produto (e as arvores da base sao os literais).
+    assert fs.provenance_violations(repo, {"base_1_5f": BASE_COMMIT}) == []
+    assert [str(v) for v in fs.mixed_commit_violations(repo, BASE_COMMIT)] == []
 
 
 def test_the_1_5f_cli_never_emits_a_d0_authorization_for_a_real_run(tmp_path, capsys):
