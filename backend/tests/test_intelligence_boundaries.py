@@ -144,24 +144,41 @@ def scan_source(source: str) -> list[str]:
 # ----------------------------------------------------------------------
 
 
+GATEWAY_FILES = [
+    "gateway/__init__.py",
+    "gateway/adapters/__init__.py",
+    "gateway/adapters/base.py",
+    "gateway/adapters/fake.py",
+    "gateway/budget.py",
+    "gateway/circuit_breaker.py",
+    "gateway/concurrency.py",
+    "gateway/contracts.py",
+    "gateway/errors.py",
+    "gateway/gateway.py",
+    "gateway/pricing.py",
+    "gateway/profiles.py",
+    "gateway/redaction.py",
+]
+PLANNING_FILES = [
+    "planning/__init__.py",
+    "planning/admission.py",
+    "planning/authority.py",
+    "planning/canonical.py",
+    "planning/capabilities.py",
+    "planning/codes.py",
+    "planning/dag.py",
+    "planning/limits.py",
+    "planning/policy.py",
+    "planning/schema.py",
+    "planning/validator.py",
+]
+
+
 def test_gateway_modules_import_nothing_that_can_reach_the_network() -> None:
     files = python_files(GATEWAY_DIR)
-    assert sorted(p.relative_to(GATEWAY_DIR).as_posix() for p in files) == [
-        "__init__.py",
-        "gateway/__init__.py",
-        "gateway/adapters/__init__.py",
-        "gateway/adapters/base.py",
-        "gateway/adapters/fake.py",
-        "gateway/budget.py",
-        "gateway/circuit_breaker.py",
-        "gateway/concurrency.py",
-        "gateway/contracts.py",
-        "gateway/errors.py",
-        "gateway/gateway.py",
-        "gateway/pricing.py",
-        "gateway/profiles.py",
-        "gateway/redaction.py",
-    ]  # exactly the approved file set; no real adapter module exists
+    assert sorted(p.relative_to(GATEWAY_DIR).as_posix() for p in files) == sorted(
+        ["__init__.py"] + GATEWAY_FILES + PLANNING_FILES
+    )  # exactly the approved file sets; no real adapter module exists
 
     violations = {
         str(path.relative_to(BACKEND)): scan_source(
