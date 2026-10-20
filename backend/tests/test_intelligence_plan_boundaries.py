@@ -187,19 +187,75 @@ def test_every_capability_and_the_flag_are_inert():
     assert "EXECUTION_ENABLED_IN_THIS_PHASE: Final[bool] = False" in source
 
 
+# The proposal package is the one consumer of the planning package that is
+# allowed to import it. The exemption is that exact directory: the
+# gateway, the planning package itself (handled separately) and everything
+# outside app/intelligence stay covered by the scan.
+PLANNING_IMPORT = re.compile(
+    r"intelligence\.planning|intelligence\s+import\s+planning"
+)
+PLANNING_IMPORT_EXEMPT = ("app/intelligence/planning/", "app/intelligence/proposal/")
+
+
+def planning_import_offenders(sources):
+    """sources: {path relative to backend, file text}."""
+    return sorted(
+        relative
+        for relative, text in sources.items()
+        if not relative.startswith(PLANNING_IMPORT_EXEMPT)
+        and PLANNING_IMPORT.search(text)
+    )
+
+
 def test_the_application_does_not_import_the_planning_package():
-    offenders = []
+    sources = {
+        path.relative_to(BACKEND).as_posix(): path.read_text(encoding="utf-8")
+        for path in python_files(APP)
+    }
 
-    for path in python_files(APP):
-        relative = path.relative_to(BACKEND).as_posix()
+    assert any(name.startswith("app/intelligence/proposal/") for name in sources)
+    assert planning_import_offenders(sources) == []
 
-        if relative.startswith("app/intelligence/planning/"):
-            continue
 
-        if re.search(r"intelligence\.planning|intelligence\s+import\s+planning", path.read_text(encoding="utf-8")):
-            offenders.append(relative)
+def test_the_planning_import_scan_still_detects_everything_but_proposal():
+    statement = "from app.intelligence.planning.validator import validate_plan"
+    spelled = "from app.intelligence import planning"
+    sources = {
+        "app/services/x.py": statement,
+        "app/api/routes/y.py": spelled,
+        "app/core/z.py": "import app.intelligence.planning.capabilities",
+        "app/main.py": statement,
+        "app/intelligence/gateway/gateway.py": statement,
+        "app/intelligence/other/new_module.py": statement,
+        "app/intelligence/__init__.py": spelled,
+        "app/intelligence/proposal/builder.py": statement,
+        "app/intelligence/planning/validator.py": statement,
+        "app/services/clean.py": "from app.intelligence.gateway.gateway import Gateway",
+    }
 
-    assert offenders == []
+    assert planning_import_offenders(sources) == [
+        "app/api/routes/y.py",
+        "app/core/z.py",
+        "app/intelligence/__init__.py",
+        "app/intelligence/gateway/gateway.py",
+        "app/intelligence/other/new_module.py",
+        "app/main.py",
+        "app/services/x.py",
+    ]
+    # a lookalike directory name is not exempt
+    assert planning_import_offenders(
+        {
+            "app/intelligence/proposals/x.py": statement,
+            "app/intelligence/proposal_x/y.py": statement,
+        }
+    ) == ["app/intelligence/proposal_x/y.py", "app/intelligence/proposals/x.py"]
+
+
+
+def test_the_reverse_direction_stays_closed():
+    for directory in ("gateway", "planning"):
+        for path in python_files(APP / "intelligence" / directory):
+            assert "intelligence.proposal" not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_no_route_permission_table_or_migration_was_added():
