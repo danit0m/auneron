@@ -360,6 +360,18 @@ def test_strict_json_loader_rejects_duplicates_and_non_finite() -> None:
             strict_json_loads(body)
 
 
+def test_strict_json_loader_rejects_nested_duplicate_keys_and_non_finite() -> None:
+    # An LLM response may conceal ambiguous keys inside a plan step.
+    malformed = (
+        '{"steps": [{"params": {"amount": 1, "amount": 2}}]}',
+        '{"steps": [{"params": {"amount": NaN}}]}',
+        '{"steps": [{"params": {"amount": Infinity}}]}',
+    )
+    for body in malformed:
+        with pytest.raises(ValueError):
+            strict_json_loads(body)
+
+
 # ----------------------------------------------------------------------
 # failures, retries, fallbacks
 # ----------------------------------------------------------------------
