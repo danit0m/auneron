@@ -172,12 +172,20 @@ PLANNING_FILES = [
     "planning/schema.py",
     "planning/validator.py",
 ]
+PROPOSAL_FILES = [
+    "proposal/__init__.py",
+    "proposal/builder.py",
+    "proposal/contracts.py",
+    "proposal/digests.py",
+    "proposal/rendering.py",
+    "proposal/selection.py",
+]
 
 
 def test_gateway_modules_import_nothing_that_can_reach_the_network() -> None:
     files = python_files(GATEWAY_DIR)
     assert sorted(p.relative_to(GATEWAY_DIR).as_posix() for p in files) == sorted(
-        ["__init__.py"] + GATEWAY_FILES + PLANNING_FILES
+        ["__init__.py"] + GATEWAY_FILES + PLANNING_FILES + PROPOSAL_FILES
     )  # exactly the approved file sets; no real adapter module exists
 
     violations = {

@@ -89,6 +89,24 @@ def test_cycles_are_detected_and_expose_no_ancestors():
         assert result.ancestors == {}
 
 
+def test_parallel_paths_closed_into_cycle_fail_closed_without_mutating_input():
+    # A diamond with a closing edge is cyclic even though the root is shared.
+    graph = {
+        "a": ["d"],
+        "b": ["a"],
+        "c": ["a"],
+        "d": ["b", "c"],
+    }
+    original = {key: list(deps) for key, deps in graph.items()}
+
+    result = analyze_dag(steps(graph))
+
+    assert "dag_cycle" in codes(result)
+    assert result.ancestors == {}
+    assert result.depth == 0
+    assert graph == original
+
+
 def test_duplicate_step_keys_are_reported_alone():
     result = analyze_dag(
         [
