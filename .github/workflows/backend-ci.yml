@@ -103,6 +103,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Testar confirmação de importação do frontend
+        working-directory: ${{ github.workspace }}
+        run: node --test frontend/tests/import-confirmation.test.cjs
+
       - name: Validar lint do frontend
         working-directory: frontend
         run: npm run lint
@@ -204,8 +208,19 @@ jobs:
           python -m alembic heads
           python -m alembic check
 
+      # MVP-FIN-IMPORT-01 BLK-1: o flag de confirmacao vale somente no
+      # processo do modulo postgres; a suite geral roda sem ele.
       - name: Executar testes
-        run: python -m pytest --maxfail=1
+        run: >-
+          python -m pytest --maxfail=1
+          --ignore=tests/test_import_confirmation_postgres.py
+
+      - name: Executar testes de confirmação de importação (PostgreSQL)
+        env:
+          IMPORT_CONFIRMATION_TEST_ENABLED: "true"
+        run: >-
+          python -m pytest --maxfail=1
+          tests/test_import_confirmation_postgres.py
 
       - name: Diagnóstico operacional do banco
         run: python scripts/db_diagnostics.py
@@ -235,7 +250,12 @@ jobs:
                           (SELECT COUNT(*) FROM users)
                               AS users,
                           (SELECT COUNT(*) FROM auth_sessions)
-                              AS auth_sessions
+                              AS auth_sessions,
+                          (SELECT COUNT(*) FROM import_confirmation_receipts)
+                              AS import_confirmation_receipts,
+                          (SELECT COUNT(*)
+                              FROM import_confirmation_audit_events)
+                              AS import_confirmation_audit_events
                       """
                   )
               ).mappings().one()
@@ -244,6 +264,8 @@ jobs:
           assert result["knowledge"] == 0, result
           assert result["users"] == 0, result
           assert result["auth_sessions"] == 0, result
+          assert result["import_confirmation_receipts"] == 0, result
+          assert result["import_confirmation_audit_events"] == 0, result
 
           print(
               "Banco de testes limpo:",

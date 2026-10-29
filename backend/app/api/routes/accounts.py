@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.event_bus import event_bus
+from app.core.account_identity_lock import lock_account_identity, account_identity_exists
 from app.core.authentication import AuthenticatedSession
 from app.core.authentication import require_permission
 from app.core.client_classification import _oldest_account_id
@@ -157,6 +158,10 @@ def create_account(
     ),
     db: Session = Depends(get_db),
 ):
+    lock_account_identity(db)
+    if account_identity_exists(db, Account, payload.cliente, payload.valor, payload.vencimento):
+        raise HTTPException(status_code=409, detail='Ja existe conta com este cliente, valor e vencimento.')
+
     account = Account(
         **payload.model_dump()
     )
@@ -220,6 +225,8 @@ def update_account(
     ),
     db: Session = Depends(get_db),
 ):
+    lock_account_identity(db)
+
     account = db.execute(
         select(Account)
         .where(Account.id == account_id)
@@ -235,6 +242,13 @@ def update_account(
     dados = payload.model_dump(
         exclude_unset=True
     )
+
+    if {'cliente', 'valor', 'vencimento'}.intersection(dados) and account_identity_exists(
+        db, Account, dados.get('cliente', account.cliente),
+        dados.get('valor', account.valor), dados.get('vencimento', account.vencimento),
+        exclude_id=account.id,
+    ):
+        raise HTTPException(status_code=409, detail='Ja existe conta com este cliente, valor e vencimento.')
 
     previous_status = account.status
     previous_vencimento = account.vencimento
@@ -289,6 +303,8 @@ def delete_account(
     account_id: int,
     db: Session = Depends(get_db),
 ):
+    lock_account_identity(db)
+
     account = db.get(
         Account,
         account_id,

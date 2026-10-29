@@ -1,0 +1,39 @@
+﻿.import-flow { display: grid; gap: 1.25rem; }
+.import-flow__steps { display: flex; flex-wrap: wrap; gap: 1rem 2rem; padding: 0; list-style: none; color: var(--text-secondary); }
+.import-flow__steps [aria-current] { color: var(--color-primary-400); font-weight: 600; }
+.import-flow__card { display: grid; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border-color, #334155); border-radius: 1rem; background: var(--surface); color: var(--text-primary); }
+.import-flow__card h2, .import-flow__card p { margin: 0; }
+.import-flow__card p, .import-flow__hint { color: var(--text-secondary); line-height: 1.6; }
+.import-flow input { max-width: 100%; font: inherit; }
+.import-flow button { justify-self: start; padding: .7rem 1rem; border: 1px solid var(--color-primary-500); border-radius: .6rem; background: var(--color-primary-700); color: #fff; font: inherit; cursor: pointer; }
+.import-flow button:disabled { opacity: .55; cursor: not-allowed; }
+.import-flow button:focus-visible, .import-flow input:focus-visible { outline: 3px solid var(--color-primary-400); outline-offset: 3px; }
+.import-flow__error { color: var(--color-danger-300); }
+.import-flow__summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin: 0; }
+.import-flow__summary dt { color: var(--text-secondary); }
+.import-flow__summary dd { margin: .5rem 0 0; font-size: 1.25rem; font-weight: 600; }
+.import-flow__table { min-width: 0; overflow-x: auto; }
+.import-flow table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; text-align: left; }
+.import-flow caption { text-align: left; padding-bottom: .75rem; color: var(--text-secondary); }
+.import-flow th, .import-flow td { padding: .75rem; border-bottom: 1px solid var(--border-color, #334155); vertical-align: top; }
+.import-flow__approve { display: flex; align-items: flex-start; gap: .75rem; line-height: 1.6; }
+
+/* Keep validation messages readable inside the import panel. */
+.import-flow, .import-flow__card { min-width: 0; }
+.import-flow th, .import-flow td { white-space: normal; overflow-wrap: anywhere; }
+.import-flow th:first-child { width: 4rem; }
+.import-flow th:nth-child(2) { width: 6rem; }
+
+/* Keep the native file control inside narrow import cards. */
+.import-flow__card > * { min-width: 0; }
+.import-flow__card p, .import-flow__card label { overflow-wrap: anywhere; }
+.import-flow input[type="file"] { width: 100%; min-width: 0; box-sizing: border-box; }
+.import-flow input[type="file"]::file-selector-button { margin-right: .5rem; padding: .5rem .65rem; border: 1px solid var(--color-primary-500); border-radius: .4rem; background: var(--color-primary-700); color: #fff; font: inherit; cursor: pointer; }
+.import-flow input[type="checkbox"] { flex: 0 0 auto; }
+@media (max-width: 480px) {
+  .import-flow__card { padding: 1rem; }
+  .import-flow__summary { grid-template-columns: minmax(0, 1fr); }
+  .import-flow th, .import-flow td { padding: .5rem; }
+  .import-flow th:first-child { width: 2.5rem; }
+  .import-flow th:nth-child(2) { width: 4rem; }
+}
