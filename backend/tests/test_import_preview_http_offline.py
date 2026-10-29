@@ -21,6 +21,7 @@ import io
 import json
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -56,11 +57,34 @@ def _load(name, path):
     return module
 
 
-# Rota e middleware são importados antes do parser para medir o que puxam.
-_MODULES_BEFORE = set(sys.modules)
+# Pureza medida num processo NOVO: o sys.modules deste processo pode já
+# conter app.main/app.services/sqlalchemy (coleta do pytest, conftest), o
+# que faria uma diferença antes/depois aqui passar sem medir nada. -I
+# ignora PYTHON* e o site do usuário; o ambiente mínimo não carrega
+# DATABASE_URL nem rede.
+_FRESH_IMPORT_PROBE = """
+import importlib, json, sys
+sys.path.insert(0, sys.argv[1])
+for name in json.loads(sys.argv[2]):
+    importlib.import_module(name)
+print(json.dumps(sorted(sys.modules)))
+"""
+
+
+def _modules_after_fresh_import(*names):
+    env = {key: os.environ[key] for key in ("SYSTEMROOT",) if key in os.environ}
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", _FRESH_IMPORT_PROBE,
+         str(BACKEND_DIR), json.dumps(list(names))],
+        cwd=str(BACKEND_DIR), env=env, capture_output=True, text=True,
+        timeout=60, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return set(json.loads(result.stdout))
+
+
 route_module = importlib.import_module("app.api.routes.import_preview")
 http_module = importlib.import_module("app.core.import_preview_http")
-_MODULES_ADDED_BY_ADAPTER = set(sys.modules) - _MODULES_BEFORE
 
 parser = _load("import_preview_parser_for_http_test", PARSER_PATH)
 transport = _load("import_preview_transport_for_http_test", TRANSPORT_PATH)
@@ -997,11 +1021,16 @@ def test_adapter_import_does_not_load_services_main_db_or_upload():
         "psycopg",
         "httpx",
     )
-    for name in _MODULES_ADDED_BY_ADAPTER:
+    loaded = _modules_after_fresh_import(
+        "app.api.routes.import_preview", "app.core.import_preview_http"
+    )
+    assert {"app.api.routes.import_preview",
+            "app.core.import_preview_http"} <= loaded
+    for name in loaded:
         assert not name.startswith(forbidden_prefixes), name
 
     for name in ("app.main", "app.services", "app.database"):
-        assert name not in sys.modules
+        assert name not in loaded
 
 
 def test_factory_returns_router_with_single_post_route():

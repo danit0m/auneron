@@ -16,6 +16,9 @@ import dataclasses
 import hashlib
 import importlib.util
 import io
+import json
+import os
+import subprocess
 import sys
 import unittest
 from datetime import date
@@ -43,6 +46,36 @@ def _load(name, path):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+# Pureza medida num processo NOVO: o sys.modules deste processo pode já
+# conter sqlalchemy/app.* (coleta do pytest, conftest), e isso não diz
+# nada sobre o que o módulo sob teste importa. -I ignora PYTHON* e o
+# site do usuário; o ambiente mínimo não carrega DATABASE_URL nem rede.
+_FRESH_LOAD_PROBE = """
+import importlib.util, json, sys
+sys.path.insert(0, sys.argv[1])
+for name, path in json.loads(sys.argv[2]):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+print(json.dumps(sorted(sys.modules)))
+"""
+
+
+def _modules_after_fresh_load(*targets):
+    env = {key: os.environ[key] for key in ("SYSTEMROOT",) if key in os.environ}
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", _FRESH_LOAD_PROBE,
+         str(BACKEND_DIR),
+         json.dumps([[name, str(path)] for name, path in targets])],
+        cwd=str(BACKEND_DIR), env=env, capture_output=True, text=True,
+        timeout=60, check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"fresh load failed: {result.stderr}")
+    return set(json.loads(result.stdout))
 
 
 parser = _load("import_preview_parser_for_plan_test", PARSER_PATH)
@@ -919,10 +952,15 @@ class PurityTests(unittest.TestCase):
             self.assertEqual(_plan_for(xlsx_data, "xlsx").record_count, 3)
 
     def test_no_app_services_main_or_database_modules_loaded(self):
+        loaded = _modules_after_fresh_load(
+            ("import_preview_parser_for_plan_test", PARSER_PATH),
+            ("import_confirmation_plan_under_test", PLAN_PATH),
+        )
+        self.assertIn("import_confirmation_plan_under_test", loaded)
         for name in ("app.services", "app.main", "app.database",
                      "app.models", "sqlalchemy", "psycopg", "psycopg2",
                      "fastapi"):
-            self.assertNotIn(name, sys.modules, name)
+            self.assertNotIn(name, loaded, name)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ import copy
 import importlib.util
 import io
 import json
+import os
+import subprocess
 import sys
 from datetime import date
 from datetime import datetime
@@ -41,10 +43,36 @@ def _load(name, path):
     return module
 
 
-# O transporte é carregado antes do parser para medir o que ele importa.
-_MODULES_BEFORE = set(sys.modules)
+# Pureza medida num processo NOVO: o sys.modules deste processo pode já
+# conter app.* (coleta do pytest, conftest), o que faria uma diferença
+# antes/depois aqui passar sem medir nada. -I ignora PYTHON* e o site do
+# usuário; o ambiente mínimo não carrega DATABASE_URL nem rede.
+_FRESH_LOAD_PROBE = """
+import importlib.util, json, sys
+sys.path.insert(0, sys.argv[1])
+for name, path in json.loads(sys.argv[2]):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+print(json.dumps(sorted(sys.modules)))
+"""
+
+
+def _modules_after_fresh_load(*targets):
+    env = {key: os.environ[key] for key in ("SYSTEMROOT",) if key in os.environ}
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", _FRESH_LOAD_PROBE,
+         str(BACKEND_DIR),
+         json.dumps([[name, str(path)] for name, path in targets])],
+        cwd=str(BACKEND_DIR), env=env, capture_output=True, text=True,
+        timeout=60, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return set(json.loads(result.stdout))
+
+
 transport = _load("import_preview_transport_under_test", TRANSPORT_PATH)
-_MODULES_ADDED_BY_TRANSPORT = set(sys.modules) - _MODULES_BEFORE
 
 parser = _load("import_preview_parser_for_transport_test", PARSER_PATH)
 
@@ -859,8 +887,12 @@ def test_module_has_no_io_dynamic_or_generic_str_calls():
 
 
 def test_loading_transport_does_not_import_app_packages():
+    loaded = _modules_after_fresh_load(
+        ("import_preview_transport_under_test", TRANSPORT_PATH),
+    )
+    assert "import_preview_transport_under_test" in loaded
     assert not any(
         name == "app" or name.startswith("app.")
-        for name in _MODULES_ADDED_BY_TRANSPORT
+        for name in loaded
     )
-    assert "app.services" not in sys.modules
+    assert "app.services" not in loaded
