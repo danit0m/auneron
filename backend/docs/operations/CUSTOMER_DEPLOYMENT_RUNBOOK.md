@@ -86,12 +86,16 @@ replicas == 1
 
 Restrição **operacional**, não uma trava de infraestrutura. Nenhum
 `deploy.replicas` está declarado no compose e o Dockerfile do backend
-roda `uvicorn` sem `--workers` — mas nada impede um operador de
-executar `docker compose -f docker-compose.prod.yml up --scale
-backend=N`. Não escale este deployment além de 1 instância de
-`backend`. O rate limiter de login/elevação é por processo e a
-segurança de concorrência de 1 dos 10 maintenance loops ainda não está
-provada sob múltiplas instâncias (ver G4 em
+roda `uvicorn` sem `--workers`. O `container_name` fixo do serviço
+`backend` (`auneron-backend-prod`) tende a fazer o Compose recusar
+`--scale backend=N` com N>1 (semântica do Compose, não exercitada
+neste repositório) — mas isso é um efeito colateral, não um controle
+desenhado: outro arquivo de compose, um override ou `docker run`
+manual contornam essa barreira. Não escale este deployment além de 1
+instância de `backend`. O rate limiter de login/elevação é por
+processo e a segurança de concorrência de 7 dos 10 maintenance loops
+ainda não está provada sob múltiplas instâncias (ver "G4 —
+Multi-instance Maintenance Concurrency Verification" em
 `PRODUCTION_READINESS_GAP_REGISTER.md`).
 
 ## Domínio do cliente
@@ -177,7 +181,11 @@ migration. Este procedimento manual é distinto dos scripts
 são ferramentas de comprovação do mecanismo pg_dump/pg_restore contra
 um banco de drill isolado (`auneron_recovery_drill`) — nunca usadas
 para restaurar produção. Ver `DATABASE_BACKUP_VALIDATION.md` para a
-evidência do drill.
+evidência dos drills: V1/V2 no schema Alembic `c4718a49cebf` (26
+tabelas) e, em 2026-10-30, um drill efêmero e sintético em CI no head
+`b428d1a6c903` (37 tabelas, Layer A + Layer B PASS) — ver a seção
+"Current-Schema Recovery Drill (AREA1, CI efêmero)" daquele documento
+e seus limites (não é restore nem deploy de produção).
 
 ## Subir a stack
 
@@ -186,15 +194,32 @@ export CUSTOMER_DOMAIN=cliente.exemplo.com
 export ACME_EMAIL=operador@auneron.com.br
 export EXPECTED_DATABASE_NAME=auneron
 export EXPECTED_DATABASE_HOST=postgres
-export GIT_SHA=$(git rev-parse --short HEAD)
 
 cd backend
+# Identidade de build: SHA completo (40 hex) + GIT_DIRTY do checkout
+# real, pela mesma ferramenta usada no CI (somente stdlib + git; não
+# importa o pacote `app`). Saída: linhas `GIT_SHA=<40 hex>` e
+# `GIT_DIRTY=<true|false>`; exit 0 = OK, 3 = git indisponível.
+CLAIMS="$(python3 scripts/verify_build_identity.py claims)" || exit 1
+export GIT_SHA="$(printf '%s\n' "$CLAIMS" | sed -n 's/^GIT_SHA=//p')"
+export GIT_DIRTY="$(printf '%s\n' "$CLAIMS" | sed -n 's/^GIT_DIRTY=//p')"
+echo "GIT_SHA=${GIT_SHA} GIT_DIRTY=${GIT_DIRTY}"
+
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-Anote o valor impresso por `GIT_SHA` — é a referência de rollback (ver
-`ROLLBACK.md`).
+Não use `git rev-parse --short HEAD`: `app/core/build_identity.py`
+exige SHA de 40 hex, e `GIT_DIRTY` ausente cai no default `unknown` do
+compose — o backend sobe mesmo assim (a identidade de build é
+diagnóstica, logada no startup, não bloqueia o boot), mas o deployment
+fica sem identidade válida. Para um deploy de cliente, espere
+`GIT_DIRTY=false`; `true` significa que a imagem foi construída de um
+checkout com alterações não commitadas e não corresponde a nenhum
+commit.
+
+Anote os valores impressos de `GIT_SHA` e `GIT_DIRTY` — `GIT_SHA` é a
+referência de rollback (ver `ROLLBACK.md`).
 
 ## Primeiro administrador
 
@@ -263,8 +288,10 @@ publicação do Auneron.
 
 Ver `ROLLBACK.md` para o procedimento completo (imagens tagueadas por
 `GIT_SHA`, regra de nunca automatizar downgrade destrutivo de schema).
-Antes de cada deploy, confirme que `GIT_SHA` foi exportado e que as
-últimas imagens tagueadas por commit ainda existem localmente.
+Antes de cada deploy, confirme que `GIT_SHA` (SHA completo, 40 hex) e
+`GIT_DIRTY` foram exportados via `scripts/verify_build_identity.py
+claims` (ver "Subir a stack") e que as últimas imagens tagueadas por
+commit ainda existem localmente.
 
 ## Decommission
 
@@ -289,7 +316,8 @@ irreversível.
 
 ```
 - shared multi-tenancy (banco compartilhado entre clientes): FORA DE ESCOPO
-- replicas > 1 do backend: FORA DE ESCOPO — ver G4
+- replicas > 1 do backend: FORA DE ESCOPO — ver G4 (Multi-instance
+  Maintenance Concurrency Verification)
 - self-service onboarding: FORA DE ESCOPO
 - self-service / suportado password recovery: FORA DE ESCOPO
 - alias www ou qualquer domínio adicional além de CUSTOMER_DOMAIN: FORA DE ESCOPO

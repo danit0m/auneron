@@ -1,9 +1,13 @@
 # Production Risk Register
 
 **Status:** living risk register from Commit 24D onward. Operational
-go/no-go tracking for the Production Pilot (open gaps P1/P2/G3/G4 and the
-closure evidence for PR-1..PR-4) now lives in
-`docs/operations/PRODUCTION_READINESS_GAP_REGISTER.md`. This document keeps
+go/no-go tracking for the Production Pilot (gap state and closure evidence,
+including PR-1..PR-4, P1/P2 and G3) now lives in
+`docs/operations/PRODUCTION_READINESS_GAP_REGISTER.md` — read the current
+state there, not here. At the time of this revision, P1, P2 and G3 are
+CLOSED / EVIDENCE in that register and the only open item it lists is
+G4 — Multi-instance Maintenance Concurrency Verification (out of scope
+while the deployment runs a single backend instance). This document keeps
 its own, separate role as the architectural risk/decision register — it is
 not being repurposed into the gap register.
 
@@ -15,10 +19,10 @@ not being repurposed into the gap register.
 | Distributed rate limiting | current per-user limiter is in-process | limits are not global across instances | Production Readiness/Pilot |
 | Approval/consumption recovery | durable approval + consumption + runtime idempotency | distributed maintenance/reconciliation still required | 24E |
 | Secrets management | config validation, redaction, API-key hardening | production secret lifecycle/rotation not fully externalized | Production Readiness |
-| PostgreSQL backup/restore | database safety guards, migrations, and a tested pg_dump/pg_restore/verify drill (PR-4) | Layer A (schema/data/Alembic restore) proven — see `DATABASE_BACKUP_VALIDATION.md`; Layer B (booting the application against a restored snapshot) remains blocked — see gap P2 in the Gap Register | Production Pilot (Layer B specifically) |
+| PostgreSQL backup/restore | database safety guards, migrations, and a tested pg_dump/pg_restore/verify drill (PR-4) | Layer A (schema/data/Alembic restore) proven (PR-4) and Layer B (booting the application against a restored snapshot) proven (P2, `a529369`, CLOSED / EVIDENCE in the Gap Register) — see `DATABASE_BACKUP_VALIDATION.md` (`Application Recovery Layer B: PASS`). Both drills ran at Alembic `c4718a49cebf` (26 tables); the delta to head `b428d1a6c903` (37 tables, incl. import receipts/audit) was covered on 2026-10-30 by an ephemeral synthetic CI drill (Layer A + B PASS, run `41119257187`) — see "Current-Schema Recovery Drill (AREA1, CI efêmero)" in that document. Not a production restore/deploy drill; HTTP bulk-confirm and multi-instance not covered | Before relying on restore for real customer data: a restore drill in the target deployment environment |
 | Distributed observability | structured logs/request IDs | centralized retention/alerting/SLOs not complete | Production Readiness |
 | Autonomous Work/Orchestrator authority | not integrated in 24D | future scheduler could become an authority bypass | 24E before enabling integration |
-| Maintenance loop silent failure | all 10 background loops wrap their fetch/execute step in try/except with structured `*.maintenance_failed` logging | closed (PR-1, `04fc339`) — see Gap Register; distributed multi-instance concurrency for 7 of the 10 loops is a separate, still-open risk (gap G4) | n/a — closed for this specific risk |
+| Maintenance loop silent failure | all 10 background loops wrap their fetch/execute step in try/except with structured `*.maintenance_failed` logging | closed (PR-1, `04fc339`) — see Gap Register; distributed multi-instance concurrency for 7 of the 10 loops is a separate, still-open risk (gap G4 — Multi-instance Maintenance Concurrency Verification) | n/a — closed for this specific risk |
 | Production developer-role identity | environment-gated block in `authenticate_user`/`create_session`/`require_user_session`, plus `create_user.py` refusal and a read-only startup detector | closed (PR-2, `983a256`) — see Gap Register | n/a — closed |
 | Legacy SQLite migration tool reachable in production | production-environment abort in the script itself, plus image exclusion via the repo-root `.dockerignore` | closed (PR-3, `b9f83ec`) — see Gap Register | n/a — closed |
 
