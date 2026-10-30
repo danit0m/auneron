@@ -434,6 +434,14 @@ class RequiredCheckTests(unittest.TestCase):
         with self.assertRaises(rd.StepFailed):
             rd.check_constraints(missing, missing)
 
+    def test_constraint_sql_casts_concatenation_operands(self):
+        # CI 41118755430: PostgreSQL 17 "operator is not unique: text || \"char\"" on raw contype.
+        sql = rd.CONSTRAINT_SQL
+        self.assertIn("SELECT conname::text || ':' || contype::text FROM pg_constraint ", sql)
+        self.assertNotRegex(sql, r"\|\|\s*contype(?!::text)")
+        self.assertNotRegex(sql, r"(?<!::text)\bconname\s*\|\|")
+        self.assertIn("'public.import_confirmation_receipts'::regclass AND contype IN ('u','c') ORDER BY 1", sql)
+
     def test_seed_expectations(self):
         good = {"replayed": False, "total": "350.50", "counts": dict(rd.EXPECTED_SEED), "references": [1, 2],
                 "actor": "user:1"}

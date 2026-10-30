@@ -82,7 +82,8 @@ TIMEOUTS = {"git": 30, "docker_query": 30, "claims": 60, "pull": 300, "build": 9
             "cleanup": 180}
 TABLE_COUNT_SQL = ("SELECT count(*) FROM information_schema.tables "
                    "WHERE table_schema='public' AND table_type='BASE TABLE'")
-CONSTRAINT_SQL = ("SELECT conname || ':' || contype FROM pg_constraint WHERE conrelid = "
+# contype is "char": PostgreSQL 17 rejects text || "char" as ambiguous, so both operands are cast.
+CONSTRAINT_SQL = ("SELECT conname::text || ':' || contype::text FROM pg_constraint WHERE conrelid = "
                   "'public.import_confirmation_receipts'::regclass AND contype IN ('u','c') ORDER BY 1")
 DATA_SQL = {
     "accounts": "SELECT id, cliente, valor::text AS valor, vencimento::text AS vencimento, status FROM accounts",
