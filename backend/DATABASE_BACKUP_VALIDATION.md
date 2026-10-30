@@ -20,8 +20,8 @@
   NBA), 0 referências órfãs, sequences válidas, banco principal não
   alterado.
 - Conclusão de então: mecanismo pg_dump/pg_restore validado em
-  princípio — mas nunca testado contra o schema atual (26 tabelas,
-  head `c4718a49cebf`).
+  princípio — mas nunca testado contra o schema atual à época do PR-4
+  (26 tabelas, head `c4718a49cebf`).
 
 ## Production Recovery Drill V1 (PR-4)
 
@@ -67,6 +67,10 @@ Banco de recovery: `auneron_recovery_drill`
 ## Production Recovery Drill V2 (P2)
 
 Baseline Git: `2491bd1ab480951641950b4136f9bc7f5a6605d7`
+(HEAD do checkout do drill; é o pai direto de
+`a529369d6120a3975e71651c6ef79f8f6fd5aea4`, o commit que introduziu o
+código de P2 e que o Gap Register cita como baseline de fechamento —
+ver nota "Commit de código vs checkout do drill" em P2.)
 PostgreSQL: `17.10` (postgres:17-alpine — imagem idêntica em dev e produção)
 Origem (sanitizada, sem segredo): `host=localhost port=5433 database=auneron_test`
 Banco de recovery: `auneron_recovery_drill`
@@ -124,9 +128,10 @@ datname='auneron_recovery_drill'` retornando zero linhas).
 
 **Application Recovery Layer B: PASS**
 
-## Conclusão
+## Conclusão (no schema Alembic `c4718a49cebf`)
 
-O backup do Auneron (schema atual, 26 tabelas) pode ser utilizado
+O backup do Auneron (schema no head `c4718a49cebf`, 26 tabelas — o
+schema dos drills V1/V2, não o head atual) pode ser utilizado
 para restaurar integralmente a estrutura, os dados e o histórico do
 Alembic (Layer A). A aplicação real, iniciada contra o snapshot
 restaurado com manutenção autônoma desabilitada, autentica um
@@ -137,3 +142,111 @@ normal de login — nenhuma mutação autônoma de domínio ocorreu
 correto e esperado sempre que o snapshot concreto de um drill futuro
 não contiver um principal com credencial configurada e autoridade
 suficiente — isso não é uma falha do mecanismo.
+
+## Delta do schema atual (registrado em 2026-10-30)
+
+Os resultados acima continuam válidos para a data e o schema em que
+foram obtidos e provam o **mecanismo** (descoberta dinâmica de
+tabelas, igualdade de revisão Alembic, cleanup guardado, boot com
+manutenção suprimida). Eles, sozinhos, **não** provam o restore do
+schema atual. Depois de `c4718a49cebf`, a cadeia de migrations (lida
+dos campos `down_revision`) acrescenta 8 revisões:
+
+```
+c4718a49cebf → 298a1e501b39 → dfccb26f0711 → 16674f0a7aa3
+  → a3f7c9d15e28 → 7432a1c2dd66 → 5c1e7a90d2b4 → a7d3e91c4b26
+  → b428d1a6c903 (import_confirmation_receipts + import_confirmation_audit_events)
+```
+
+Nota histórica (texto de 2026-10-30, antes do drill abaixo): sem
+prova, naquele momento, da contagem de tabelas no head atual, do
+restore das tabelas/constraints dessas 8 revisões (incluindo JSONB,
+CHECK e os UNIQUE `uq_import_receipts_actor_key` /
+`uq_import_receipts_content_version` de `b428d1a6c903`) e da
+preservação da idempotência de recibos após recovery. CI que aplica
+migrations e roda testes não é um drill de restore.
+
+**Atualização (2026-10-30):** esse delta foi coberto por um drill
+efêmero e sintético no head `b428d1a6c903` — ver "Current-Schema
+Recovery Drill (AREA1, CI efêmero)" abaixo, com os limites listados
+ali. Fora desses limites, este documento continua não sendo evidência
+de recovery de produção.
+
+## Current-Schema Recovery Drill (AREA1, CI efêmero) — 2026-10-30
+
+**Classificação:** CURRENT-SCHEMA EPHEMERAL SYNTHETIC PROOF. Não é
+restore de produção, não é deploy de produção, não cobre o
+bulk-confirm via rota HTTP, não cobre multi-tenant nem multi-instância
+e não sustenta nenhuma alegação de prontidão de LLM ou de MVP.
+
+- **Run (PASS):** <https://github.com/danit0m/auneron/actions/runs/41119257187>
+  — repo `danit0m/auneron`, branch `review/area1-recovery-delta`,
+  commit `ddd56e9c8c5450dfc4824e4372b9f2b43b064135`, run id
+  `a1d20261030t195626bc06d4`, `outcome: PASS`.
+- **Relatório sanitizado:** `area1-recovery-report.json`, SHA-256
+  `bb1148dd20b8d3e45053c887364131dde42dd5bf3e2eee5a2033ddd1b2ade9f3`
+  (artefato do run; cópia de handoff fora do repositório).
+- **Identidade:** baseline aprovado `3b1860c` é ancestral de
+  `ddd56e9` (`git merge-base --is-ancestor`); `git diff --name-only
+  3b1860c ddd56e9` lista apenas `.github/area1/recovery_delta.py`,
+  `.github/area1/test_recovery_delta.py` e
+  `.github/workflows/area1-recovery-ci.yml` — nenhum arquivo de
+  `backend/` difere. Os blobs Git das 6 ferramentas usadas
+  (`_postgres_recovery_common.py`, `backup_postgres.py`,
+  `restore_postgres.py`, `verify_recovery.py`,
+  `application_recovery_smoke.py`, `verify_build_identity.py`) são
+  iguais aos de `3b1860c`; árvore limpa (`git status --porcelain`
+  vazio). Imagem `auneron-backend:local` construída no runner com
+  `GIT_SHA=ddd56e9…`, `GIT_DIRTY=false`; `verify_build_identity.py
+  verify --require-clean`: C1–C5 PASS, `BUILD IDENTITY VERIFY: PASS`.
+- **Ambiente:** runner Linux efêmero do GitHub Actions (Docker 28.0.4,
+  `postgres:17-alpine`), sem containers/volumes preexistentes; todos os
+  recursos criados com label `auneron.drill=<run id>`; schema criado
+  por `alembic upgrade head` → `alembic_version = b428d1a6c903`.
+- **Seed sintético** (via repositório de componente, harness do drill
+  com `writer_protocol_verified=True` declarado pelo próprio drill —
+  não pela rota HTTP): 1 usuário viewer sintético, 2 contas sintéticas
+  (total 350.50), 1 recibo de importação, 3 eventos de auditoria.
+- **Layer A:** `backup_postgres` (dump 233595 bytes) →
+  `restore_postgres` em `auneron_recovery_drill` → `verify_recovery`:
+  `Tabelas verificadas: 37`, `Revisão Alembic: b428d1a6c903`,
+  `Layer A -- Database Recovery Verification: PASS`. Contagem
+  independente de BASE TABLE: 37 na origem e no destino.
+- **Delta `b428d1a6c903` no destino restaurado:** 2 UNIQUE
+  (`uq_import_receipts_actor_key`, `uq_import_receipts_content_version`)
+  + 5 CHECK (`ck_import_receipts_file_kind`, `…_identity_version`,
+  `…_record_count`, `…_references_array`, `…_total_positive`)
+  presentes e idênticos à origem; `jsonb_typeof(account_references) =
+  array`; dados de `accounts`, `import_confirmation_receipts` e
+  `import_confirmation_audit_events` idênticos origem/destino (mesmo
+  hash de conteúdo).
+- **Replay (nível componente, não rota HTTP):** reexecução da mesma
+  confirmação pelo repositório → `replayed=true`, referências iguais,
+  zero mutações; probes de INSERT duplicado → SQLSTATE `23505` em
+  ambos os UNIQUE, com rollback e contagens inalteradas.
+- **Layer B:** o `application_recovery_smoke` existente (fonte
+  inalterada) rodou contra o snapshot no Linux, com um adaptador
+  apenas do runner que injeta `--user <uid:gid do runner>` e o label
+  do run no `docker run` do smoke: `Application Recovery Layer B:
+  PASS` (`/health`, `/ready`, login, `GET /accounts/?limit=1`; única
+  mutação `+1 auth_sessions` e `users.last_login_at`).
+- **Cleanup:** `auneron_recovery_drill` removido e verificado (0
+  linhas em `pg_database`); container, volume, rede e imagem do
+  backend do run removidos após checagem do label; diretórios
+  temporários removidos. Snapshot posterior igual ao anterior, exceto
+  1 imagem base contabilizada (`postgres:17-alpine`, baixada pelo run)
+  deixada na VM efêmera.
+- **Testes offline do executor do drill:** 49 passando (informado no
+  fechamento do run; não reexecutados neste registro).
+- **Run anterior que falhou:**
+  <https://github.com/danit0m/auneron/actions/runs/41118755430> —
+  **FAIL**, não conta como PASS. Causa: consulta diagnóstica do
+  executor com operador ambíguo (`text || "char"`); corrigida apenas
+  com cast `::text` no executor (`.github/area1/`), sem mudança em
+  produto, migrations ou ferramentas de recovery.
+
+**Escopo do que fica provado:** restore Layer A + Layer B das
+ferramentas existentes no head `b428d1a6c903` (37 tabelas), incluindo
+constraints, JSONB e idempotência de recibos em nível de componente,
+com dados sintéticos e banco efêmero. Não muda o estado de G4
+(multi-instância permanece aberto; deploy continua com 1 réplica).

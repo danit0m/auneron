@@ -16,6 +16,15 @@ operação — nunca inferido de um hash citado aqui. Hashes de commit abaixo
 aparecem apenas como evidência histórica do fechamento de um item específico,
 nunca como uma alegação sobre "o baseline atual do sistema".
 
+**Desambiguação do identificador G4:** o identificador histórico "G4"
+aparece em duas entradas distintas, mantidas com o ID original para
+não reescrever histórico: **G4-MULTI-INSTANCE** ("G4 — Multi-instance
+Maintenance Concurrency Verification", seção OPEN abaixo — o único G4
+em aberto) e **G4-L3-WORKER** ("G4 — Policy Autonomous Worker L3
+Pilot", CLOSED / EVIDENCE — registro histórico de piloto, não um gap).
+Qualquer referência a "G4" como item aberto, inclusive no runbook e no
+risk register, significa G4-MULTI-INSTANCE.
+
 ---
 
 ## OPEN — REQUIRED BEFORE CONTROLLED PILOT
@@ -41,6 +50,7 @@ ver "CLOSED / EVIDENCE" abaixo.
 
 ### G4 — Multi-instance Maintenance Concurrency Verification
 
+- **Rótulo de desambiguação:** G4-MULTI-INSTANCE (ver nota no topo).
 - **Estado:** aberto. Distinto e não afetado pelo fechamento de PR-1 (que
   resolveu resiliência a exceção não tratada, não concorrência entre
   instâncias).
@@ -145,8 +155,18 @@ ver "CLOSED / EVIDENCE" abaixo.
   verificadas, revisão Alembic idêntica origem/destino, cleanup confirmado
   por consulta independente). Teste dedicado:
   `backend/tests/test_backup_restore_guards.py`.
-- **Nota:** prova apenas Layer A (banco). Layer B (aplicação) permanece
-  aberta — ver P2 acima.
+- **Nota (histórica, no fechamento do PR-4):** prova apenas Layer A
+  (banco). Layer B (aplicação) estava aberta naquele momento; foi
+  fechada depois por P2 (`a529369`) — ver "P2 — Isolated Application
+  Recovery Smoke" abaixo, em CLOSED / EVIDENCE.
+- **Limite de schema:** os drills Layer A (V1 e V2) rodaram no head
+  Alembic `c4718a49cebf` (26 tabelas). O delta até `b428d1a6c903` (37
+  tabelas) foi coberto em 2026-10-30 por um drill efêmero e sintético
+  em CI (run `41119257187`, commit `ddd56e9`, ferramentas idênticas a
+  `3b1860c`; Layer A + Layer B PASS) — ver "Current-Schema Recovery
+  Drill (AREA1, CI efêmero)" em `backend/DATABASE_BACKUP_VALIDATION.md`
+  para evidência e limites (não é restore de produção). O run anterior
+  `41118755430` falhou e não conta como PASS.
 
 ### P1.3 — Same-Episode Human Escalation Reopening Semantics
 
@@ -244,6 +264,15 @@ ver "CLOSED / EVIDENCE" abaixo.
 - **Baseline de fechamento:** commit
   `a529369d6120a3975e71651c6ef79f8f6fd5aea4` ("feat(operations): add
   MAINTENANCE_ENABLED gate and Application Recovery Smoke (P2)").
+- **Commit de código vs checkout do drill:** `a529369` é o commit que
+  introduz o código de P2; o drill documentado em
+  `DATABASE_BACKUP_VALIDATION.md` registra como baseline
+  `2491bd1ab480951641950b4136f9bc7f5a6605d7`, que é o pai direto de
+  `a529369` (fato Git: `git log -1 --format=%P a529369`, mesma data
+  2026-09-17). Ou seja, o drill foi registrado contra o HEAD do
+  checkout imediatamente anterior ao commit de P2; o código exercitado
+  é o que entrou em `a529369`, cuja equivalência byte a byte com a
+  árvore de trabalho do drill não é verificável a partir do Git.
 - **Evidência — mecanismo de supressão no boot:** `Settings.maintenance_enabled`
   (`backend/app/core/config.py`, default `True`, recusado em
   `environment=="production"`) controla, em um único boundary em
@@ -331,7 +360,9 @@ ver "CLOSED / EVIDENCE" abaixo.
   prontidão externa, generalização para outras Skills mutáveis ou
   conclusão de um Second Mutating Skill — essas permanecem decisões de
   gates operacionais posteriores. G3/G4 permanecem exatamente onde
-  estão e com sua classificação atual.
+  estão e com sua classificação atual (fotografia daquele baseline;
+  G3 foi fechado depois — ver "G3 — Production Database Identity
+  Guard" abaixo).
 
 ### Controlled Mark-Paid Pilot — Episode 001
 
@@ -519,6 +550,8 @@ ver "CLOSED / EVIDENCE" abaixo.
 
 ### G4 — Policy Autonomous Worker L3 Pilot (account.mark_overdue)
 
+- **Rótulo de desambiguação:** G4-L3-WORKER (ver nota no topo) — não é
+  o G4-MULTI-INSTANCE aberto acima.
 - **Baseline (código):** `479618cd8ed11d333346a87affecae41a2a0ef6a` —
   inalterado durante todo o piloto.
 - **Schema:** migration `a3f7c9d15e28`.

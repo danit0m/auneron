@@ -1,0 +1,77 @@
+# TASK-037 AREA1 recovery delta drill. Runs ONLY on an explicitly human-approved push of
+# review/area1-recovery-delta in danit0m/auneron touching these 3 files. The runner requires
+# baseline 3b1860c as an ANCESTOR of HEAD (review-fix commits allowed, no amend/force-push), the
+# cumulative diff baseline..HEAD to be exactly these 3 files, unchanged tool blobs and a clean
+# HEAD == GITHUB_SHA. The repository check is a context check, not proof of human approval.
+# No pull_request, no main, no schedule, no dispatch. It does not match backend-ci.yml
+# (main/backend/**) nor sim-ci.yml (sim/**), so no full suite runs.
+# Fresh GitHub-hosted VM = dedicated Docker daemon; the runner still refuses any pre-existing
+# fixed-name resource and cleans only what it created. Only the sanitized JSON report is uploaded.
+
+name: AREA1 Recovery Delta
+
+on:
+  push:
+    branches:
+      - review/area1-recovery-delta
+    paths:
+      - ".github/workflows/area1-recovery-ci.yml"
+      - ".github/area1/recovery_delta.py"
+      - ".github/area1/test_recovery_delta.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: area1-recovery-delta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: AREA1 recovery delta (PostgreSQL 17 / ephemeral)
+    if: >-
+      github.repository == 'danit0m/auneron' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/review/area1-recovery-delta'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configurar Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Instalar dependências do backend
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Testes offline do executor
+        run: python .github/area1/test_recovery_delta.py -v
+
+      - name: Executar drill (gate interno + cleanup por posse)
+        run: >-
+          python .github/area1/recovery_delta.py
+          --execute
+          --baseline 3b1860c2163a60cdf02534de2e82e81faef1c5ba
+          --report "${{ runner.temp }}/area1-recovery-report.json"
+
+      - name: Publicar relatório sanitizado
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: area1-recovery-report
+          path: ${{ runner.temp }}/area1-recovery-report.json
+          if-no-files-found: ignore
+          retention-days: 7
