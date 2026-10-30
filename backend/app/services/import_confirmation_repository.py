@@ -33,7 +33,10 @@ ligam com fakes, e isso não demonstra nada sobre o banco real.
 SQL sempre parametrizado; nenhuma normalização de texto em SQL (a
 identidade v1 é calculada em Python pelo coordenador). Erros do banco
 viram ``ImportConfirmationRepositoryError`` com código fixo e sem a
-mensagem original (que pode conter valores); nada é logado.
+mensagem original (que pode conter valores); nada é logado. SQLSTATE
+55P03/57014 num execute (antes do commit, com rollback garantido) vira
+``account_writers_busy``; o mesmo SQLSTATE no commit continua
+``database_error`` (resultado incerto, nunca reexecutável).
 """
 
 from __future__ import annotations
@@ -56,6 +59,9 @@ from sqlalchemy import tuple_
 from sqlalchemy.exc import SQLAlchemyError
 
 
+from app.core.account_writers_busy import BUSY_CODE
+from app.core.account_writers_busy import BUSY_MESSAGE
+from app.core.account_writers_busy import is_retryable_sqlstate
 from app.import_confirmation_schema import ACCOUNT_IDENTITY_LOCK_KEY
 
 # Alias histórico; o valor vive apenas no schema puro.
@@ -79,6 +85,7 @@ REPOSITORY_ERROR_MESSAGES = {
     "invalid_row": "Dado inválido devolvido pelo banco.",
     "conflict": "Conflito de unicidade no banco.",
     "database_error": "Falha no banco de dados.",
+    BUSY_CODE: BUSY_MESSAGE,
 }
 
 
@@ -269,9 +276,14 @@ class _UnitOfWork:
             rows = list(result.all()) if result.returns_rows else []
         except SQLAlchemyError as exc:
             orig = getattr(exc, "orig", None)
+            # 55P03/57014 num execute: a transação ainda será desfeita
+            # antes do commit, então o resultado é certo (nada gravado).
+            # Falhas do commit seguem em ``_transaction`` e nunca são busy.
             failure = (
                 "conflict"
                 if getattr(orig, "sqlstate", None) == UNIQUE_VIOLATION
+                else BUSY_CODE
+                if is_retryable_sqlstate(exc)
                 else "database_error"
             )
 

@@ -17,8 +17,9 @@ definem. Corpo ``application/octet-stream`` limitado a
 ``Idempotency-Key`` único, validado estritamente pelo plano.
 
 201 novo, 200 replay, 409 conflitos, 413/415/422 entrada, 503 adaptador
-bloqueado (protocolo de escritores não verificado), 500 genérico sem
-dados. Toda resposta desta rota (inclusive 401/403/422/500) sai com
+bloqueado (protocolo de escritores não verificado ou isolamento não
+suportado), 503 ``account_writers_busy`` com ``Retry-After: 5`` (lock ou
+execute 55P03/57014 desfeito antes do commit), 500 genérico sem dados. Toda resposta desta rota (inclusive 401/403/422/500) sai com
 ``Cache-Control: no-store`` via ``route_class``; outras rotas não são
 afetadas.
 """
@@ -37,6 +38,10 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException
 
+from app.core.account_writers_busy import BUSY_CODE
+from app.core.account_writers_busy import busy_detail
+from app.core.account_writers_busy import busy_headers
+
 
 IMPORT_CONFIRM_PATH = "/imports/confirm"
 PERMISSIONS = ("imports.execute", "clients.manage")
@@ -51,6 +56,7 @@ CONFLICT_CODES = frozenset({
     "content_already_imported",
     "conflict",
 })
+UNAVAILABLE_CODES = frozenset({"writer_protocol_unverified", "unsupported_isolation"})
 INVALID_REQUEST = {
     "code": "invalid_confirmation_request",
     "message": "Parâmetros da confirmação inválidos.",
@@ -191,8 +197,11 @@ def create_import_confirm_router(
                 error.status_code, {"code": error.code, "message": error.message}
             )
         except (plan_error, execution_error, repository_error) as error:
-            if error.code == "writer_protocol_unverified":
+            if error.code in UNAVAILABLE_CODES:
                 return _error(503, UNAVAILABLE)
+            if isinstance(error, repository_error) and error.code == BUSY_CODE:
+                # Rollback antes do commit já ocorreu; sem retry automático.
+                return _error(503, busy_detail(), headers=busy_headers())
             if error.code in CONFLICT_CODES:
                 return _error(409, {"code": error.code, "message": error.message})
             if isinstance(error, plan_error) and error.code != "invalid_parser":

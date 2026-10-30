@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import DBAPIError, OperationalError, ResourceClosedError
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -26,6 +27,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app import import_confirmation_schema as schema  # noqa: E402
 from app.core import account_identity_lock as lock  # noqa: E402
+from app.core import account_writers_busy as busy  # noqa: E402
 
 
 def _load(name, relative):
@@ -141,7 +143,14 @@ class AccountIdentityLockTests(unittest.TestCase):
         tree = ast.parse((BACKEND_DIR / "app/core/account_identity_lock.py").read_text(encoding="utf-8"))
         modules = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
         modules |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
-        self.assertEqual(modules, {"__future__", "typing", "sqlalchemy", "app.import_confirmation_schema"})
+        self.assertEqual(modules, {"__future__", "typing", "sqlalchemy", "sqlalchemy.exc",
+                                   "app.core.account_writers_busy", "app.import_confirmation_schema"})
+
+    def test_busy_helper_is_pure(self):
+        tree = ast.parse((BACKEND_DIR / "app/core/account_writers_busy.py").read_text(encoding="utf-8"))
+        modules = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        modules |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+        self.assertEqual(modules, {"__future__", "typing"})
 
     def test_lock_precedes_db_access_in_the_three_writer_paths(self):
         targets = {
@@ -158,6 +167,143 @@ class AccountIdentityLockTests(unittest.TestCase):
                                      and getattr(c.func.value, "id", None) == "db")
                 self.assertIsNotNone(locked, name)
                 self.assertLess(locked, db_use, name)
+
+
+PII = "Fulana Sigilosa da Silva"
+
+
+class _Orig(Exception):
+    pass
+
+
+def _db_error(sqlstate=None, pgcode=None, cls=OperationalError):
+    orig = _Orig(PII)
+    if sqlstate is not None:
+        orig.sqlstate = sqlstate
+    if pgcode is not None:
+        orig.pgcode = pgcode
+    return cls("SELECT pg_advisory_xact_lock(%(lock_key)s)", {"lock_key": PII}, orig)
+
+
+class _FailingLockSession(FakeSession):
+    def __init__(self, error):
+        super().__init__("postgresql")
+        self.error = error
+
+    def execute(self, statement):
+        self.statements.append(statement)
+        raise self.error
+
+
+class WritersBusyLockTests(unittest.TestCase):
+    def test_lock_timeout_and_statement_timeout_become_sanitized_busy(self):
+        for error in (_db_error("55P03"), _db_error("57014"), _db_error(pgcode="55P03"),
+                      _db_error("57014", cls=DBAPIError)):
+            session = _FailingLockSession(error)
+            with self.assertRaises(busy.AccountWritersBusy) as caught:
+                lock.lock_account_identity(session)
+            exc = caught.exception
+            self.assertEqual(exc.code, "account_writers_busy")
+            self.assertIsNone(exc.__context__)
+            self.assertIsNone(exc.__cause__)
+            for text in (str(exc), repr(exc)):
+                self.assertNotIn(PII, text)
+                self.assertNotIn("pg_advisory", text)
+            self.assertEqual(len(session.statements), 1)
+            self.assertEqual(session.calls, [])  # sem commit/rollback/retry no helper
+
+    def test_other_failures_propagate_unchanged(self):
+        others = (_db_error("40P01"), _db_error("23505"), _db_error(), _db_error("55P03 "))
+        for error in others:
+            with self.assertRaises(OperationalError) as caught:
+                lock.lock_account_identity(_FailingLockSession(error))
+            self.assertIs(caught.exception, error)
+        not_dbapi = RuntimeError("x")
+        not_dbapi.orig = SimpleNamespace(sqlstate="55P03")
+        with self.assertRaises(RuntimeError) as caught:
+            lock.lock_account_identity(_FailingLockSession(not_dbapi))
+        self.assertIs(caught.exception, not_dbapi)
+        with self.assertRaises(ResourceClosedError):
+            lock.lock_account_identity(_FailingLockSession(ResourceClosedError()))
+
+    def test_sqlite_and_isolation_guard_are_not_classified(self):
+        session = _FailingLockSession(_db_error("55P03"))
+        session.bind = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+        self.assertIs(lock.lock_account_identity(session), False)
+        self.assertEqual(session.statements, [])
+        session = _FailingLockSession(_db_error("55P03"))
+        session.connection = lambda: SimpleNamespace(get_isolation_level=lambda: "REPEATABLE READ")
+        with self.assertRaises(RuntimeError) as caught:
+            lock.lock_account_identity(session)
+        self.assertNotIsInstance(caught.exception, busy.AccountWritersBusy)
+        self.assertEqual(session.statements, [])
+
+    def test_busy_contract_values(self):
+        self.assertEqual(busy.RETRYABLE_SQLSTATES, frozenset({"55P03", "57014"}))
+        self.assertEqual(busy.busy_headers(), {"Retry-After": "5"})
+        self.assertEqual(busy.busy_detail()["code"], "account_writers_busy")
+        self.assertIsNot(busy.busy_detail(), busy.busy_detail())
+        self.assertFalse(busy.is_retryable_sqlstate(SimpleNamespace(orig=SimpleNamespace(sqlstate=55))))
+
+
+def _functions(relative):
+    tree = ast.parse((BACKEND_DIR / relative).read_text(encoding="utf-8"))
+    return tree, {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+
+def _catches_busy(handler):
+    return isinstance(handler.type, ast.Name) and handler.type.id == "AccountWritersBusy"
+
+
+class AccountsRouteBusyMappingTests(unittest.TestCase):
+    def test_busy_is_caught_only_around_the_lock_call(self):
+        _, functions = _functions("app/api/routes/accounts.py")
+        for name in ("create_account", "update_account", "delete_account"):
+            function = functions[name]
+            tries = [n for n in ast.walk(function) if isinstance(n, ast.Try)
+                     and any(_catches_busy(h) for h in n.handlers)]
+            self.assertEqual(len(tries), 1, name)
+            node = tries[0]
+            self.assertEqual(len(node.body), 1, name)
+            call = node.body[0].value
+            self.assertEqual(getattr(call.func, "id", None), "lock_account_identity", name)
+            self.assertEqual([a.id for a in call.args], ["db"], name)
+            self.assertEqual(len(node.handlers), 1, name)
+            self.assertEqual((node.orelse, node.finalbody), ([], []), name)
+            handler_body = node.handlers[0].body
+            self.assertEqual(len(handler_body), 1, name)
+            raised = handler_body[0]
+            self.assertIsInstance(raised, ast.Raise)
+            self.assertEqual(raised.exc.func.id, "_writers_busy")
+            self.assertIsInstance(raised.cause, ast.Constant)
+            self.assertIsNone(raised.cause.value)
+            commits = [n.lineno for n in ast.walk(function) if isinstance(n, ast.Call)
+                       and isinstance(n.func, ast.Attribute) and n.func.attr == "commit"]
+            self.assertTrue(all(line > node.end_lineno for line in commits), name)
+
+    def test_writers_busy_is_503_with_retry_after_and_no_sql(self):
+        from fastapi import HTTPException, status
+        tree, functions = _functions("app/api/routes/accounts.py")
+        source = (BACKEND_DIR / "app/api/routes/accounts.py").read_text(encoding="utf-8")
+        namespace = {"HTTPException": HTTPException, "status": status,
+                     "busy_detail": busy.busy_detail, "busy_headers": busy.busy_headers}
+        exec(compile(ast.get_source_segment(source, functions["_writers_busy"]), "accounts_busy", "exec"),
+             namespace)
+        exc = namespace["_writers_busy"]()
+        self.assertEqual(exc.status_code, 503)
+        self.assertEqual(exc.headers, {"Retry-After": "5"})
+        self.assertEqual(exc.detail, busy.busy_detail())
+
+    def test_legacy_import_rolls_back_before_busy_propagates(self):
+        _, functions = _functions("app/services/import_service.py")
+        outer = next(n for n in functions["import_clients"].body if isinstance(n, ast.Try))
+        first = outer.body[0].value
+        self.assertEqual(first.func.id, "lock_account_identity")
+        handler = outer.handlers[0]
+        self.assertEqual(handler.type.id, "Exception")
+        self.assertEqual(handler.body[0].value.func.attr, "rollback")
+        self.assertIsInstance(handler.body[-1], ast.Raise)
+        self.assertIsNone(handler.body[-1].exc)
 
 
 if __name__ == "__main__":

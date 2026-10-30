@@ -271,6 +271,34 @@ class ConfirmRouteTests(unittest.TestCase):
         self.assertNoStore(response)
         self.assertEqual(self.parser.calls, 0)
 
+    def test_writers_busy_is_503_with_retry_after_and_no_pii(self):
+        busy = repository_module.ImportConfirmationRepositoryError("account_writers_busy")
+        response = self._post(client=self._client(FakeRepository(failure=busy)))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers.get("retry-after"), "5")
+        self.assertEqual(response.json()["detail"]["code"], "account_writers_busy")
+        self.assertNotIn(PII, response.text)
+        self.assertNoStore(response)
+
+    def test_unsupported_isolation_is_unavailable_and_database_error_stays_500(self):
+        isolation = repository_module.ImportConfirmationRepositoryError("unsupported_isolation")
+        response = self._post(client=self._client(FakeRepository(failure=isolation)))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], route.UNAVAILABLE)
+        self.assertNotIn("retry-after", response.headers)
+        for code, expected in (("database_error", 500), ("conflict", 409)):
+            failure = repository_module.ImportConfirmationRepositoryError(code)
+            response = self._post(client=self._client(FakeRepository(failure=failure)))
+            self.assertEqual(response.status_code, expected, code)
+            self.assertNotIn("retry-after", response.headers)
+            self.assertNoStore(response)
+
+    def test_busy_code_from_plan_or_execution_is_not_retryable(self):
+        # Só o adaptador (rollback antes do commit) pode declarar busy.
+        source = (BACKEND_DIR / 'app/api/routes/import_confirm.py').read_text(encoding='utf-8')
+        self.assertIn("isinstance(error, repository_error) and error.code == BUSY_CODE", source)
+        self.assertNotIn("retry(", source.lower())
+
     def test_other_routes_are_not_intercepted(self):
         response = self.client.get("/other")
         self.assertEqual(response.status_code, 200)

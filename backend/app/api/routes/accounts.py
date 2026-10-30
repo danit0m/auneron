@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.event_bus import event_bus
 from app.core.account_identity_lock import lock_account_identity, account_identity_exists
+from app.core.account_writers_busy import AccountWritersBusy, busy_detail, busy_headers
 from app.core.authentication import AuthenticatedSession
 from app.core.authentication import require_permission
 from app.core.client_classification import _oldest_account_id
@@ -71,6 +72,16 @@ manage_dependencies = [
         )
     ),
 ]
+
+
+def _writers_busy() -> HTTPException:
+    # Só para falha de aquisição do lock (antes de qualquer commit); o
+    # get_db faz rollback. Sem retry automático: o cliente decide.
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=busy_detail(),
+        headers=busy_headers(),
+    )
 
 
 @router.get(
@@ -158,7 +169,10 @@ def create_account(
     ),
     db: Session = Depends(get_db),
 ):
-    lock_account_identity(db)
+    try:
+        lock_account_identity(db)
+    except AccountWritersBusy:
+        raise _writers_busy() from None
     if account_identity_exists(db, Account, payload.cliente, payload.valor, payload.vencimento):
         raise HTTPException(status_code=409, detail='Ja existe conta com este cliente, valor e vencimento.')
 
@@ -225,7 +239,10 @@ def update_account(
     ),
     db: Session = Depends(get_db),
 ):
-    lock_account_identity(db)
+    try:
+        lock_account_identity(db)
+    except AccountWritersBusy:
+        raise _writers_busy() from None
 
     account = db.execute(
         select(Account)
@@ -303,7 +320,10 @@ def delete_account(
     account_id: int,
     db: Session = Depends(get_db),
 ):
-    lock_account_identity(db)
+    try:
+        lock_account_identity(db)
+    except AccountWritersBusy:
+        raise _writers_busy() from None
 
     account = db.get(
         Account,

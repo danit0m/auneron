@@ -12,6 +12,10 @@ Fora do PostgreSQL (SQLite legado) não faz nada e devolve ``False``,
 preservando o comportamento existente; a confirmação continua recusando
 qualquer dialeto não PG. Não altera semântica financeira, permissões nem
 eventos: apenas serializa. PREPARADO, NÃO PROVADO num PostgreSQL real.
+
+Se a aquisição falhar com SQLSTATE 55P03/57014, levanta
+``AccountWritersBusy`` (sanitizada, sem SQL); o chamador desfaz a
+transação e responde 503 com Retry-After. Sem retry automático.
 """
 
 from __future__ import annotations
@@ -22,7 +26,10 @@ from sqlalchemy import BigInteger
 from sqlalchemy import bindparam
 from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 
+from app.core.account_writers_busy import AccountWritersBusy
+from app.core.account_writers_busy import is_retryable_sqlstate
 from app.import_confirmation_schema import ACCOUNT_IDENTITY_LOCK_KEY
 
 
@@ -45,7 +52,19 @@ def lock_account_identity(session: Any) -> bool:
 
     if session.connection().get_isolation_level() != 'READ COMMITTED':
         raise RuntimeError('Account identity writers require READ COMMITTED.')
-    session.execute(account_identity_lock_statement())
+
+    busy = False
+    try:
+        session.execute(account_identity_lock_statement())
+    except DBAPIError as error:
+        # Só 55P03/57014 na aquisição; qualquer outra falha segue intacta.
+        if not is_retryable_sqlstate(error):
+            raise
+        busy = True
+
+    if busy:
+        # Fora do ``except``: sem __context__ com SQL ou valores do banco.
+        raise AccountWritersBusy()
 
     return True
 
