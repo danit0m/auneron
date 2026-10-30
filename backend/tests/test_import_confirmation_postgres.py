@@ -1,15 +1,20 @@
 """REAL PostgreSQL gate. Do not run/collect locally outside the authorized launcher.
 Existing conftest truncates 24 tables; this module additionally truncates the
 2 import tables before/after each test (26 total). All data is synthetic.
-No application route is enabled and no authentication dependency is overridden.
+CI runs this module alone with IMPORT_CONFIRMATION_TEST_ENABLED=true, so
+app.main registers /imports/confirm (writer_protocol_verified=True) only for
+the local disposable auneron_test database; no auth dependency is overridden.
 """
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select, text
+from sqlalchemy import event, func, select, text
 from app.api.routes.import_confirm import create_import_confirm_router
+from app.core.account_identity_lock import account_identity_lock_statement
+from app.core.account_writers_busy import busy_detail
 from app.core.authentication import require_permission
 from app.core.security import require_api_key
 from app.database.database import SessionLocal, engine
@@ -33,7 +38,8 @@ def clean_import_tables(clean_database):
 
 
 def repo():
-    # Only this isolated test harness declares True, never app.main.
+    # Test harness repository; app.main also declares True, but only when
+    # confirmation_test_is_available() (test env + flag + local auneron_test).
     return repositories.PostgresImportConfirmationRepository(SessionLocal, execution, writer_protocol_verified=True)
 
 
@@ -219,3 +225,105 @@ def test_real_application_exposes_guarded_confirmation_and_capability(client):
     first = post(client,str(uuid.uuid4()))
     assert first.status_code == 201
     assert counts() == (1,1,2)
+
+
+# --- REAL contention: an independent transaction holds the common lock. ---
+
+def account_rows():
+    table = Account.__table__
+    with SessionLocal() as session:
+        return [dict(row) for row in session.execute(select(table).order_by(table.c.id)).mappings()]
+
+
+@contextmanager
+def held_account_writers_lock(lock_timeout, statement_timeout):
+    # Session-scoped timeouts are transaction-local (set_config(..., true)) and
+    # only reach SessionLocal sessions begun while the blocker holds the lock.
+    # Engine defaults (lock_timeout 5000ms) still bound any wait if this fails.
+    observed = {'sqlstates': [], 'scoped_transactions': 0}
+
+    def scope(session, transaction, connection):
+        connection.execute(text('SELECT set_config(\'lock_timeout\', :lock, true), '
+            'set_config(\'statement_timeout\', :statement, true)'),
+            {'lock': lock_timeout, 'statement': statement_timeout})
+        observed['scoped_transactions'] += 1
+
+    def record(context):
+        # Only the SQLSTATE is kept: no SQL, parameters or message.
+        orig = getattr(context, 'original_exception', None)
+        observed['sqlstates'].append(getattr(orig, 'sqlstate', None) or getattr(orig, 'pgcode', None))
+
+    blocker = engine.connect()
+    try:
+        transaction = blocker.begin()
+        try:
+            blocker.execute(account_identity_lock_statement())
+            event.listen(SessionLocal, 'after_begin', scope)
+            try:
+                event.listen(engine, 'handle_error', record)
+                try:
+                    yield observed
+                finally:
+                    event.remove(engine, 'handle_error', record)
+            finally:
+                event.remove(SessionLocal, 'after_begin', scope)
+        finally:
+            transaction.rollback()
+    finally:
+        blocker.close()
+
+
+EXISTING = {'cliente':'Conta Existente Sintetica','valor':'30.00','vencimento':'2026-03-01','status':'aberto'}
+
+WRITERS = {
+    'post_account': lambda client, account_id, key: client.post('/accounts/', json={
+        'cliente':'Nova Conta Sintetica','valor':'40.00','vencimento':'2026-04-01','status':'aberto'}),
+    'put_account': lambda client, account_id, key: client.put('/accounts/'+str(account_id), json={
+        'cliente':'Conta Alterada Sintetica','valor':'50.00','vencimento':'2026-05-01'}),
+    'delete_account': lambda client, account_id, key: client.delete('/accounts/'+str(account_id)),
+    'legacy_upload': lambda client, account_id, key: client.post('/upload/',
+        files={'file':('synthetic.csv',CSV,'text/csv')}),
+    'confirmation': lambda client, account_id, key: post(client, key),
+}
+
+
+@pytest.mark.parametrize('expected_sqlstate, lock_timeout, statement_timeout', [
+    pytest.param('55P03', '250ms', '5000ms', id='lock_timeout_55P03'),
+    pytest.param('57014', '5000ms', '250ms', id='statement_timeout_57014'),
+])
+@pytest.mark.parametrize('writer', sorted(WRITERS))
+def test_real_writer_contention_returns_busy_without_writes(client, writer, expected_sqlstate,
+                                                            lock_timeout, statement_timeout):
+    created = client.post('/accounts/', json=EXISTING)
+    assert created.status_code == 201
+    account_id = created.json()['id']
+    before_counts, before_rows = counts(), account_rows()
+    assert before_counts == (1,0,0)
+    key = str(uuid.uuid4())
+
+    with held_account_writers_lock(lock_timeout, statement_timeout) as observed:
+        response = WRITERS[writer](client, account_id, key)
+
+    assert observed['scoped_transactions'] >= 1
+    assert observed['sqlstates'] == [expected_sqlstate]
+    assert response.status_code == 503
+    assert response.headers['retry-after'] == '5'
+    assert response.json() == {'detail': busy_detail()}
+    for leaked in ('pg_advisory', 'SELECT', 'lock_key', expected_sqlstate, 'timeout'):
+        assert leaked not in response.text
+    if writer == 'confirmation':
+        assert response.headers['cache-control'] == 'no-store'
+    assert counts() == before_counts
+    assert account_rows() == before_rows
+
+    if writer == 'confirmation':
+        applied = post(client, key)
+        assert applied.status_code == 201
+        assert applied.json()['replayed'] is False
+        assert counts() == (2,1,2)
+        replay = post(client, key)
+        assert replay.status_code == 200
+        assert replay.json()['replayed'] is True
+        assert replay.json()['account_references'] == applied.json()['account_references']
+        assert counts() == (2,1,2)
+        assert [row for row in account_rows() if row['id'] == account_id] == before_rows
