@@ -1,4 +1,3 @@
-import shutil
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -11,11 +10,19 @@ from fastapi import status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
+from app.core.account_writers_busy import AccountWritersBusy
+from app.core.account_writers_busy import busy_detail
+from app.core.account_writers_busy import busy_headers
 from app.database.database import get_db
 from app.services.import_service import import_clients
 
 
 router = APIRouter()
+
+# Teto do CSV legado, aplicado lendo em blocos (sem confiar em
+# Content-Length) antes de import_clients e, portanto, antes do lock.
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 64 * 1024
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(
@@ -61,7 +68,7 @@ def _upload_file_sync(file: UploadFile, db: Session):
             delete=False,
         ) as buffer:
             temp_path = Path(buffer.name)
-            shutil.copyfileobj(file.file, buffer)
+            _copy_bounded(file.file, buffer)
 
         result = import_clients(str(temp_path), db)
 
@@ -70,6 +77,14 @@ def _upload_file_sync(file: UploadFile, db: Session):
             "resultado": result,
             "status": "sucesso",
         }
+
+    except AccountWritersBusy:
+        # Lock não obtido: import_clients já fez rollback, nada gravado.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=busy_detail(),
+            headers=busy_headers(),
+        ) from None
 
     except ValueError as error:
         raise HTTPException(
@@ -80,3 +95,26 @@ def _upload_file_sync(file: UploadFile, db: Session):
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
+
+
+def _copy_bounded(source, target) -> None:
+    # Nunca lê mais que MAX_UPLOAD_BYTES + 1 no total; o erro não ecoa o corpo.
+    written = 0
+
+    while True:
+        chunk = source.read(
+            min(UPLOAD_CHUNK_BYTES, MAX_UPLOAD_BYTES + 1 - written)
+        )
+
+        if not chunk:
+            return
+
+        written += len(chunk)
+
+        if written > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Arquivo CSV excede o limite de 5 MiB.",
+            )
+
+        target.write(chunk)

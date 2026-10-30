@@ -1198,6 +1198,7 @@ class PurityTests(unittest.TestCase):
             "sqlalchemy.dialects.postgresql",
             "sqlalchemy.exc",
             'app.import_confirmation_schema',
+            "app.core.account_writers_busy",
         }
 
         for node in ast.walk(self.tree):
@@ -1263,6 +1264,71 @@ class PurityTests(unittest.TestCase):
         self.assertIn("import_confirmation_repository_under_test", loaded)
         for name in ("app.database", "app.models", "app.main", "app.services", "psycopg", "psycopg2"):
             self.assertNotIn(name, loaded)
+
+
+# ---------------------------------------------------------------- busy (2A)
+
+
+def _state_error(sqlstate):
+    orig = Exception(PII)
+    orig.sqlstate = sqlstate
+    return OperationalError("SELECT pg_advisory_xact_lock", {"private": PII}, orig)
+
+
+class WritersBusyTests(unittest.TestCase):
+    def _assert_sanitized(self, error, code):
+        self.assertEqual(error.code, code)
+        self.assertIsNone(error.__context__)
+        self.assertNotIn(PII, str(error) + repr(error))
+
+    def test_lock_timeouts_are_busy_and_roll_back_without_commit(self):
+        for sqlstate in ("55P03", "57014"):
+            factory = Factory(fail_execute_at=1, execute_error=_state_error(sqlstate))
+            with self.assertRaises(RepoError) as caught:
+                with _repo(factory).transaction() as unit:
+                    unit.lock_account_writers()
+            self._assert_sanitized(caught.exception, "account_writers_busy")
+            self.assertEqual(_kinds(factory.session), ["begin", "isolation", "lock", "rollback", "close"])
+
+    def test_statement_timeout_after_lock_is_busy_before_commit(self):
+        factory = Factory(fail_execute_at=2, execute_error=_state_error("57014"))
+        with self.assertRaises(RepoError) as caught:
+            with _repo(factory).transaction() as unit:
+                unit.lock_account_writers()
+                unit.find_receipt(ACTOR, KEY)
+        self._assert_sanitized(caught.exception, "account_writers_busy")
+        self.assertNotIn("commit", _kinds(factory.session))
+        self.assertEqual(_kinds(factory.session)[-2:], ["rollback", "close"])
+
+    def test_other_sqlstates_remain_database_error_or_conflict(self):
+        for sqlstate, code in (("40P01", "database_error"), (None, "database_error"),
+                               ("23505", "conflict")):
+            factory = Factory(fail_execute_at=1, execute_error=_state_error(sqlstate))
+            with self.assertRaises(RepoError) as caught:
+                with _repo(factory).transaction() as unit:
+                    unit.lock_account_writers()
+            self._assert_sanitized(caught.exception, code)
+
+    def test_commit_timeouts_are_never_busy(self):
+        for sqlstate in ("55P03", "57014"):
+            session = FakeSession()
+            def fail_commit(session=session, sqlstate=sqlstate):
+                session.log.append(("commit",))
+                raise _state_error(sqlstate)
+            session.commit = fail_commit
+            with self.assertRaises(RepoError) as caught:
+                with _repo(lambda: session).transaction() as unit:
+                    unit.lock_account_writers()
+            self._assert_sanitized(caught.exception, "database_error")
+            self.assertEqual(_kinds(session)[-3:], ["commit", "rollback", "close"])
+
+    def test_unsupported_isolation_is_unchanged_and_never_locks(self):
+        factory = Factory(isolation="REPEATABLE READ")
+        with self.assertRaises(RepoError) as caught:
+            with _repo(factory).transaction():
+                pass
+        self.assertEqual(caught.exception.code, "unsupported_isolation")
+        self.assertNotIn("lock", _kinds(factory.session))
 
 
 if __name__ == "__main__":
