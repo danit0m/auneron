@@ -113,6 +113,18 @@ from app.database.database import (
 )
 
 from app.api.routes.upload import router as upload_router
+from app.api.routes.import_preview import create_import_preview_router
+from app.api.routes.import_confirm import (
+    confirmation_test_is_available,
+    create_import_capabilities_router,
+    create_import_confirm_router,
+)
+from app.services import import_confirmation_plan, import_confirmation_execution, import_confirmation_repository
+from app.database.database import SessionLocal
+
+from app.core.import_preview_http import ImportPreviewHTTPMiddleware
+from app.services import import_preview_parser
+from app.services import import_preview_transport
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.accounts import router as accounts_router
 from app.api.routes.action_space_evaluator import (
@@ -481,6 +493,13 @@ app.add_middleware(
     RequestObservabilityMiddleware
 )
 
+# Preview de importação (MVP-FIN-IMPORT-01): no-store e 500 JSON fixo
+# somente em /imports/preview. Última chamada add_middleware = camada de
+# usuário mais externa, ainda dentro do ServerErrorMiddleware.
+app.add_middleware(
+    ImportPreviewHTTPMiddleware,
+)
+
 app.add_exception_handler(
     StarletteHTTPException,
     approval_http_exception_handler,
@@ -538,6 +557,39 @@ app.include_router(
         "imports.execute"
     ),
 )
+
+# Preview de importação: somente leitura, sem persistência e sem DB no
+# handler. Mesma permissão do upload legado (imports.execute); auth e
+# RBAC vêm destas dependências, não do router.
+app.include_router(
+    create_import_preview_router(
+        import_preview_parser,
+        import_preview_transport,
+    ),
+    dependencies=business_dependencies(
+        "imports.execute"
+    ),
+)
+
+confirmation_available = confirmation_test_is_available(settings, engine.url)
+app.include_router(create_import_capabilities_router(
+    enabled=confirmation_available,
+    require_api_key=require_api_key,
+    require_permission=require_permission,
+))
+if confirmation_available:
+    app.include_router(create_import_confirm_router(
+        parser_module=import_preview_parser,
+        transport_module=import_preview_transport,
+        plan_module=import_confirmation_plan,
+        execution_module=import_confirmation_execution,
+        repository_module=import_confirmation_repository,
+        repository=import_confirmation_repository.PostgresImportConfirmationRepository(
+            SessionLocal, import_confirmation_execution, writer_protocol_verified=True,
+        ),
+        require_api_key=require_api_key,
+        require_permission=require_permission,
+    ))
 app.include_router(
     dashboard_router,
     dependencies=business_dependencies(

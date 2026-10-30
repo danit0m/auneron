@@ -5,6 +5,7 @@ from typing import TextIO
 
 from sqlalchemy.orm import Session
 
+from app.core.account_identity_lock import lock_account_identity, account_identity_exists
 from app.core.money import ZERO_MONEY
 from app.core.money import money_to_json_number
 from app.core.money import parse_localized_money
@@ -174,6 +175,8 @@ def import_clients(filepath: str, db: Session):
     arquivo = abrir_csv(filepath)
 
     try:
+        lock_account_identity(db)
+
         amostra = arquivo.read(4096)
         arquivo.seek(0)
 
@@ -280,7 +283,7 @@ def import_clients(filepath: str, db: Session):
                     .first()
                 )
 
-                if existente:
+                if existente or account_identity_exists(db, Account, cliente, valor, vencimento):
                     duplicados += 1
                     continue
 

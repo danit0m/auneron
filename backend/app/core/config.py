@@ -54,6 +54,11 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="DEBUG",
     )
+    import_confirmation_test_enabled: bool = Field(
+        default=False,
+        validation_alias='IMPORT_CONFIRMATION_TEST_ENABLED',
+    )
+
     maintenance_enabled: bool = Field(
         default=True,
         validation_alias="MAINTENANCE_ENABLED",
@@ -705,6 +710,17 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "O banco auneron_test exige APP_ENV=test."
+            )
+
+        # MVP-FIN-IMPORT-01: o flag de confirmacao e exclusivo do sandbox
+        # de teste; fora de APP_ENV=test o startup falha, nunca ignora.
+        if (
+            self.import_confirmation_test_enabled
+            and self.environment != "test"
+        ):
+            raise ValueError(
+                "IMPORT_CONFIRMATION_TEST_ENABLED=true somente "
+                "é permitido com APP_ENV=test."
             )
 
         if self.api_key is not None:

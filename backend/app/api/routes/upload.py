@@ -8,6 +8,7 @@ from fastapi import File
 from fastapi import HTTPException
 from fastapi import UploadFile
 from fastapi import status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
@@ -28,6 +29,13 @@ async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
+    try:
+        return await run_in_threadpool(_upload_file_sync, file, db)
+    finally:
+        await file.close()
+
+
+def _upload_file_sync(file: UploadFile, db: Session):
     temp_path: Path | None = None
 
     try:
@@ -52,8 +60,8 @@ async def upload_file(
             dir=UPLOAD_DIR,
             delete=False,
         ) as buffer:
-            shutil.copyfileobj(file.file, buffer)
             temp_path = Path(buffer.name)
+            shutil.copyfileobj(file.file, buffer)
 
         result = import_clients(str(temp_path), db)
 
@@ -70,7 +78,5 @@ async def upload_file(
         ) from error
 
     finally:
-        await file.close()
-
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)

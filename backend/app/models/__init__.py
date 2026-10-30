@@ -1,3 +1,4 @@
+from app.models import import_confirmation  # noqa: F401
 from app.models.account import Account
 from app.models.approval import ApprovalDecision
 from app.models.approval import ApprovalRequest
