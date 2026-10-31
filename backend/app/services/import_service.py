@@ -1,6 +1,7 @@
 import csv
 from datetime import datetime
 from decimal import Decimal
+from hashlib import sha256
 from typing import TextIO
 
 from sqlalchemy.orm import Session
@@ -10,9 +11,13 @@ from app.core.money import ZERO_MONEY
 from app.core.money import money_to_json_number
 from app.core.money import parse_localized_money
 from app.models.account import Account
+from app.services.account_data_entry_audit import audit_actor_from_ids
+from app.services.account_data_entry_audit import record_create
 
 
 STATUS_VALIDOS = {"aberto", "pago", "atrasado"}
+
+SOURCE_HASH_CHUNK_BYTES = 64 * 1024
 
 
 def abrir_csv(filepath: str) -> TextIO:
@@ -54,6 +59,24 @@ def abrir_csv(filepath: str) -> TextIO:
     raise ValueError(
         "Não foi possível identificar a codificação do arquivo CSV."
     ) from ultimo_erro
+
+
+def sha256_arquivo(filepath: str) -> str:
+    # Bytes brutos do arquivo, em blocos. O tamanho já é limitado pelo
+    # upload (MAX_UPLOAD_BYTES); aqui a memória fica limitada ao bloco.
+    digest = sha256()
+
+    with open(filepath, mode="rb") as arquivo:
+        for bloco in iter(lambda: arquivo.read(SOURCE_HASH_CHUNK_BYTES), b""):
+            digest.update(bloco)
+
+    return digest.hexdigest()
+
+
+def identidade_canonica(cliente: str, valor: Decimal, vencimento) -> tuple:
+    # Mesma normalização de account_identity_exists (v1): espaços colapsados
+    # e casefold no cliente; valor e vencimento exatos.
+    return (" ".join(cliente.split()).casefold(), valor, vencimento)
 
 
 def converter_valor(valor_texto: str) -> Decimal:
@@ -165,12 +188,22 @@ def normalizar_linha(row: dict) -> dict:
     return linha_normalizada
 
 
-def import_clients(filepath: str, db: Session):
+def import_clients(filepath: str, db: Session, *, actor_user_id, auth_session_id=None):
+    # Ator humano obrigatório (sem default, sem fallback de sistema) e SHA do
+    # arquivo, ambos antes de abrir o CSV e, portanto, antes do lock.
+    actor = audit_actor_from_ids(actor_user_id, auth_session_id)
+    source_sha256 = sha256_arquivo(filepath)
+
     importados = 0
     duplicados = 0
     erros = 0
     valor_total = ZERO_MONEY
     detalhes_erros = []
+
+    # Linhas aceitas neste arquivo. Com autoflush=False as contas novas não
+    # aparecem nas consultas de duplicata, daí o conjunto em memória.
+    aceitas = []
+    identidades_aceitas = set()
 
     arquivo = abrir_csv(filepath)
 
@@ -233,6 +266,8 @@ def import_clients(filepath: str, db: Session):
             if linha_esta_vazia(row):
                 continue
 
+            # Só a validação da linha conta como erro de linha; falhas de
+            # banco ou de auditoria escapam para o rollback externo.
             try:
                 row = normalizar_linha(row)
 
@@ -273,34 +308,6 @@ def import_clients(filepath: str, db: Session):
 
                 status = "aberto"
 
-                existente = (
-                    db.query(Account)
-                    .filter(
-                        Account.cliente == cliente,
-                        Account.valor == valor,
-                        Account.vencimento == vencimento,
-                    )
-                    .first()
-                )
-
-                if existente or account_identity_exists(db, Account, cliente, valor, vencimento):
-                    duplicados += 1
-                    continue
-
-                conta = Account(
-                    cliente=cliente,
-                    email=email,
-                    whatsapp=whatsapp,
-                    valor=valor,
-                    vencimento=vencimento,
-                    status="aberto",
-                )
-
-                db.add(conta)
-
-                importados += 1
-                valor_total += valor
-
             except Exception as erro:
                 erros += 1
 
@@ -308,6 +315,60 @@ def import_clients(filepath: str, db: Session):
                     "linha": numero_linha,
                     "erro": str(erro),
                 })
+
+                continue
+
+            identidade = identidade_canonica(cliente, valor, vencimento)
+
+            if identidade in identidades_aceitas:
+                duplicados += 1
+                continue
+
+            existente = (
+                db.query(Account)
+                .filter(
+                    Account.cliente == cliente,
+                    Account.valor == valor,
+                    Account.vencimento == vencimento,
+                )
+                .first()
+            )
+
+            if existente or account_identity_exists(db, Account, cliente, valor, vencimento):
+                duplicados += 1
+                continue
+
+            conta = Account(
+                cliente=cliente,
+                email=email,
+                whatsapp=whatsapp,
+                valor=valor,
+                vencimento=vencimento,
+                status="aberto",
+            )
+
+            # Só linha aceita reserva a identidade.
+            identidades_aceitas.add(identidade)
+            aceitas.append((conta, numero_linha))
+
+            importados += 1
+            valor_total += valor
+
+        if aceitas:
+            db.add_all([conta for conta, _ in aceitas])
+            # Um único flush após o laço (ids para a auditoria); um CHECK do
+            # banco falha aqui e desfaz o arquivo inteiro.
+            db.flush()
+
+            for conta, numero_linha in aceitas:
+                record_create(
+                    db,
+                    conta,
+                    actor,
+                    channel="legacy_csv_upload",
+                    source_sha256=source_sha256,
+                    source_row=numero_linha,
+                )
 
         db.commit()
 

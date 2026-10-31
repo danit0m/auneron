@@ -352,7 +352,7 @@ def test_migration_is_one_additive_revision_on_the_expected_parent() -> None:
     assert len(script.get_heads()) == 1
     revision = script.get_revision("a7d3e91c4b26")
     assert revision.down_revision == "5c1e7a90d2b4"
-    assert script.get_heads() == ["b428d1a6c903"]
+    assert script.get_heads() == ["c3a8f1e6d204"]
 
     source = MIGRATION.read_text(encoding="utf-8")
     operations = set(re.findall(r"op\.(\w+)\(", source))

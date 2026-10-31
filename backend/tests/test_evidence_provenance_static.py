@@ -196,12 +196,13 @@ def test_migration_is_the_single_head_and_follows_the_previous_head() -> None:
 
     assert 'revision = "5c1e7a90d2b4"' in text
     assert 'down_revision = "7432a1c2dd66"' in text
-    # O head corrente do produto avancou para b428d1a6c903 (MVP-FIN-
-    # IMPORT, add_import_confirmation_receipts, filha de a7d3e91c4b26
+    # O head corrente do produto avancou para c3a8f1e6d204 (AREA2,
+    # add_account_data_entry_audit_events, filha de b428d1a6c903
+    # add_import_confirmation_receipts, filha de a7d3e91c4b26
     # add_intelligence_budget_ledger, que por sua vez e filha desta
     # migracao). As duas asserts acima continuam congelando a identidade
     # desta migracao.
-    assert expected_schema_revision() == "b428d1a6c903"
+    assert expected_schema_revision() == "c3a8f1e6d204"
 
 
 def test_migration_is_additive_not_valid_and_has_no_backfill() -> None:

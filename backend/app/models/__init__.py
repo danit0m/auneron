@@ -28,6 +28,9 @@ from app.models.work_learning_runtime_context_snapshot import (
 from app.models.work_outcome_evaluation import WorkOutcomeEvaluation
 from app.models.account_event import AccountEvent
 from app.models.account_vencimento_change import AccountVencimentoChange
+from app.models.account_data_entry_audit_event import (
+    AccountDataEntryAuditEvent,
+)
 from app.models.escalation_observation import EscalationObservation
 from app.models.evidence_provenance_context import EvidenceProvenanceContext
 from app.models.business_effect_verification import (
@@ -69,6 +72,7 @@ __all__ = [
     "WorkOutcomeEvaluation",
     "AccountEvent",
     "AccountVencimentoChange",
+    "AccountDataEntryAuditEvent",
     "EscalationObservation",
     "EvidenceProvenanceContext",
     "BusinessEffectVerification",

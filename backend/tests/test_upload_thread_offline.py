@@ -8,6 +8,7 @@ import threading
 import types
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
@@ -16,14 +17,26 @@ BACKEND = Path(__file__).resolve().parents[1]
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-def load_upload():
+# Sessão autenticada sintética: só ids, sem credencial.
+SESSION = SimpleNamespace(user=SimpleNamespace(id=7), session=SimpleNamespace(id=11))
+
+
+def load_upload(requested_permissions=None):
     database = types.ModuleType('app.database.database')
     database.get_db = lambda: None
     service = types.ModuleType('app.services.import_service')
-    service.import_clients = lambda *args: None
+    service.import_clients = lambda *args, **kwargs: None
+    authentication = types.ModuleType('app.core.authentication')
+    authentication.AuthenticatedSession = object
+    def require_permission(permission):
+        if requested_permissions is not None:
+            requested_permissions.append(permission)
+        return lambda: SESSION
+    authentication.require_permission = require_permission
     spec = importlib.util.spec_from_file_location('synthetic_legacy_upload', BACKEND / 'app/api/routes/upload.py')
     module = importlib.util.module_from_spec(spec)
-    with mock.patch.dict(sys.modules, {'app.database.database': database, 'app.services.import_service': service}):
+    with mock.patch.dict(sys.modules, {'app.database.database': database, 'app.services.import_service': service,
+                                       'app.core.authentication': authentication}):
         with mock.patch('pathlib.Path.mkdir'):
             spec.loader.exec_module(module)
     return module
@@ -35,7 +48,7 @@ class UploadThreadTests(unittest.IsolatedAsyncioTestCase):
         file = UploadFile(file=io.BytesIO(payload), filename='synthetic.csv')
         entered, release = threading.Event(), threading.Event()
         imported, threads = [], []
-        def importer(path, db):
+        def importer(path, db, *, actor_user_id, auth_session_id):
             imported.append(Path(path))
             threads.append(threading.get_ident())
             self.assertEqual(Path(path).read_bytes(), payload)
@@ -46,7 +59,7 @@ class UploadThreadTests(unittest.IsolatedAsyncioTestCase):
         module.import_clients = importer
         with tempfile.TemporaryDirectory(prefix='auneron_synthetic_upload_') as directory:
             module.UPLOAD_DIR = Path(directory)
-            task = asyncio.create_task(module.upload_file(file, object()))
+            task = asyncio.create_task(module.upload_file(file, object(), SESSION))
             try:
                 for _ in range(100):
                     if entered.is_set():
@@ -66,9 +79,25 @@ class UploadThreadTests(unittest.IsolatedAsyncioTestCase):
                     await task
         self.assertTrue(file.file.closed)
 
+    async def test_session_actor_is_passed_to_import_and_permission_is_imports_execute(self):
+        requested = []
+        module = load_upload(requested)
+        self.assertEqual(requested, ['imports.execute'])
+        db, seen = object(), []
+        def importer(path, received_db, **kwargs):
+            seen.append((received_db, kwargs))
+            return {'importados': 0}
+        module.import_clients = importer
+        file = UploadFile(file=io.BytesIO(b'x'), filename='synthetic.csv')
+        with tempfile.TemporaryDirectory(prefix='auneron_synthetic_upload_') as directory:
+            module.UPLOAD_DIR = Path(directory)
+            await module.upload_file(file, db, SESSION)
+        # Keywords exatos: ator da sessão, sem fallback e sem campo extra.
+        self.assertEqual(seen, [(db, {'actor_user_id': 7, 'auth_session_id': 11})])
+
     async def test_import_failure_closes_input_and_removes_only_owned_tempfile(self):
         module = load_upload()
-        def importer(*args):
+        def importer(*args, **kwargs):
             raise ValueError('synthetic validation failure')
         module.import_clients = importer
         file = UploadFile(file=io.BytesIO(b'synthetic'), filename='synthetic.csv')
@@ -77,7 +106,7 @@ class UploadThreadTests(unittest.IsolatedAsyncioTestCase):
             sentinel = Path(directory) / 'unrelated.txt'
             sentinel.write_text('keep', encoding='utf-8')
             with self.assertRaises(HTTPException) as caught:
-                await module.upload_file(file, object())
+                await module.upload_file(file, object(), SESSION)
             self.assertEqual(caught.exception.status_code, 400)
             self.assertEqual(list(Path(directory).iterdir()), [sentinel])
             self.assertEqual(sentinel.read_text(encoding='utf-8'), 'keep')
@@ -90,17 +119,17 @@ class UploadThreadTests(unittest.IsolatedAsyncioTestCase):
             module.UPLOAD_DIR = Path(directory)
             with mock.patch.object(file.file, 'read', side_effect=OSError('synthetic copy failure')):
                 with self.assertRaises(OSError):
-                    await module.upload_file(file, object())
+                    await module.upload_file(file, object(), SESSION)
             self.assertEqual(list(Path(directory).iterdir()), [])
         self.assertTrue(file.file.closed)
 
     async def test_invalid_extension_does_not_import(self):
         module = load_upload()
         called = []
-        module.import_clients = lambda *args: called.append(True)
+        module.import_clients = lambda *args, **kwargs: called.append(True)
         file = UploadFile(file=io.BytesIO(b'synthetic'), filename='synthetic.exe')
         with self.assertRaises(HTTPException) as caught:
-            await module.upload_file(file, object())
+            await module.upload_file(file, object(), SESSION)
         self.assertEqual(caught.exception.status_code, 400)
         self.assertEqual(called, [])
         self.assertTrue(file.file.closed)
@@ -125,13 +154,13 @@ class _EndlessSource(io.RawIOBase):
 class UploadCeilingTests(unittest.IsolatedAsyncioTestCase):
     async def _run(self, module, file, directory):
         module.UPLOAD_DIR = Path(directory)
-        return await module.upload_file(file, object())
+        return await module.upload_file(file, object(), SESSION)
 
     async def test_exact_limit_is_accepted_and_imported_off_loop(self):
         module = load_upload()
         payload = b'a' * module.MAX_UPLOAD_BYTES
         seen, threads = [], []
-        def importer(path, db):
+        def importer(path, db, **kwargs):
             seen.append(Path(path).stat().st_size)
             threads.append(threading.get_ident())
             return {'importados': 0}
@@ -148,7 +177,7 @@ class UploadCeilingTests(unittest.IsolatedAsyncioTestCase):
     async def test_limit_plus_one_is_413_without_import_echo_or_tempfile(self):
         module = load_upload()
         called = []
-        module.import_clients = lambda *args: called.append(True)
+        module.import_clients = lambda *args, **kwargs: called.append(True)
         secret = b'Fulana Sigilosa;'
         payload = secret + b'a' * (module.MAX_UPLOAD_BYTES + 1 - len(secret))
         # Content-Length/size mentirosos não importam: o teto vem da leitura.
@@ -166,7 +195,7 @@ class UploadCeilingTests(unittest.IsolatedAsyncioTestCase):
     async def test_reads_are_chunked_and_never_exceed_limit_plus_one(self):
         module = load_upload()
         called = []
-        module.import_clients = lambda *args: called.append(True)
+        module.import_clients = lambda *args, **kwargs: called.append(True)
         source = _EndlessSource()
         file = UploadFile(file=source, filename='synthetic.csv')
         with tempfile.TemporaryDirectory(prefix='auneron_synthetic_upload_') as directory:
@@ -191,7 +220,7 @@ class UploadCeilingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_writers_busy_is_503_retry_after_and_tempfile_removed(self):
         module = load_upload()
-        def importer(path, db):
+        def importer(path, db, **kwargs):
             raise module.AccountWritersBusy()
         module.import_clients = importer
         file = UploadFile(file=io.BytesIO(b'cliente;valor\r\n'), filename='synthetic.csv')
@@ -209,7 +238,7 @@ class UploadCeilingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_other_failures_keep_their_mapping(self):
         module = load_upload()
-        def importer(path, db):
+        def importer(path, db, **kwargs):
             raise RuntimeError('synthetic database failure')
         module.import_clients = importer
         file = UploadFile(file=io.BytesIO(b'x'), filename='synthetic.csv')
@@ -228,8 +257,9 @@ class UploadAsgiTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(module.router)
         app.dependency_overrides[module.get_db] = lambda: object()
-        outcomes = []
-        def importer(path, db):
+        outcomes, actors = [], []
+        def importer(path, db, *, actor_user_id, auth_session_id):
+            actors.append((actor_user_id, auth_session_id))
             if outcomes and outcomes[-1] == 'busy':
                 raise module.AccountWritersBusy()
             return {'size': Path(path).stat().st_size}
@@ -249,6 +279,8 @@ class UploadAsgiTests(unittest.TestCase):
         self.assertEqual(busy.status_code, 503)
         self.assertEqual(busy.headers.get('retry-after'), '5')
         self.assertEqual(busy.json()['detail']['code'], 'account_writers_busy')
+        # 413 nunca chega ao import; os dois imports receberam o ator da sessão.
+        self.assertEqual(actors, [(7, 11), (7, 11)])
 
 
 if __name__ == '__main__':

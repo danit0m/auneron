@@ -8,6 +8,7 @@ on:
       - "backend/**"
       - "frontend/**"
       - ".github/workflows/backend-ci.yml"
+      - ".github/area2/**"
 
   pull_request:
     branches:
@@ -16,6 +17,7 @@ on:
       - "backend/**"
       - "frontend/**"
       - ".github/workflows/backend-ci.yml"
+      - ".github/area2/**"
 
   workflow_dispatch:
 
@@ -199,6 +201,12 @@ jobs:
       - name: Verificar compilação
         run: python -m compileall -q app tests scripts migrations
 
+      # AREA2 TASK047: testes offline (stdlib + fakes) do executor do delta
+      # de auditoria; sem processo filho, banco, Docker ou rede.
+      - name: Testar executor do delta de auditoria (offline)
+        working-directory: ${{ github.workspace }}
+        run: python -B .github/area2/test_audit_recovery_delta.py -v
+
       - name: Aplicar migrações
         run: python -m alembic upgrade head
 
@@ -224,6 +232,32 @@ jobs:
 
       - name: Diagnóstico operacional do banco
         run: python scripts/db_diagnostics.py
+
+      # AREA2 TASK047: prova SOMENTE que a tabela de auditoria de cadastro
+      # (colunas, 22 CHECKs, indice, funcao + trigger habilitado) e uma linha
+      # sintetica sobrevivem a pg_dump/pg_restore nativos num banco novo do
+      # proprio run. Area1/Layer B nao sao repetidos. O executor remove o
+      # banco que criou e apenas a propria linha; o gate e de contexto, nao
+      # prova criptografica de aprovacao humana.
+      - name: Delta de recuperação da auditoria de cadastro (PostgreSQL nativo)
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        working-directory: ${{ github.workspace }}
+        timeout-minutes: 10
+        env:
+          CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: >-
+          python -B .github/area2/audit_recovery_delta.py
+          --execute
+          --report "${{ runner.temp }}/area2-audit-recovery.json"
+
+      - name: Publicar relatório do delta de auditoria
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: area2-audit-recovery-report
+          path: ${{ runner.temp }}/area2-audit-recovery.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Instalar Chromium do Playwright
         run: python -m playwright install --with-deps chromium
@@ -255,7 +289,10 @@ jobs:
                               AS import_confirmation_receipts,
                           (SELECT COUNT(*)
                               FROM import_confirmation_audit_events)
-                              AS import_confirmation_audit_events
+                              AS import_confirmation_audit_events,
+                          (SELECT COUNT(*)
+                              FROM account_data_entry_audit_events)
+                              AS account_data_entry_audit_events
                       """
                   )
               ).mappings().one()
@@ -266,6 +303,7 @@ jobs:
           assert result["auth_sessions"] == 0, result
           assert result["import_confirmation_receipts"] == 0, result
           assert result["import_confirmation_audit_events"] == 0, result
+          assert result["account_data_entry_audit_events"] == 0, result
 
           print(
               "Banco de testes limpo:",
