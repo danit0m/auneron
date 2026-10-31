@@ -32,6 +32,7 @@ from app.main import app
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.approval import ApprovalConsumption
+from app.models.approval import ApprovalRequest
 from app.models.skill import SkillInvocation
 from app.models.user import User
 from app.models.work import WorkEvent
@@ -263,6 +264,7 @@ def test_execute_second_call_is_idempotent(
     first = client.post(_execute_url(account.id, due_date))
     assert first.status_code == 200
     assert first.json()["duplicate"] is False
+    state_after_first = _replay_state(db_session, account.id)
 
     second = client.post(_execute_url(account.id, due_date))
     assert second.status_code == 200
@@ -271,11 +273,28 @@ def test_execute_second_call_is_idempotent(
         second.json()["invocation_id"]
         == first.json()["invocation_id"]
     )
+    for field in (
+        "work_item_id",
+        "approval_request_id",
+        "approval_consumption_id",
+        "invocation_status",
+        "output",
+    ):
+        assert second.json()[field] == first.json()[field]
+    assert _replay_state(db_session, account.id) == state_after_first
 
     consumption_count = db_session.execute(
         text("SELECT COUNT(*) FROM approval_consumptions")
     ).scalar_one()
     assert consumption_count == 1
+
+    # Binding de input e estrutural (URL -> work_key canonica): outro
+    # due_date da mesma conta nao alcanca este recibo.
+    other = client.post(
+        _execute_url(account.id, due_date - timedelta(days=1))
+    )
+    assert other.status_code == 404
+    assert _replay_state(db_session, account.id) == state_after_first
 
 
 def test_execute_pending_approval_is_rejected_with_no_mutation(
@@ -627,3 +646,218 @@ def test_human_execution_service_never_impersonates_agent() -> None:
     )
     assert 'CONSUMER_ACTOR_TYPE = "system"' in source
     assert "self.db.commit()" in source
+
+
+# --- Replay do recibo: so o executor original, com autoridade atual ---
+
+THIRD_MANAGER_EMAIL = "manager.mark-overdue.replay@example.com"
+THIRD_MANAGER_PASSWORD = "Senha-Gerente-Teste-123!"
+
+
+def _login_client(email: str, password: str) -> TestClient:
+    test_client = TestClient(app)
+    test_client.headers.update(
+        {API_KEY_HEADER_NAME: os.environ["API_KEY"]}
+    )
+    login = test_client.post(
+        "/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert login.status_code == 200, login.text
+    return test_client
+
+
+def _executed_episode(
+    client: TestClient, db_session: Session, *, due_date: date, email: str
+):
+    account, request_id = _setup_approved_episode(
+        client, db_session, due_date=due_date, email=email
+    )
+    first = client.post(_execute_url(account.id, due_date))
+    assert first.status_code == 200, first.text
+    assert first.json()["duplicate"] is False
+    return account, request_id, first.json()
+
+
+def _replay_state(db_session: Session, account_id: int):
+    db_session.expire_all()
+    account_status = db_session.get(Account, account_id).status
+    work_item = db_session.execute(
+        select(WorkItem.status, WorkItem.version).where(
+            WorkItem.account_id == account_id
+        )
+    ).one()
+    return (
+        account_status,
+        tuple(work_item),
+        _governed_object_counts(db_session),
+    )
+
+
+def test_replay_after_approval_expiry_still_returns_receipt(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    due_date = date.today() - timedelta(days=10)
+    account, request_id, first = _executed_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.replay-expired@example.com",
+    )
+    authority = _current_user(db_session)
+    request = db_session.get(ApprovalRequest, request_id)
+    after_expiry = request.expires_at + timedelta(seconds=1)
+    before = _replay_state(db_session, account.id)
+
+    service = HumanAccountMarkOverdueExecutionService(db_session)
+    result = service.execute(
+        account_id=account.id,
+        due_date=due_date,
+        authority_user_id=authority.id,
+        now=after_expiry,
+    )
+
+    assert result.duplicate is True
+    assert result.work_item_id == first["work_item_id"]
+    assert result.approval_request_id == first["approval_request_id"]
+    assert (
+        result.approval_consumption_id
+        == first["approval_consumption_id"]
+    )
+    assert result.invocation_id == first["invocation_id"]
+    assert result.output == first["output"]
+    assert _replay_state(db_session, account.id) == before
+
+
+def test_replay_by_approver_is_forbidden_without_effects(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    due_date = date.today() - timedelta(days=10)
+    account, _request_id, _first = _executed_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.replay-approver@example.com",
+    )
+    approver = _login_client(APPROVER_EMAIL, APPROVER_PASSWORD)
+    before = _replay_state(db_session, account.id)
+
+    response = approver.post(_execute_url(account.id, due_date))
+
+    assert response.status_code == 403, response.text
+    assert response.json() == {
+        "detail": "Recibo de execução pertence a outro executor."
+    }
+    assert _replay_state(db_session, account.id) == before
+
+
+def test_replay_by_third_manager_is_forbidden_without_effects(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    due_date = date.today() - timedelta(days=10)
+    account, _request_id, _first = _executed_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.replay-manager@example.com",
+    )
+    db_session.add(
+        User(
+            name="Gerente Terceiro Replay",
+            email=THIRD_MANAGER_EMAIL,
+            password_hash=hash_password(THIRD_MANAGER_PASSWORD),
+            role="manager",
+            active=True,
+        )
+    )
+    db_session.commit()
+    manager = _login_client(THIRD_MANAGER_EMAIL, THIRD_MANAGER_PASSWORD)
+    before = _replay_state(db_session, account.id)
+
+    response = manager.post(_execute_url(account.id, due_date))
+
+    assert response.status_code == 403, response.text
+    assert response.json() == {
+        "detail": "Recibo de execução pertence a outro executor."
+    }
+    assert _replay_state(db_session, account.id) == before
+
+
+def test_replay_by_original_executor_demoted_to_analyst_is_forbidden(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """
+    O analyst ainda tem skill:execute (passa a rota), mas nao
+    skill:execute_mutating: o replay exige a autoridade mutante atual
+    mesmo para o proprio executor original.
+    """
+
+    due_date = date.today() - timedelta(days=10)
+    account, _request_id, _first = _executed_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.replay-analyst@example.com",
+    )
+    _set_role(db_session, "analyst")
+    before = _replay_state(db_session, account.id)
+
+    response = client.post(_execute_url(account.id, due_date))
+
+    assert response.status_code == 403, response.text
+    assert response.json() == {
+        "detail": "Ator sem autoridade para skill mutating."
+    }
+    assert _replay_state(db_session, account.id) == before
+
+
+_TAMPERED_RECEIPT_VALUES = {
+    "approval_request_id": 987654321,
+    "skill_invocation_id": 987654321,
+    "input_digest": "0" * 64,
+    "account_id": 987654321,
+    "due_date": "1999-01-01",
+    "work_key": "account_mark_overdue:v1:987654321:1999-01-01",
+}
+
+
+@pytest.mark.parametrize("field", sorted(_TAMPERED_RECEIPT_VALUES))
+def test_replay_with_inconsistent_receipt_event_data_fails_closed(
+    client: TestClient,
+    db_session: Session,
+    field: str,
+) -> None:
+    due_date = date.today() - timedelta(days=10)
+    account, request_id, first = _executed_episode(
+        client,
+        db_session,
+        due_date=due_date,
+        email="cliente.mark-overdue.replay-tampered@example.com",
+    )
+    receipt = db_session.execute(
+        select(WorkEvent).where(
+            WorkEvent.work_item_id == first["work_item_id"],
+            WorkEvent.idempotency_key
+            == (
+                "effect:human_account_mark_overdue:approval:"
+                f"{request_id}"
+            ),
+        )
+    ).scalar_one()
+    tampered = dict(receipt.event_data)
+    tampered[field] = _TAMPERED_RECEIPT_VALUES[field]
+    receipt.event_data = tampered
+    db_session.commit()
+    before = _replay_state(db_session, account.id)
+
+    response = client.post(_execute_url(account.id, due_date))
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "detail": "Recibo de execução e estado atual divergem."
+    }
+    assert _replay_state(db_session, account.id) == before

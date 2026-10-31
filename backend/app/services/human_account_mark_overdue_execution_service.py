@@ -34,6 +34,13 @@ via work_key_for_episode() (autoridade unica no modulo de
 materializacao) -- nunca recebe work_item_id/approval_request_id do
 cliente. O WorkItem canonico e a unica fonte da ApprovalRequest
 associada (context_data["approval_request_id"]).
+
+Replay (recibo existente): devolvido apenas ao executor original
+(ApprovalConsumption.authority_user_id), revalidando a autoridade
+mutante atual, catalogo, input aprovado, escopo e separacao de
+deveres, e conferindo recibo/consumo/invocation/conta entre si. A
+expiracao da aprovacao nao se aplica a um recibo ja consumido. O
+replay nao escreve nada; divergencias falham fechado.
 """
 
 from __future__ import annotations
@@ -216,6 +223,243 @@ class HumanAccountMarkOverdueExecutionService:
             reason=reason,
         )
 
+    def _load_catalog(self, request):
+        version = self.skills.get_version(request.skill_version_id)
+        if version is None or version.status != "published":
+            raise ApprovalNotFoundError(
+                "Versão de skill inexistente ou não publicada."
+            )
+        skill = self.skills.get_skill(version.skill_id)
+        if skill is None or skill.status != "active":
+            raise ApprovalNotFoundError("Skill inexistente ou inativa.")
+        capabilities = tuple(
+            self.skills.list_capabilities(version.id)
+        )
+        self._validate_catalog(
+            skill=skill, version=version, capabilities=capabilities
+        )
+        return version, capabilities
+
+    @staticmethod
+    def _episode_input(account_id: int, due_date: date):
+        input_payload = {
+            "account_id": account_id,
+            "due_date": due_date.isoformat(),
+        }
+        return approval_input_identity(input_payload)
+
+    def _validate_approved_authority(
+        self,
+        *,
+        request,
+        version,
+        capabilities,
+        authority: User,
+        account_id: int,
+        normalized_input: Any,
+        input_digest: str,
+        effective_now: datetime,
+        enforce_expiry: bool,
+    ):
+        # Compartilhada pela primeira execucao e pelo replay (mesmo
+        # padrao de AccountMarkPaidExecutionService). Expiracao so vale
+        # antes do consumo: o recibo historico nao caduca com o tempo.
+        if request.action_type != "skill_execution":
+            raise ApprovalStateError(
+                "Tipo de ação aprovado não é executável por Skill."
+            )
+        if enforce_expiry and request.expires_at <= effective_now:
+            raise ApprovalExpiredError(
+                "A aprovação aprovada expirou antes da execução."
+            )
+        decision = self.approvals.get_decision(request.id)
+        if decision is None or decision.decision != "approved":
+            raise ApprovalStateError(
+                "Decisão de aprovação ausente ou inconsistente."
+            )
+
+        if request.input_digest != input_digest:
+            raise ApprovalConsumptionConflictError(
+                "Input informado na execução diverge do input "
+                "aprovado."
+            )
+
+        risk_level, required_permission = classify_skill_risk(
+            version=version, capabilities=capabilities
+        )
+        if (
+            request.risk_level != risk_level
+            or request.required_permission != required_permission
+        ):
+            raise ApprovalStateError(
+                "Política atual diverge da aprovação persistida."
+            )
+
+        original_requester = ApprovalRequester(
+            actor_type=request.requester_actor_type,
+            actor_reference=request.requester_reference,
+            actor_user_id=request.requester_user_id,
+        )
+        expected_fingerprint = approval_request_fingerprint(
+            version=version,
+            requester=original_requester,
+            input_digest=input_digest,
+        )
+        if request.request_fingerprint != expected_fingerprint:
+            raise ApprovalConsumptionConflictError(
+                "Identidade da solicitação diverge da aprovação "
+                "persistida."
+            )
+
+        sensitive_verified = (
+            request.required_permission
+            == "approval:decide_sensitive"
+            and decision.sensitive_elevation_verified
+        )
+        grant = authorize_skill_execution(
+            db=self.db,
+            role=authority.role,
+            actor_user_id=authority.id,
+            session_elevated=sensitive_verified,
+            version_id=version.id,
+            input_payload=normalized_input,
+        )
+        if (
+            grant.account_id != request.target_account_id
+            or grant.account_id != account_id
+        ):
+            raise ApprovalStateError(
+                "Escopo atual diverge da ação aprovada."
+            )
+
+        if authority.id == decision.decided_by_user_id:
+            raise ApprovalAuthorizationError(
+                "Executor não pode ser o mesmo usuário que decidiu a aprovação."
+            )
+        return decision
+
+    def _replay(
+        self,
+        *,
+        request,
+        receipt: WorkEvent,
+        work_item,
+        authority: User,
+        account_id: int,
+        due_date: date,
+        canonical_key: str,
+        effective_now: datetime,
+    ) -> HumanAccountMarkOverdueExecutionResult:
+        # Replay so devolve o recibo ao executor original, com o mesmo
+        # input aprovado e autoridade mutante atual valida. Nenhuma
+        # escrita; qualquer divergencia entre recibo, consumo,
+        # invocation e conta falha fechado.
+        existing_consumption = (
+            self.approvals.get_consumption_by_request(request.id)
+        )
+        if (
+            existing_consumption is None
+            or existing_consumption.status != "consumed"
+            or existing_consumption.skill_invocation_id is None
+        ):
+            raise ApprovalConsumptionConflictError(
+                "Recibo de execução e estado atual divergem."
+            )
+        if existing_consumption.authority_user_id != authority.id:
+            raise ApprovalAuthorizationError(
+                "Recibo de execução pertence a outro executor."
+            )
+        if request.status != "approved":
+            raise ApprovalStateError(
+                "Estado de aprovação inesperado."
+            )
+
+        version, capabilities = self._load_catalog(request)
+        normalized_input, input_digest = self._episode_input(
+            account_id, due_date
+        )
+        decision = self._validate_approved_authority(
+            request=request,
+            version=version,
+            capabilities=capabilities,
+            authority=authority,
+            account_id=account_id,
+            normalized_input=normalized_input,
+            input_digest=input_digest,
+            effective_now=effective_now,
+            enforce_expiry=False,
+        )
+
+        runtime_key = f"approval:{request.id}"
+        invocation = self.db.get(
+            SkillInvocation, existing_consumption.skill_invocation_id
+        )
+        output = (
+            invocation.output_payload
+            if invocation is not None
+            and isinstance(invocation.output_payload, dict)
+            else None
+        )
+        event_data = (
+            receipt.event_data
+            if isinstance(receipt.event_data, dict)
+            else None
+        )
+        account = self.db.get(Account, account_id)
+        if (
+            existing_consumption.approval_decision_id != decision.id
+            or existing_consumption.input_digest != input_digest
+            or existing_consumption.request_fingerprint
+            != request.request_fingerprint
+            or existing_consumption.runtime_idempotency_key
+            != runtime_key
+            or existing_consumption.consumer_actor_type
+            != CONSUMER_ACTOR_TYPE
+            or existing_consumption.consumer_reference
+            != CONSUMER_REFERENCE
+            or invocation is None
+            or invocation.status != "succeeded"
+            or invocation.skill_version_id != version.id
+            or invocation.actor_type != CONSUMER_ACTOR_TYPE
+            or invocation.actor_reference != CONSUMER_REFERENCE
+            or invocation.idempotency_key != runtime_key
+            or invocation.input_digest != input_digest
+            or output is None
+            or output.get("action") != SKILL_KEY
+            or output.get("account_id") != account_id
+            or output.get("previous_status") != "aberto"
+            or output.get("new_status") != "atrasado"
+            or receipt.event_type != "system_note"
+            or receipt.actor_type != CONSUMER_ACTOR_TYPE
+            or receipt.actor_reference != CONSUMER_REFERENCE
+            or event_data is None
+            or event_data.get("kind") != "business_effect_receipt"
+            or event_data.get("protocol") != PROTOCOL
+            or event_data.get("action") != SKILL_KEY
+            or event_data.get("account_id") != account_id
+            or event_data.get("due_date") != due_date.isoformat()
+            or event_data.get("work_key") != canonical_key
+            or event_data.get("approval_request_id") != request.id
+            or event_data.get("skill_invocation_id") != invocation.id
+            or event_data.get("input_digest") != input_digest
+            or event_data.get("previous_status") != "aberto"
+            or event_data.get("new_status") != "atrasado"
+            or account is None
+            or account.status != "atrasado"
+        ):
+            raise ApprovalConsumptionConflictError(
+                "Recibo de execução e estado atual divergem."
+            )
+        return HumanAccountMarkOverdueExecutionResult(
+            work_item_id=work_item.id,
+            approval_request_id=request.id,
+            approval_consumption_id=existing_consumption.id,
+            invocation_id=invocation.id,
+            invocation_status=invocation.status,
+            duplicate=True,
+            output=output,
+        )
+
     def execute(
         self,
         *,
@@ -282,46 +526,15 @@ class HumanAccountMarkOverdueExecutionService:
             idempotency_key=receipt_key,
         )
         if receipt is not None:
-            existing_consumption = (
-                self.approvals.get_consumption_by_request(
-                    request.id
-                )
-            )
-            account = self.db.get(Account, normalized_account_id)
-            invocation = (
-                self.db.get(
-                    SkillInvocation,
-                    existing_consumption.skill_invocation_id,
-                )
-                if existing_consumption is not None
-                and existing_consumption.skill_invocation_id
-                is not None
-                else None
-            )
-            if (
-                existing_consumption is None
-                or existing_consumption.status != "consumed"
-                or account is None
-                or account.status != "atrasado"
-                or invocation is None
-                or invocation.status != "succeeded"
-            ):
-                raise ApprovalConsumptionConflictError(
-                    "Recibo de execução e estado atual divergem."
-                )
-            output = (
-                invocation.output_payload
-                if isinstance(invocation.output_payload, dict)
-                else {}
-            )
-            return HumanAccountMarkOverdueExecutionResult(
-                work_item_id=work_item.id,
-                approval_request_id=request.id,
-                approval_consumption_id=existing_consumption.id,
-                invocation_id=invocation.id,
-                invocation_status=invocation.status,
-                duplicate=True,
-                output=output,
+            return self._replay(
+                request=request,
+                receipt=receipt,
+                work_item=work_item,
+                authority=authority,
+                account_id=normalized_account_id,
+                due_date=due_date,
+                canonical_key=canonical_key,
+                effective_now=effective_now,
             )
 
         if request.status == "pending":
@@ -343,100 +556,21 @@ class HumanAccountMarkOverdueExecutionService:
                 "Estado de aprovação inesperado."
             )
 
-        version = self.skills.get_version(request.skill_version_id)
-        if version is None or version.status != "published":
-            raise ApprovalNotFoundError(
-                "Versão de skill inexistente ou não publicada."
-            )
-        skill = self.skills.get_skill(version.skill_id)
-        if skill is None or skill.status != "active":
-            raise ApprovalNotFoundError("Skill inexistente ou inativa.")
-        capabilities = tuple(
-            self.skills.list_capabilities(version.id)
+        version, capabilities = self._load_catalog(request)
+        normalized_input, input_digest = self._episode_input(
+            normalized_account_id, due_date
         )
-        self._validate_catalog(
-            skill=skill, version=version, capabilities=capabilities
-        )
-
-        if request.action_type != "skill_execution":
-            raise ApprovalStateError(
-                "Tipo de ação aprovado não é executável por Skill."
-            )
-        if request.expires_at <= effective_now:
-            raise ApprovalExpiredError(
-                "A aprovação aprovada expirou antes da execução."
-            )
-        decision = self.approvals.get_decision(request.id)
-        if decision is None or decision.decision != "approved":
-            raise ApprovalStateError(
-                "Decisão de aprovação ausente ou inconsistente."
-            )
-
-        input_payload = {
-            "account_id": normalized_account_id,
-            "due_date": due_date.isoformat(),
-        }
-        normalized_input, input_digest = approval_input_identity(
-            input_payload
-        )
-        if request.input_digest != input_digest:
-            raise ApprovalConsumptionConflictError(
-                "Input informado na execução diverge do input "
-                "aprovado."
-            )
-
-        risk_level, required_permission = classify_skill_risk(
-            version=version, capabilities=capabilities
-        )
-        if (
-            request.risk_level != risk_level
-            or request.required_permission != required_permission
-        ):
-            raise ApprovalStateError(
-                "Política atual diverge da aprovação persistida."
-            )
-
-        original_requester = ApprovalRequester(
-            actor_type=request.requester_actor_type,
-            actor_reference=request.requester_reference,
-            actor_user_id=request.requester_user_id,
-        )
-        expected_fingerprint = approval_request_fingerprint(
+        decision = self._validate_approved_authority(
+            request=request,
             version=version,
-            requester=original_requester,
+            capabilities=capabilities,
+            authority=authority,
+            account_id=normalized_account_id,
+            normalized_input=normalized_input,
             input_digest=input_digest,
+            effective_now=effective_now,
+            enforce_expiry=True,
         )
-        if request.request_fingerprint != expected_fingerprint:
-            raise ApprovalConsumptionConflictError(
-                "Identidade da solicitação diverge da aprovação "
-                "persistida."
-            )
-
-        sensitive_verified = (
-            request.required_permission
-            == "approval:decide_sensitive"
-            and decision.sensitive_elevation_verified
-        )
-        grant = authorize_skill_execution(
-            db=self.db,
-            role=authority.role,
-            actor_user_id=authority.id,
-            session_elevated=sensitive_verified,
-            version_id=version.id,
-            input_payload=normalized_input,
-        )
-        if (
-            grant.account_id != request.target_account_id
-            or grant.account_id != normalized_account_id
-        ):
-            raise ApprovalStateError(
-                "Escopo atual diverge da ação aprovada."
-            )
-
-        if authority.id == decision.decided_by_user_id:
-            raise ApprovalAuthorizationError(
-                "Executor não pode ser o mesmo usuário que decidiu a aprovação."
-            )
 
         if work_item.status == "ready":
             try:
