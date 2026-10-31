@@ -17,6 +17,9 @@ from app.database.database import get_db
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.account_vencimento_change import AccountVencimentoChange
+from app.models.approval import ApprovalRequest
+from app.models.business_effect_verification import BusinessEffectVerification
+from app.models.policy_authority_consumption import PolicyAuthorityConsumption
 from app.repositories.memory_repository import MemoryRepository
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.account import (
@@ -81,6 +84,28 @@ def _writers_busy() -> HTTPException:
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail=busy_detail(),
         headers=busy_headers(),
+    )
+
+
+# Referencias duraveis de governanca a uma Account. account_events e
+# account_vencimento_changes tem FK ON DELETE CASCADE (o DELETE apagaria o
+# historico); as demais guardam o id sem FK (o DELETE as deixaria orfas).
+# Apenas checagem: sem DDL, sem soft delete, sem evento de auditoria novo.
+GOVERNED_HISTORY_COLUMNS = (
+    AccountEvent.account_id,
+    AccountVencimentoChange.account_id,
+    ApprovalRequest.target_account_id,
+    PolicyAuthorityConsumption.target_account_id,
+    BusinessEffectVerification.target_account_id,
+)
+
+
+def _has_governed_history(db: Session, account_id: int) -> bool:
+    return any(
+        db.execute(
+            select(column).where(column == account_id).limit(1)
+        ).first() is not None
+        for column in GOVERNED_HISTORY_COLUMNS
     )
 
 
@@ -325,15 +350,24 @@ def delete_account(
     except AccountWritersBusy:
         raise _writers_busy() from None
 
-    account = db.get(
-        Account,
-        account_id,
-    )
+    # Mesma ordem do PUT: lock de identidade, depois a linha da conta. Um
+    # executor governado que segura a linha termina antes desta checagem.
+    account = db.execute(
+        select(Account)
+        .where(Account.id == account_id)
+        .with_for_update()
+    ).scalar_one_or_none()
 
     if account is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conta não encontrada.",
+        )
+
+    if _has_governed_history(db, account.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conta possui histórico governado e não pode ser excluída.",
         )
 
     db.delete(account)

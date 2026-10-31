@@ -116,94 +116,22 @@ class AccountMarkPaidExecutionService:
                 "Capability external não é permitida em account.mark_paid."
             )
 
-    def execute(
+    def _validate_approved_authority(
         self,
         *,
+        request,
+        version,
+        capabilities,
+        authority: User,
         account_id: int,
-        approval_request_id: int,
-        expected_status: str,
-        authority_user_id: int,
-        now: datetime | None = None,
-    ) -> AccountMarkPaidExecutionResult:
-        normalized_account_id = _positive_id(account_id, field_name="account_id")
-        normalized_request_id = _positive_id(
-            approval_request_id, field_name="approval_request_id"
-        )
-        normalized_authority_id = _positive_id(
-            authority_user_id, field_name="authority_user_id"
-        )
-        if expected_status not in VALID_EXPECTED_STATUSES:
-            raise ApprovalValidationError("expected_status inválido.")
-
-        effective_now = now if now is not None else _utc_now()
-        if effective_now.tzinfo is None:
-            raise ApprovalValidationError("now deve possuir timezone.")
-
-        authority = self.db.get(User, normalized_authority_id)
-        if authority is None or not authority.active:
-            raise ApprovalAuthorizationError(
-                "Usuário-autoridade inexistente ou inativo."
-            )
-
-        request = self.approvals.lock_request(normalized_request_id)
-        if request is None:
-            raise ApprovalNotFoundError(
-                "Solicitação de aprovação não encontrada."
-            )
-
-        # Idempotencia: ApprovalConsumption e unico por approval_request_id
-        # (uq_approval_consumptions_request). Nao ha WorkItem/WorkEvent
-        # aqui, entao o proprio consumo e o recibo do efeito de negocio.
-        existing_consumption = self.approvals.get_consumption_by_request(
-            request.id
-        )
-        if existing_consumption is not None:
-            if (
-                existing_consumption.status != "consumed"
-                or existing_consumption.skill_invocation_id is None
-            ):
-                raise ApprovalConsumptionConflictError(
-                    "Consumo existente em estado inconsistente."
-                )
-            invocation = self.db.get(
-                SkillInvocation, existing_consumption.skill_invocation_id
-            )
-            account = self.db.get(Account, normalized_account_id)
-            if (
-                invocation is None
-                or invocation.status != "succeeded"
-                or account is None
-                or account.status != "pago"
-            ):
-                raise ApprovalConsumptionConflictError(
-                    "Recibo de consumo e estado atual da conta divergem."
-                )
-            output = (
-                invocation.output_payload
-                if isinstance(invocation.output_payload, dict)
-                else {}
-            )
-            return AccountMarkPaidExecutionResult(
-                approval_request_id=request.id,
-                approval_consumption_id=existing_consumption.id,
-                invocation_id=invocation.id,
-                invocation_status=invocation.status,
-                duplicate=True,
-                output=output,
-            )
-
-        version = self.skills.get_version(request.skill_version_id)
-        if version is None or version.status != "published":
-            raise ApprovalNotFoundError(
-                "Versão de skill inexistente ou não publicada."
-            )
-        skill = self.skills.get_skill(version.skill_id)
-        if skill is None or skill.status != "active":
-            raise ApprovalNotFoundError("Skill inexistente ou inativa.")
-        capabilities = tuple(self.skills.list_capabilities(version.id))
-        self._validate_catalog(skill=skill, version=version, capabilities=capabilities)
-
+        normalized_input: Any,
+        input_digest: str,
+        effective_now: datetime,
+        enforce_expiry: bool,
+    ):
         # --- Validacao manual da aprovacao (ADR 009) ---
+        # Compartilhada pela primeira execucao e pelo replay. Expiracao so
+        # vale antes do consumo: o recibo historico nao caduca com o tempo.
         if request.action_type != "skill_execution":
             raise ApprovalStateError(
                 "Tipo de ação aprovado não é executável por Skill."
@@ -212,7 +140,7 @@ class AccountMarkPaidExecutionService:
             raise ApprovalRequiredError(
                 "A execução exige aprovação humana aprovada."
             )
-        if request.expires_at <= effective_now:
+        if enforce_expiry and request.expires_at <= effective_now:
             raise ApprovalExpiredError(
                 "A aprovação aprovada expirou antes da execução."
             )
@@ -222,11 +150,6 @@ class AccountMarkPaidExecutionService:
                 "Decisão de aprovação ausente ou inconsistente."
             )
 
-        input_payload = {
-            "account_id": normalized_account_id,
-            "expected_status": expected_status,
-        }
-        normalized_input, input_digest = approval_input_identity(input_payload)
         if request.input_digest != input_digest:
             raise ApprovalConsumptionConflictError(
                 "Input informado na execução diverge do input aprovado."
@@ -263,6 +186,8 @@ class AccountMarkPaidExecutionService:
             request.required_permission == "approval:decide_sensitive"
             and decision.sensitive_elevation_verified
         )
+        # authorize_skill_execution so exige que a Account exista (nao olha
+        # status), entao tambem vale no replay de uma conta ja paga.
         grant = authorize_skill_execution(
             db=self.db,
             role=authority.role,
@@ -273,7 +198,7 @@ class AccountMarkPaidExecutionService:
         )
         if (
             grant.account_id != request.target_account_id
-            or grant.account_id != normalized_account_id
+            or grant.account_id != account_id
         ):
             raise ApprovalStateError("Escopo atual diverge da ação aprovada.")
 
@@ -281,6 +206,173 @@ class AccountMarkPaidExecutionService:
             raise ApprovalAuthorizationError(
                 "Executor não pode ser o mesmo usuário que decidiu a aprovação."
             )
+        return decision
+
+    def _replay(
+        self,
+        *,
+        request,
+        existing_consumption: ApprovalConsumption,
+        version,
+        capabilities,
+        authority: User,
+        account_id: int,
+        expected_status: str,
+        normalized_input: Any,
+        input_digest: str,
+        effective_now: datetime,
+    ) -> AccountMarkPaidExecutionResult:
+        # Replay so devolve o recibo ao executor original, com o mesmo input
+        # aprovado e autoridade atual valida. Nenhuma escrita.
+        if (
+            existing_consumption.status != "consumed"
+            or existing_consumption.skill_invocation_id is None
+        ):
+            raise ApprovalConsumptionConflictError(
+                "Consumo existente em estado inconsistente."
+            )
+        if existing_consumption.authority_user_id != authority.id:
+            raise ApprovalAuthorizationError(
+                "Recibo de consumo pertence a outro executor."
+            )
+        decision = self._validate_approved_authority(
+            request=request,
+            version=version,
+            capabilities=capabilities,
+            authority=authority,
+            account_id=account_id,
+            normalized_input=normalized_input,
+            input_digest=input_digest,
+            effective_now=effective_now,
+            enforce_expiry=False,
+        )
+
+        runtime_key = self._runtime_key(request.id)
+        invocation = self.db.get(
+            SkillInvocation, existing_consumption.skill_invocation_id
+        )
+        output = (
+            invocation.output_payload
+            if invocation is not None
+            and isinstance(invocation.output_payload, dict)
+            else None
+        )
+        account = self.db.get(Account, account_id)
+        if (
+            existing_consumption.approval_decision_id != decision.id
+            or existing_consumption.input_digest != input_digest
+            or existing_consumption.request_fingerprint
+            != request.request_fingerprint
+            or existing_consumption.runtime_idempotency_key != runtime_key
+            or existing_consumption.consumer_actor_type != CONSUMER_ACTOR_TYPE
+            or existing_consumption.consumer_reference != CONSUMER_REFERENCE
+            or invocation is None
+            or invocation.status != "succeeded"
+            or invocation.skill_version_id != version.id
+            or invocation.idempotency_key != runtime_key
+            or invocation.input_digest != input_digest
+            or output is None
+            or output.get("account_id") != account_id
+            or output.get("previous_status") != expected_status
+            or output.get("new_status") != "pago"
+            or account is None
+            or account.status != "pago"
+        ):
+            raise ApprovalConsumptionConflictError(
+                "Recibo de consumo e estado atual da conta divergem."
+            )
+        return AccountMarkPaidExecutionResult(
+            approval_request_id=request.id,
+            approval_consumption_id=existing_consumption.id,
+            invocation_id=invocation.id,
+            invocation_status=invocation.status,
+            duplicate=True,
+            output=output,
+        )
+
+    def execute(
+        self,
+        *,
+        account_id: int,
+        approval_request_id: int,
+        expected_status: str,
+        authority_user_id: int,
+        now: datetime | None = None,
+    ) -> AccountMarkPaidExecutionResult:
+        normalized_account_id = _positive_id(account_id, field_name="account_id")
+        normalized_request_id = _positive_id(
+            approval_request_id, field_name="approval_request_id"
+        )
+        normalized_authority_id = _positive_id(
+            authority_user_id, field_name="authority_user_id"
+        )
+        if expected_status not in VALID_EXPECTED_STATUSES:
+            raise ApprovalValidationError("expected_status inválido.")
+
+        effective_now = now if now is not None else _utc_now()
+        if effective_now.tzinfo is None:
+            raise ApprovalValidationError("now deve possuir timezone.")
+
+        authority = self.db.get(User, normalized_authority_id)
+        if authority is None or not authority.active:
+            raise ApprovalAuthorizationError(
+                "Usuário-autoridade inexistente ou inativo."
+            )
+
+        request = self.approvals.lock_request(normalized_request_id)
+        if request is None:
+            raise ApprovalNotFoundError(
+                "Solicitação de aprovação não encontrada."
+            )
+
+        version = self.skills.get_version(request.skill_version_id)
+        if version is None or version.status != "published":
+            raise ApprovalNotFoundError(
+                "Versão de skill inexistente ou não publicada."
+            )
+        skill = self.skills.get_skill(version.skill_id)
+        if skill is None or skill.status != "active":
+            raise ApprovalNotFoundError("Skill inexistente ou inativa.")
+        capabilities = tuple(self.skills.list_capabilities(version.id))
+        self._validate_catalog(skill=skill, version=version, capabilities=capabilities)
+
+        input_payload = {
+            "account_id": normalized_account_id,
+            "expected_status": expected_status,
+        }
+        normalized_input, input_digest = approval_input_identity(input_payload)
+
+        # Idempotencia: ApprovalConsumption e unico por approval_request_id
+        # (uq_approval_consumptions_request). Nao ha WorkItem/WorkEvent
+        # aqui, entao o proprio consumo e o recibo do efeito de negocio.
+        existing_consumption = self.approvals.get_consumption_by_request(
+            request.id
+        )
+        if existing_consumption is not None:
+            return self._replay(
+                request=request,
+                existing_consumption=existing_consumption,
+                version=version,
+                capabilities=capabilities,
+                authority=authority,
+                account_id=normalized_account_id,
+                expected_status=expected_status,
+                normalized_input=normalized_input,
+                input_digest=input_digest,
+                effective_now=effective_now,
+            )
+
+        decision = self._validate_approved_authority(
+            request=request,
+            version=version,
+            capabilities=capabilities,
+            authority=authority,
+            account_id=normalized_account_id,
+            normalized_input=normalized_input,
+            input_digest=input_digest,
+            effective_now=effective_now,
+            enforce_expiry=True,
+        )
 
         account = self.db.execute(
             select(Account)
