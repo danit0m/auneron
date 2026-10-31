@@ -945,3 +945,394 @@ def test_execute_rejects_executor_missing_mutating_permission(
     db_session.expire_all()
     assert db_session.get(Account, account.id).status == before_status
     assert _counts(db_session) == before_counts
+
+
+# ---------------------------------------------------------------------
+# R5 (AREA2) -- replay pelo MESMO executor da mesma aprovacao ja
+# consumida. O caminho de idempotencia do service (consumo existente ->
+# recibo com duplicate=True) nunca havia sido exercitado por execucao:
+# o piloto mark_paid registra que o replay nao foi exercitado ao vivo e
+# os testes acima so cobrem a segunda autoridade (stale, 409). Prova que
+# o replay devolve o mesmo recibo e nao produz segundo efeito.
+# ---------------------------------------------------------------------
+
+
+def test_same_executor_replay_returns_duplicate_receipt_without_new_effect(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _make_account(
+        db_session,
+        email="cliente.mark-paid.same-executor-replay@example.com",
+        status="aberto",
+    )
+    executor = _current_user(db_session)
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key="mark-paid-same-executor-replay-1",
+    )
+
+    first = _execute(
+        client,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    assert first_body["duplicate"] is False
+
+    db_session.expire_all()
+    assert db_session.get(Account, account.id).status == "pago"
+    after_first = _counts(db_session)
+    assert after_first == (1, 1, 1)
+
+    replay = _execute(
+        client,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    assert replay.status_code == 200, replay.text
+    replay_body = replay.json()
+    assert replay_body["duplicate"] is True
+    assert replay_body["approval_request_id"] == request_id
+    assert (
+        replay_body["approval_consumption_id"]
+        == first_body["approval_consumption_id"]
+    )
+    assert replay_body["invocation_id"] == first_body["invocation_id"]
+    assert replay_body["invocation_status"] == "succeeded"
+    assert replay_body["output"] == first_body["output"]
+
+    db_session.expire_all()
+    assert db_session.get(Account, account.id).status == "pago"
+    assert _counts(db_session) == after_first
+
+    event = db_session.execute(
+        select(AccountEvent).where(AccountEvent.account_id == account.id)
+    ).scalar_one()
+    assert event.previous_status == "aberto"
+    assert event.new_status == "pago"
+    assert event.actor_user_id == executor.id
+
+
+# ---------------------------------------------------------------------
+# TASK041 (AREA2) -- replay vinculado. O recibo so volta ao executor
+# original (consumption.authority_user_id), com o mesmo account_id e
+# expected_status aprovados e recibo coerente. Toda rejeicao acontece
+# antes de devolver output e nao escreve nada.
+# ---------------------------------------------------------------------
+
+OUTSIDER_EMAIL = "outsider.mark-paid@example.com"
+OUTSIDER_PASSWORD = "Senha-Outsider-MarkPaid-123!"
+
+
+def _consumed_mark_paid(
+    client: TestClient,
+    db_session: Session,
+    *,
+    email: str,
+    idempotency_key: str,
+):
+    account = _make_account(db_session, email=email, status="aberto")
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key=idempotency_key,
+    )
+    first = _execute(
+        client,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["duplicate"] is False
+    db_session.expire_all()
+    assert _counts(db_session) == (1, 1, 1)
+    return account.id, request_id, first.json()
+
+
+def _consumption_snapshot(db_session: Session, request_id: int):
+    db_session.expire_all()
+    consumption = db_session.execute(
+        select(ApprovalConsumption).where(
+            ApprovalConsumption.approval_request_id == request_id
+        )
+    ).scalar_one()
+    invocation = db_session.get(
+        SkillInvocation, consumption.skill_invocation_id
+    )
+    return (
+        consumption.id,
+        consumption.status,
+        consumption.authority_user_id,
+        consumption.input_digest,
+        invocation.id,
+        invocation.status,
+        invocation.output_payload,
+    )
+
+
+def _assert_replay_rejected(
+    response,
+    *,
+    status_code: int,
+    code: str,
+    db_session: Session,
+    account_id: int,
+    request_id: int,
+    before_counts,
+    before_snapshot,
+) -> None:
+    assert response.status_code == status_code, response.text
+    body = response.json()
+    assert set(body) == {"detail"}
+    assert body["detail"]["code"] == code
+    assert set(body["detail"]) == {"code", "message"}
+    for leaked in (
+        "approval_consumption_id",
+        "invocation_id",
+        "output",
+        "duplicate",
+        "previous_status",
+    ):
+        assert leaked not in response.text
+
+    db_session.expire_all()
+    assert db_session.get(Account, account_id).status == "pago"
+    assert _counts(db_session) == before_counts
+    assert _consumption_snapshot(db_session, request_id) == before_snapshot
+    events = db_session.execute(
+        select(AccountEvent).where(AccountEvent.account_id == account_id)
+    ).scalars().all()
+    assert len(events) == 1
+
+
+def test_same_executor_replay_after_approval_expiry_returns_receipt(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account_id, request_id, first_body = _consumed_mark_paid(
+        client,
+        db_session,
+        email="cliente.mark-paid.replay-expired@example.com",
+        idempotency_key="mark-paid-replay-expired-1",
+    )
+    stored_request = db_session.get(ApprovalRequest, request_id)
+    stored_request.expires_at = (
+        stored_request.created_at + timedelta(milliseconds=1)
+    )
+    db_session.commit()
+    before = _counts(db_session)
+
+    replay = _execute(
+        client,
+        account_id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    assert replay.status_code == 200, replay.text
+    body = replay.json()
+    assert body["duplicate"] is True
+    assert body["approval_consumption_id"] == first_body["approval_consumption_id"]
+    assert body["invocation_id"] == first_body["invocation_id"]
+    assert body["output"] == first_body["output"]
+    db_session.expire_all()
+    assert _counts(db_session) == before
+
+
+def test_approver_replay_of_consumed_request_is_rejected(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account_id, request_id, _ = _consumed_mark_paid(
+        client,
+        db_session,
+        email="cliente.mark-paid.replay-approver@example.com",
+        idempotency_key="mark-paid-replay-approver-1",
+    )
+    before_counts = _counts(db_session)
+    before_snapshot = _consumption_snapshot(db_session, request_id)
+    approver = _login(APPROVER_EMAIL, APPROVER_PASSWORD)
+
+    response = _execute(
+        approver,
+        account_id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    _assert_replay_rejected(
+        response,
+        status_code=403,
+        code="approval_forbidden",
+        db_session=db_session,
+        account_id=account_id,
+        request_id=request_id,
+        before_counts=before_counts,
+        before_snapshot=before_snapshot,
+    )
+
+
+def test_unrelated_active_executor_replay_is_rejected(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account_id, request_id, _ = _consumed_mark_paid(
+        client,
+        db_session,
+        email="cliente.mark-paid.replay-outsider@example.com",
+        idempotency_key="mark-paid-replay-outsider-1",
+    )
+    _create_user(
+        db_session,
+        email=OUTSIDER_EMAIL,
+        password=OUTSIDER_PASSWORD,
+        role="manager",
+    )
+    outsider = _login(OUTSIDER_EMAIL, OUTSIDER_PASSWORD)
+    before_counts = _counts(db_session)
+    before_snapshot = _consumption_snapshot(db_session, request_id)
+
+    response = _execute(
+        outsider,
+        account_id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    _assert_replay_rejected(
+        response,
+        status_code=403,
+        code="approval_forbidden",
+        db_session=db_session,
+        account_id=account_id,
+        request_id=request_id,
+        before_counts=before_counts,
+        before_snapshot=before_snapshot,
+    )
+
+
+def test_same_executor_replay_with_changed_expected_status_is_rejected(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account_id, request_id, _ = _consumed_mark_paid(
+        client,
+        db_session,
+        email="cliente.mark-paid.replay-status@example.com",
+        idempotency_key="mark-paid-replay-status-1",
+    )
+    before_counts = _counts(db_session)
+    before_snapshot = _consumption_snapshot(db_session, request_id)
+
+    response = _execute(
+        client,
+        account_id,
+        approval_request_id=request_id,
+        expected_status="atrasado",
+    )
+
+    _assert_replay_rejected(
+        response,
+        status_code=409,
+        code="approval_conflict",
+        db_session=db_session,
+        account_id=account_id,
+        request_id=request_id,
+        before_counts=before_counts,
+        before_snapshot=before_snapshot,
+    )
+
+
+def test_same_executor_replay_against_other_paid_account_is_rejected(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account_id, request_id, _ = _consumed_mark_paid(
+        client,
+        db_session,
+        email="cliente.mark-paid.replay-cross-account@example.com",
+        idempotency_key="mark-paid-replay-cross-account-1",
+    )
+    other = _make_account(
+        db_session,
+        email="cliente.mark-paid.replay-cross-account-other@example.com",
+        status="pago",
+    )
+    before_counts = _counts(db_session)
+    before_snapshot = _consumption_snapshot(db_session, request_id)
+
+    response = _execute(
+        client,
+        other.id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    _assert_replay_rejected(
+        response,
+        status_code=409,
+        code="approval_conflict",
+        db_session=db_session,
+        account_id=account_id,
+        request_id=request_id,
+        before_counts=before_counts,
+        before_snapshot=before_snapshot,
+    )
+    assert db_session.get(Account, other.id).status == "pago"
+    assert db_session.execute(
+        select(func.count(AccountEvent.id)).where(
+            AccountEvent.account_id == other.id
+        )
+    ).scalar_one() == 0
+
+
+def test_same_executor_replay_with_inconsistent_receipt_is_rejected(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account_id, request_id, _ = _consumed_mark_paid(
+        client,
+        db_session,
+        email="cliente.mark-paid.replay-inconsistent@example.com",
+        idempotency_key="mark-paid-replay-inconsistent-1",
+    )
+    # Preparacao do cenario: recibo persistido diverge do input aprovado
+    # (formato valido pelo CHECK, valor errado).
+    consumption = db_session.execute(
+        select(ApprovalConsumption).where(
+            ApprovalConsumption.approval_request_id == request_id
+        )
+    ).scalar_one()
+    consumption.input_digest = "0" * 64
+    db_session.commit()
+    before_counts = _counts(db_session)
+    before_snapshot = _consumption_snapshot(db_session, request_id)
+
+    response = _execute(
+        client,
+        account_id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    _assert_replay_rejected(
+        response,
+        status_code=409,
+        code="approval_conflict",
+        db_session=db_session,
+        account_id=account_id,
+        request_id=request_id,
+        before_counts=before_counts,
+        before_snapshot=before_snapshot,
+    )
