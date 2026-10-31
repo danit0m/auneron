@@ -551,10 +551,19 @@ def test_migration_chain_metadata_and_exact_model_match() -> None:
     ]
 
 
-def test_migration_source_has_no_foreign_key_or_cascade() -> None:
-    source = MIGRATION.read_text(encoding="utf-8")
-    for forbidden in ("ForeignKey", "CASCADE", "SET NULL", "ondelete"):
-        assert forbidden not in source
+def test_migrated_table_has_no_foreign_key_or_cascade(db_session: Session) -> None:
+    # Catalogo real do PG migrado: sem FK nao ha CASCADE/SET NULL possivel.
+    oid = db_session.scalar(
+        text("SELECT to_regclass('public.account_data_entry_audit_events')::oid")
+    )
+    assert oid is not None
+    foreign_keys = db_session.execute(
+        text("SELECT conname FROM pg_constraint WHERE conrelid = :oid AND contype = 'f'"),
+        {"oid": oid},
+    ).all()
+    db_session.rollback()
+    assert foreign_keys == []
+    assert not TABLE.foreign_keys
 
 
 def test_helper_only_adds_and_never_flushes_commits_or_queries() -> None:
