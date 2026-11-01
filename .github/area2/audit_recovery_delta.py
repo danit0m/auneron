@@ -19,6 +19,8 @@ service container against 127.0.0.1; the password goes only through the child en
 No Docker resource is created, removed, pruned or adopted. Cleanup drops ONLY the database
 this run created (same OID + run-marker comment) and TRUNCATEs the audit table ONLY when it
 holds exactly this run's row (id + marker + full fingerprint) and was empty before.
+Only the DROP of that owned database runs with a longer, bounded statement_timeout (TASK052,
+CLEANUP_DROP_BUDGET); every other statement keeps CONNECT_OPTIONS.
 Exit codes: 0 PASS / dry plan, 1 FAIL, 2 BLOCKED (gate, precondition or cleanup), 3 ABORTED.
 """
 
@@ -84,6 +86,13 @@ STREAM_CAP, DUMP_CAP, OUTPUT_LIMIT, POLL_SECONDS = 1024 ** 2, 64 * 1024 ** 2, 20
 TIMEOUTS = {"inspect": 30, "psql": 30, "pg_dump": 180, "pg_restore": 180}
 CONNECT_OPTIONS = "-c statement_timeout=30000 -c lock_timeout=5000 -c TimeZone=UTC"
 CONNECT_TIMEOUT = 5
+# TASK052: CI run 41263197684 cancelled DROP DATABASE at the 30 s default while the server log showed a slow
+# checkpoint; that correlation is the reason, not a proven root cause. The longer budget is set only on the
+# fresh autocommit connection that drops the owned target, after the ownership checks; still bounded.
+CLEANUP_DROP_STATEMENT_TIMEOUT_MS = 180000
+CLEANUP_DROP_BUDGET = {"statement_timeout_ms": CLEANUP_DROP_STATEMENT_TIMEOUT_MS,
+                       "scope": "drop of the owned recovery target only (dedicated autocommit session)",
+                       "default_connect_options": CONNECT_OPTIONS}
 SEED_REFERENCE = 990000001  # synthetic account/actor number; the table has no FK
 SEED_VALOR, SEED_VENCIMENTO = Decimal("123.45"), date(2026, 11, 30)
 FUNCTION_BODY_LIMIT, FACT_LIMIT = 4096, 16384  # schema_comparison diagnostic bounds (characters)
@@ -118,6 +127,8 @@ SQL_DELETE_PROBE = f"DELETE FROM {TABLE} WHERE id = %s"
 SQL_LOCK = f"LOCK TABLE {TABLE} IN ACCESS EXCLUSIVE MODE"
 SQL_TRUNCATE = f"TRUNCATE TABLE {TABLE}"  # the only TRUNCATE; guarded in truncate_own_row()
 SQL_READ_ONLY = "SET TRANSACTION READ ONLY"
+SQL_DROP_BUDGET = f"SET statement_timeout = {CLEANUP_DROP_STATEMENT_TIMEOUT_MS}"  # session only; drop_target()
+SQL_STATEMENT_TIMEOUT = "SELECT setting FROM pg_settings WHERE name = 'statement_timeout'"  # raw value in ms
 
 
 def _any_text(column_ref, literals, per_element):
@@ -619,9 +630,16 @@ def drop_target(ctx, db, ledger):
             return "ABSENT"
         if ledger.target_oid is None or found[0] != (ledger.target_oid, ledger.marker):
             return "REFUSED:target_not_owned"
+        # owned target only: raise this session's budget, read it back, then a single DROP (no retry)
+        conn.execute(SQL_DROP_BUDGET)
+        require(one(conn, SQL_STATEMENT_TIMEOUT) == (str(CLEANUP_DROP_STATEMENT_TIMEOUT_MS),),
+                "drop_budget_not_applied")
         conn.execute(f'DROP DATABASE "{ctx.target}"')
-        require(not rows(conn, SQL_DB_BY_NAME, (ctx.target,))
-                and one(conn, SQL_DB_BY_OID, (ledger.target_oid,))[0] == 0, "target_still_present")
+    with closing(db.open(SOURCE_DB)) as conn:  # absence verified on a fresh connection with the defaults
+        absent = (not rows(conn, SQL_DB_BY_NAME, (ctx.target,))
+                  and one(conn, SQL_DB_BY_OID, (ledger.target_oid,))[0] == 0)
+        conn.rollback()
+    require(absent, "target_still_present")
     return "DROPPED_VERIFIED"
 
 
@@ -683,7 +701,7 @@ def plan_summary():
             "head_revision": HEAD_REVISION, "tables": TABLE_COUNT, "table": TABLE, "checks": len(CHECKS),
             "index": INDEX, "function": FUNCTION, "trigger": TRIGGER, "service_image": PG_IMAGE,
             "target_database": "auneron_audit_recovery_<GITHUB_RUN_ID>_<GITHUB_RUN_ATTEMPT>",
-            "timeouts": TIMEOUTS, "dump_cap_bytes": DUMP_CAP, "stream_cap_bytes": STREAM_CAP,
+            "timeouts": TIMEOUTS, "cleanup_drop_budget": CLEANUP_DROP_BUDGET, "dump_cap_bytes": DUMP_CAP, "stream_cap_bytes": STREAM_CAP,
             "requires": "--execute --report $RUNNER_TEMP/area2-audit-recovery.json inside the gated CI job"}
 
 
@@ -703,7 +721,7 @@ def main(argv=None, environ=None, popen=subprocess.Popen, connect=None, clock=ti
         print(json.dumps({"outcome": "BLOCKED", "gate": str(error), "executed": False}))
         return 2
     redact = Redactor((ctx.password, environ.get("DATABASE_URL", "")))
-    report = {"task": "AREA2-TASK047", "executed": True, "steps": [],
+    report = {"task": "AREA2-TASK047", "executed": True, "steps": [], "cleanup_drop_budget": CLEANUP_DROP_BUDGET,
               "claim": "audit table/constraints/index/function+trigger/one row survive native dump/restore only"}
     run = Runner(redact, report["steps"], popen=popen, clock=clock, sleep=sleep, spool_dir=ctx.runner_temp,
                  forbidden=(ctx.password,))

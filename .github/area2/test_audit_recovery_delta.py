@@ -136,6 +136,7 @@ class FakeServer:
         self.counts = {"users": 0, "accounts": 0, "import_confirmation_receipts": 0}
         self.calls, self.dropped, self.truncated, self.next_oid, self.next_id = [], [], 0, 30000, 1
         self.hooks, self.fail = {}, set()
+        self.timeouts, self.connections = [], 0  # (connection no., db, sql, statement_timeout ms in effect)
         self.probe = lambda name, value, truth: (truth, truth)  # PostgreSQL agreeing with plain membership
 
     def new_db(self, oid, comment=None, facts=None):
@@ -146,19 +147,30 @@ class FakeServer:
     def connect(self, **kw):
         assert kw["hostaddr"] == "127.0.0.1" and kw["port"] == 5432 and kw["password"] == PASSWORD
         assert kw["options"] == rd.CONNECT_OPTIONS and kw["dbname"] in self.dbs
-        return FakeConn(self, kw["dbname"])
+        self.connections += 1
+        return FakeConn(self, kw["dbname"], self.connections, kw["autocommit"])
 
     def sql(self, kind):
         return [sql for _, sql in self.calls if sql.startswith(kind) or sql == kind]
 
 
 class FakeConn:
-    def __init__(self, server, db):
-        self.server, self.db = server, db
+    def __init__(self, server, db, number=0, autocommit=False):
+        self.server, self.db, self.number, self.autocommit = server, db, number, autocommit
+        self.statement_timeout = 30000  # what CONNECT_OPTIONS sets for every session
 
     def execute(self, sql, params=None):
         s, d = self.server, self.server.dbs[self.db]
         s.calls.append((self.db, sql))
+        s.timeouts.append((self.number, self.db, sql, self.statement_timeout))
+        if sql == rd.SQL_DROP_BUDGET:
+            if "set_budget" in s.fail:
+                raise FakePgError("42501", "permission denied to set parameter \"statement_timeout\"")
+            if "budget_ignored" not in s.fail:
+                self.statement_timeout = rd.CLEANUP_DROP_STATEMENT_TIMEOUT_MS
+            return Cursor([])
+        if sql == rd.SQL_STATEMENT_TIMEOUT:
+            return Cursor([(str(self.statement_timeout),)])
         facts = d["facts"]
         name = sql.split('"')[1] if '"' in sql else None
         if sql == rd.SQL_IDENTITY:
@@ -213,8 +225,13 @@ class FakeConn:
             return Cursor([])
         if sql.startswith("DROP DATABASE "):
             assert name != rd.SOURCE_DB
+            assert self.autocommit  # DROP DATABASE cannot run inside a transaction block
             if "drop" in s.fail:
                 raise FakePgError("55006", "database is being accessed by other users")
+            if "drop_timeout" in s.fail or ("slow_checkpoint" in s.fail and self.statement_timeout < 180000):
+                raise FakePgError("57014", "canceling statement due to statement timeout")
+            if "drop_noop" in s.fail:  # reports success but the database is still there
+                return Cursor([])
             s.dropped.append(name)
             del s.dbs[name]
             return Cursor([])
@@ -626,6 +643,135 @@ class FlowTests(unittest.TestCase):
         self.assertEqual((result, report["error"]), (1, "StepFailed: dump_not_custom_format"))
 
 
+class CleanupDropBudgetTests(unittest.TestCase):
+    """TASK052: a longer, bounded statement_timeout only on the session that drops the owned target."""
+
+    @staticmethod
+    def stmts(server, prefix):
+        return [t for t in server.timeouts if t[2].startswith(prefix)]
+
+    def assert_no_budget_and_no_drop(self, server):
+        self.assertEqual(self.stmts(server, rd.SQL_DROP_BUDGET), [])
+        self.assertEqual(self.stmts(server, "DROP DATABASE "), [])
+        self.assertEqual(server.dropped, [])
+        self.assertEqual({t[3] for t in server.timeouts}, {30000})
+
+    def assert_blocked_target_left(self, result, report, server):
+        self.assertEqual((result, report["outcome"], report["cleanup_status"]), (2, "BLOCKED", "BLOCKED"), report)
+        self.assertIn(TARGET, server.dbs)
+        self.assertEqual(report["cleanup"]["final_state"], "FAILED:StepFailed:target_present")
+        self.assertEqual((report["cleanup"]["source_audit_row"], report["cleanup"]["temp_files"]),
+                         ("TRUNCATED", "REMOVED"))
+
+    def test_budget_and_defaults_are_declared(self):
+        self.assertEqual(rd.CLEANUP_DROP_STATEMENT_TIMEOUT_MS, 180000)
+        self.assertEqual(rd.CONNECT_OPTIONS, "-c statement_timeout=30000 -c lock_timeout=5000 -c TimeZone=UTC")
+        self.assertEqual(rd.SQL_DROP_BUDGET, "SET statement_timeout = 180000")
+        self.assertEqual(rd.CLEANUP_DROP_BUDGET["statement_timeout_ms"], 180000)
+        self.assertEqual(rd.CLEANUP_DROP_BUDGET["default_connect_options"], rd.CONNECT_OPTIONS)
+        self.assertEqual(rd.plan_summary()["cleanup_drop_budget"], rd.CLEANUP_DROP_BUDGET)
+        self.assertEqual(rd.TIMEOUTS, {"inspect": 30, "psql": 30, "pg_dump": 180, "pg_restore": 180})
+        report = run_main()[2]
+        self.assertEqual(report["cleanup_drop_budget"], json.loads(json.dumps(rd.CLEANUP_DROP_BUDGET)))
+
+    def test_only_the_owned_target_drop_session_gets_the_longer_budget(self):
+        result, _, report, server, _, leftovers = run_main()
+        self.assertEqual((result, report["outcome"]), (0, "PASS"), report)
+        FlowTests.assert_cleaned(self, report, server, leftovers)
+        (budget,), (drop,) = self.stmts(server, rd.SQL_DROP_BUDGET), self.stmts(server, "DROP DATABASE ")
+        self.assertEqual(drop, (budget[0], rd.SOURCE_DB, f'DROP DATABASE "{TARGET}"', 180000))
+        # a fresh session: ownership lookup first, then the budget, its read-back and the single DROP
+        session = [(sql, ms) for n, _, sql, ms in server.timeouts if n == budget[0]]
+        self.assertEqual(session, [(rd.SQL_DB_BY_NAME, 30000), (rd.SQL_DROP_BUDGET, 30000),
+                                   (rd.SQL_STATEMENT_TIMEOUT, 180000), (drop[2], 180000)])
+        self.assertEqual({ms for n, _, _, ms in server.timeouts if n != budget[0]}, {30000})
+        verify = [t for t in server.timeouts if t[2] == rd.SQL_DB_BY_OID]
+        self.assertEqual(len(verify), 1)
+        self.assertGreater(verify[0][0], budget[0])  # absence checked on a later session with the defaults
+        self.assertEqual(verify[0][3], 30000)
+
+    def test_slow_checkpoint_drop_passes_only_with_the_budget(self):
+        server = FakeServer()
+        server.fail.add("slow_checkpoint")  # DROP cancelled under the 30 s default, completes under 180 s
+        result, _, report, server, _, leftovers = run_main(server=server)
+        self.assertEqual((result, report["outcome"]), (0, "PASS"), report)
+        FlowTests.assert_cleaned(self, report, server, leftovers)
+        server = FakeServer()
+        server.fail.update({"slow_checkpoint", "budget_ignored"})
+        result, _, report, server, _, _ = run_main(server=server)
+        self.assert_blocked_target_left(result, report, server)
+        self.assertEqual(report["cleanup"]["target_database"], "FAILED:StepFailed:drop_budget_not_applied")
+        self.assertEqual(self.stmts(server, "DROP DATABASE "), [])
+
+    def test_unowned_absent_or_uncreated_target_gets_no_budget_and_no_drop(self):
+        def comment(s):
+            s.dbs[TARGET]["comment"] = "replaced"
+
+        def oid(s):
+            s.dbs[TARGET]["oid"] = 1
+
+        def vanish(s):
+            del s.dbs[TARGET]
+        for hook, status in ((comment, "REFUSED:target_not_owned"), (oid, "REFUSED:target_not_owned"),
+                             (vanish, "ABSENT")):
+            with self.subTest(hook=hook.__name__):
+                server = FakeServer()
+                server.hooks["after_restore"] = lambda s=server, h=hook: h(s)
+                result, _, report, server, _, _ = run_main(server=server)
+                self.assertNotEqual(result, 0)
+                self.assertEqual(report["cleanup"]["target_database"], status)
+                self.assert_no_budget_and_no_drop(server)
+        server = FakeServer()
+        server.dbs[TARGET] = server.new_db(555, comment="someone else")
+        result, _, report, server, _, _ = run_main(server=server)
+        self.assertEqual((result, report["cleanup"]["target_database"]), (2, "NOT_CREATED"))
+        self.assert_no_budget_and_no_drop(server)
+        self.assertIn(TARGET, server.dbs)
+
+    def test_budget_setting_failure_blocks_without_drop(self):
+        for fail, status in (("set_budget", "FAILED:FakePgError:permission denied to set parameter "
+                                            "\"statement_timeout\""),
+                             ("budget_ignored", "FAILED:StepFailed:drop_budget_not_applied")):
+            with self.subTest(fail=fail):
+                server = FakeServer()
+                server.fail.add(fail)
+                result, _, report, server, _, _ = run_main(server=server)
+                self.assert_blocked_target_left(result, report, server)
+                self.assertEqual(report["cleanup"]["target_database"], status)
+                self.assertEqual(len(self.stmts(server, rd.SQL_DROP_BUDGET)), 1)
+                self.assertEqual(self.stmts(server, "DROP DATABASE "), [])
+
+    def test_drop_failure_under_the_budget_never_passes_and_is_not_retried(self):
+        for fail, status in (("drop", "FAILED:FakePgError:database is being accessed by other users"),
+                             ("drop_timeout", "FAILED:FakePgError:canceling statement due to statement timeout")):
+            with self.subTest(fail=fail):
+                server = FakeServer()
+                server.fail.add(fail)
+                result, _, report, server, _, _ = run_main(server=server)
+                self.assert_blocked_target_left(result, report, server)
+                self.assertEqual(report["cleanup"]["target_database"], status)
+                drops = self.stmts(server, "DROP DATABASE ")
+                self.assertEqual([ms for *_, ms in drops], [180000])
+                self.assertEqual(len(self.stmts(server, rd.SQL_DROP_BUDGET)), 1)
+
+    def test_drop_failure_keeps_a_failing_drill_failed(self):
+        server = FakeServer()
+        server.fail.add("drop_timeout")
+        server.hooks["after_restore"] = lambda: server.dbs[TARGET].update(update_rejected=False)
+        result, _, report, server, _, _ = run_main(server=server)
+        self.assertEqual((result, report["outcome"], report["cleanup_status"]), (1, "FAIL", "BLOCKED"))
+
+    def test_absence_is_still_verified_after_a_reported_drop(self):
+        server = FakeServer()
+        server.fail.add("drop_noop")
+        result, _, report, server, _, _ = run_main(server=server)
+        self.assert_blocked_target_left(result, report, server)
+        self.assertEqual(report["cleanup"]["target_database"], "FAILED:StepFailed:target_still_present")
+        (drop,) = self.stmts(server, "DROP DATABASE ")
+        lookups = [t for t in server.timeouts if t[2] == rd.SQL_DB_BY_NAME and t[0] > drop[0]]
+        self.assertTrue(lookups and all(ms == 30000 for *_, ms in lookups))
+
+
 class KnownCheckRenderingTests(unittest.TestCase):
     """TASK051: only the three exact pairs observed in CI run 41257863930 are tolerated."""
 
@@ -1022,6 +1168,19 @@ class StaticTests(unittest.TestCase):
                         for n in ast.walk(f) if isinstance(n, ast.Constant) and isinstance(n.value, str)
                         and "DROP DATABASE" in n.value})
         self.assertEqual(drops, ["drop_target"])
+
+    def test_drop_budget_is_scoped_and_nothing_escalates(self):
+        users = sorted({f.name for f in ast.walk(self.TREE) if isinstance(f, ast.FunctionDef)
+                        for n in ast.walk(f) if isinstance(n, ast.Name) and n.id == "SQL_DROP_BUDGET"})
+        self.assertEqual(users, ["drop_target"])
+        strings = [s.upper() for s in self.code_strings()]
+        text = " ".join(strings)
+        for word in ("PG_TERMINATE_BACKEND", "PG_CANCEL_BACKEND", "(FORCE)", "WITH (FORCE", "ALTER SYSTEM",
+                     "ALTER DATABASE", "ALTER ROLE", "SET LOCK_TIMEOUT", "STATEMENT_TIMEOUT = 0",
+                     "STATEMENT_TIMEOUT=0 ", "RESET ", "SET SESSION"):
+            self.assertNotIn(word, text)
+        self.assertEqual(sum("SET STATEMENT_TIMEOUT" in s for s in strings), 1)
+        self.assertEqual(sum("STATEMENT_TIMEOUT=30000" in s for s in strings), 1)
 
     def test_workflow_wiring(self):
         workflow = (HERE.parent / "workflows" / "backend-ci.yml").read_text(encoding="utf-8")
