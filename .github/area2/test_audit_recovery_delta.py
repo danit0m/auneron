@@ -401,6 +401,79 @@ class FlowTests(unittest.TestCase):
                 self.assertEqual((result, report["error"]), (1, f"StepFailed: {code}"))
                 self.assert_cleaned(report, server, leftovers)
 
+    def schema_differ(self, mutate):
+        server = FakeServer()
+        server.hooks["after_restore"] = lambda: mutate(server.dbs[TARGET]["facts"])
+        result, out, report, server, _, leftovers = run_main(server=server)
+        self.assertEqual((result, report["outcome"], report["error"]),
+                         (1, "FAIL", "StepFailed: schema_source_target_differ"), report)
+        self.assert_cleaned(report, server, leftovers)
+        self.assertNotIn("cleanup_status", report)
+        comparison = report["schema_comparison"]
+        self.assertFalse(comparison["equal"])
+        text = json.dumps(comparison)
+        self.assertNotIn(PASSWORD, out)
+        self.assertNotIn(report["seed"]["marker"], text)
+        self.assertNotIn('"valor"', text)
+        return comparison
+
+    def test_equal_schema_reports_equal_and_still_passes(self):
+        result, _, report, server, _, leftovers = run_main()
+        self.assertEqual((result, report["outcome"]), (0, "PASS"))
+        self.assertEqual(report["schema_comparison"], {"equal": True, "differing_keys": []})
+        self.assert_cleaned(report, server, leftovers)
+
+    def test_check_definition_difference_is_reported_verbatim(self):
+        name = sorted(rd.CHECKS)[0]
+
+        def redefine(f):
+            f["checks"] = [(n, d + " NOT VALID") if n == name else (n, d) for n, d in f["checks"]]
+        comparison = self.schema_differ(redefine)
+        self.assertEqual(comparison["differing_keys"], ["checks"])
+        detail = comparison["details"]["checks"]
+        self.assertEqual((detail["source_count"], detail["target_count"]), (22, 22))
+        self.assertEqual(detail["source_only"], [[name, f"CHECK ({name})"]])
+        self.assertEqual(detail["target_only"], [[name, f"CHECK ({name}) NOT VALID"]])
+        self.assertEqual(len(detail["source"]), 22)
+        self.assertNotIn("function_bodies", comparison)
+
+    def test_function_hash_difference_includes_only_bounded_function_bodies(self):
+        changed = FUNCTION_SRC.replace("BEGIN", "BEGIN NULL;")
+        comparison = self.schema_differ(lambda f: f.update(function=[("plpgsql", "trigger", changed)]))
+        self.assertEqual(comparison["differing_keys"], ["function"])
+        bodies = comparison["function_bodies"]
+        self.assertEqual((bodies["name"], bodies["limit_chars"]), (rd.FUNCTION, 4096))
+        self.assertEqual(bodies["source"], [{"text": FUNCTION_SRC, "chars": len(FUNCTION_SRC), "truncated": False}])
+        self.assertEqual(bodies["target"], [{"text": changed, "chars": len(changed), "truncated": False}])
+        self.assertNotEqual(comparison["details"]["function"]["source"][0][2],
+                            comparison["details"]["function"]["target"][0][2])
+
+    def test_long_function_body_is_truncated_with_indicator(self):
+        long_src = FUNCTION_SRC + "-- " + "x" * 5000
+        comparison = self.schema_differ(lambda f: f.update(function=[("plpgsql", "trigger", long_src)]))
+        target = comparison["function_bodies"]["target"][0]
+        self.assertEqual((len(target["text"]), target["chars"], target["truncated"]), (4096, len(long_src), True))
+        self.assertEqual(target["text"], long_src[:4096])
+
+    def test_multiple_differing_keys_are_all_listed(self):
+        def two(f):
+            f["index"] = [(f["index"][0][0] + " WHERE true",)]
+            f["trigger"] = [("O", rd.TRIGGER_TYPE, rd.FUNCTION), ("O", rd.TRIGGER_TYPE, rd.FUNCTION)]
+        server = FakeServer()
+        server.hooks["after_restore"] = lambda: two(server.dbs[TARGET]["facts"])
+        result, _, report, server, _, leftovers = run_main(server=server)
+        # check_schema still runs first after the diagnostic is recorded: target_index fails the run
+        self.assertEqual((result, report["error"]), (1, "StepFailed: target_index"))
+        self.assertEqual(report["schema_comparison"]["differing_keys"], ["index", "trigger"])
+        self.assert_cleaned(report, server, leftovers)
+
+    def test_compare_schema_bounds_large_facts(self):
+        source = {"checks": [["c", "x" * 20000]]}
+        detail = rd.compare_schema(source, {"checks": []}, [], [])["details"]["checks"]
+        self.assertTrue(detail["source"]["truncated"])
+        self.assertEqual(len(detail["source"]["json_prefix"]), rd.FACT_LIMIT)
+        self.assertEqual(detail["target"], [])
+
     def test_unexpected_source_row_refuses_truncate(self):
         server = FakeServer()
         server.hooks["after_dump"] = lambda: server.dbs[rd.SOURCE_DB]["rows"].append(

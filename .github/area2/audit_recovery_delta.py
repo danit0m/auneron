@@ -84,6 +84,7 @@ CONNECT_OPTIONS = "-c statement_timeout=30000 -c lock_timeout=5000 -c TimeZone=U
 CONNECT_TIMEOUT = 5
 SEED_REFERENCE = 990000001  # synthetic account/actor number; the table has no FK
 SEED_VALOR, SEED_VENCIMENTO = Decimal("123.45"), date(2026, 11, 30)
+FUNCTION_BODY_LIMIT, FACT_LIMIT = 4096, 16384  # schema_comparison diagnostic bounds (characters)
 
 SQL_IDENTITY = ("SELECT current_database()::text, (SELECT version_num FROM alembic_version), "
                 "(SELECT count(*) FROM information_schema.tables "
@@ -369,15 +370,47 @@ def rejected(conn, sql, params):
     return False
 
 
-def schema_facts(conn):
+def schema_facts(conn, bodies=None):
+    """Catalog facts only (no rows). ``bodies`` collects the raw source of FUNCTION, kept out of the facts."""
+    functions = rows(conn, SQL_FUNCTION, (FUNCTION,))
+    if bodies is not None:
+        bodies.extend(src for _, _, src in functions)
     return {
         "columns": [r[0] for r in rows(conn, SQL_COLUMNS, (TABLE,))],
         "checks": [list(r) for r in rows(conn, SQL_CHECKS)],
         "index": [r[0] for r in rows(conn, SQL_INDEX, (TABLE, INDEX))],
-        "function": [[lang, ret, sha256_text(src), APPEND_ONLY_MESSAGE in src]
-                     for lang, ret, src in rows(conn, SQL_FUNCTION, (FUNCTION,))],
+        "function": [[lang, ret, sha256_text(src), APPEND_ONLY_MESSAGE in src] for lang, ret, src in functions],
         "trigger": [list(r) for r in rows(conn, SQL_TRIGGER, (TRIGGER,))],
     }
+
+
+def _bounded_json(value, limit=FACT_LIMIT):
+    text = json.dumps(value, default=str)
+    return value if len(text) <= limit else {"truncated": True, "chars": len(text), "json_prefix": text[:limit]}
+
+
+def _bounded_body(src, limit=FUNCTION_BODY_LIMIT):
+    return {"text": src[:limit], "chars": len(src), "truncated": len(src) > limit}
+
+
+def compare_schema(source, target, source_bodies, target_bodies):
+    """Diagnostic only (TASK050): reports which catalog facts differ, verbatim and bounded. It never decides
+    the outcome; the strict ``target_facts == source_facts`` require stays the gate."""
+    keys = sorted(set(source) | set(target))
+    differing = [k for k in keys if source.get(k) != target.get(k)]
+    comparison = {"equal": source == target, "differing_keys": differing}
+    if differing:
+        comparison["details"] = {k: {
+            "source": _bounded_json(source.get(k)), "target": _bounded_json(target.get(k)),
+            "source_count": len(source.get(k) or []), "target_count": len(target.get(k) or []),
+            "source_only": _bounded_json([x for x in source.get(k) or [] if x not in (target.get(k) or [])]),
+            "target_only": _bounded_json([x for x in target.get(k) or [] if x not in (source.get(k) or [])]),
+        } for k in differing}
+    if "function" in differing:  # raw body of FUNCTION only; no other function or object is read
+        comparison["function_bodies"] = {"name": FUNCTION, "limit_chars": FUNCTION_BODY_LIMIT,
+                                         "source": [_bounded_body(s) for s in source_bodies],
+                                         "target": [_bounded_body(s) for s in target_bodies]}
+    return comparison
 
 
 def check_schema(facts, where):
@@ -414,7 +447,8 @@ def drill(ctx, db, run, ledger, report, envs):
         counts = one(conn, SQL_COUNTS)
         block(all(c == 0 for c in counts), "source_not_empty_ci_baseline")
         block(not rows(conn, SQL_DB_BY_NAME, (ctx.target,)), "target_preexists")
-        source_facts = schema_facts(conn)
+        source_bodies = []
+        source_facts = schema_facts(conn, source_bodies)
         conn.rollback()
     docker_system = run("system_identifier", exec_argv(ctx, "psql", SOURCE_DB, "-X", "-v", "ON_ERROR_STOP=1",
                                                        "-tAc", SQL_SYSTEM_ID),
@@ -464,7 +498,9 @@ def drill(ctx, db, run, ledger, report, envs):
     with closing(db.open(ctx.target)) as conn:
         current, revision, tables = one(conn, SQL_IDENTITY)
         require((current, revision, tables) == (ctx.target, HEAD_REVISION, TABLE_COUNT), "target_identity")
-        target_facts = schema_facts(conn)
+        target_bodies = []
+        target_facts = schema_facts(conn, target_bodies)
+        report["schema_comparison"] = compare_schema(source_facts, target_facts, source_bodies, target_bodies)
         check_schema(target_facts, "target")
         require(target_facts == source_facts, "schema_source_target_differ")
         target_rows = rows(conn, SQL_ROWS)
