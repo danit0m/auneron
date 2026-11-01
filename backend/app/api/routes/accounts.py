@@ -48,6 +48,13 @@ from app.schemas.account import AccountMarkPaidExecuteRequest
 from app.services.account_mark_paid_execution_service import (
     AccountMarkPaidExecutionService,
 )
+from app.services.account_data_entry_audit import (
+    audit_actor,
+    record_create,
+    record_delete,
+    record_update,
+    snapshot,
+)
 
 account_logger = logging.getLogger(
     "auneron.account"
@@ -68,14 +75,6 @@ read_dependencies = [
     ),
 ]
 
-manage_dependencies = [
-    Depends(
-        require_permission(
-            "clients.manage"
-        )
-    ),
-]
-
 
 def _writers_busy() -> HTTPException:
     # Só para falha de aquisição do lock (antes de qualquer commit); o
@@ -90,7 +89,9 @@ def _writers_busy() -> HTTPException:
 # Referencias duraveis de governanca a uma Account. account_events e
 # account_vencimento_changes tem FK ON DELETE CASCADE (o DELETE apagaria o
 # historico); as demais guardam o id sem FK (o DELETE as deixaria orfas).
-# Apenas checagem: sem DDL, sem soft delete, sem evento de auditoria novo.
+# Apenas checagem: sem DDL, sem soft delete. account_data_entry_audit_events
+# fica FORA de proposito: senao toda conta criada manualmente seria
+# impossivel de excluir.
 GOVERNED_HISTORY_COLUMNS = (
     AccountEvent.account_id,
     AccountVencimentoChange.account_id,
@@ -201,11 +202,16 @@ def create_account(
     if account_identity_exists(db, Account, payload.cliente, payload.valor, payload.vencimento):
         raise HTTPException(status_code=409, detail='Ja existe conta com este cliente, valor e vencimento.')
 
+    actor = audit_actor(authenticated)
+
     account = Account(
         **payload.model_dump()
     )
 
     db.add(account)
+    # flush so para obter o id; conta e auditoria entram no mesmo commit.
+    db.flush()
+    record_create(db, account, actor, channel="manual_api")
     db.commit()
     db.refresh(account)
 
@@ -269,6 +275,8 @@ def update_account(
     except AccountWritersBusy:
         raise _writers_busy() from None
 
+    actor = audit_actor(authenticated)
+
     account = db.execute(
         select(Account)
         .where(Account.id == account_id)
@@ -294,6 +302,7 @@ def update_account(
 
     previous_status = account.status
     previous_vencimento = account.vencimento
+    before = snapshot(account)
 
     for campo, valor in dados.items():
         setattr(
@@ -330,6 +339,9 @@ def update_account(
             )
         )
 
+    # Sem mudanca efetiva: nenhuma linha de auditoria.
+    record_update(db, before, account, actor)
+
     db.commit()
     db.refresh(account)
 
@@ -339,16 +351,20 @@ def update_account(
 @router.delete(
     "/{account_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=manage_dependencies,
 )
 def delete_account(
     account_id: int,
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("clients.manage")
+    ),
     db: Session = Depends(get_db),
 ):
     try:
         lock_account_identity(db)
     except AccountWritersBusy:
         raise _writers_busy() from None
+
+    actor = audit_actor(authenticated)
 
     # Mesma ordem do PUT: lock de identidade, depois a linha da conta. Um
     # executor governado que segura a linha termina antes desta checagem.
@@ -370,6 +386,8 @@ def delete_account(
             detail="Conta possui histórico governado e não pode ser excluída.",
         )
 
+    # Mesmo commit: se o DELETE falhar (ex.: RESTRICT), a auditoria some junto.
+    record_delete(db, account, actor)
     db.delete(account)
     db.commit()
 

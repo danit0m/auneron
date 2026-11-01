@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from app.core.account_writers_busy import AccountWritersBusy
 from app.core.account_writers_busy import busy_detail
 from app.core.account_writers_busy import busy_headers
+from app.core.authentication import AuthenticatedSession
+from app.core.authentication import require_permission
 from app.database.database import get_db
 from app.services.import_service import import_clients
 
@@ -35,14 +37,19 @@ UPLOAD_DIR.mkdir(
 async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    # Mesma permissão do include_router (main.py); aqui só para obter o
+    # ator humano da sessão para a auditoria.
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("imports.execute")
+    ),
 ):
     try:
-        return await run_in_threadpool(_upload_file_sync, file, db)
+        return await run_in_threadpool(_upload_file_sync, file, db, authenticated)
     finally:
         await file.close()
 
 
-def _upload_file_sync(file: UploadFile, db: Session):
+def _upload_file_sync(file: UploadFile, db: Session, authenticated: AuthenticatedSession):
     temp_path: Path | None = None
 
     try:
@@ -70,7 +77,12 @@ def _upload_file_sync(file: UploadFile, db: Session):
             temp_path = Path(buffer.name)
             _copy_bounded(file.file, buffer)
 
-        result = import_clients(str(temp_path), db)
+        result = import_clients(
+            str(temp_path),
+            db,
+            actor_user_id=authenticated.user.id,
+            auth_session_id=authenticated.session.id,
+        )
 
         return {
             "arquivo": original_name,

@@ -101,6 +101,7 @@ def _clean_database() -> None:
                     auth_sessions,
                     users,
                     knowledge,
+                    account_data_entry_audit_events,
                     accounts
                 RESTART IDENTITY
                 CASCADE

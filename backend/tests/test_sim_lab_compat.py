@@ -12,6 +12,7 @@ sucedido do `Settings` sozinho nao e prova de compatibilidade operacional.
 """
 
 import ast
+import hashlib
 import re
 from pathlib import Path
 
@@ -33,6 +34,11 @@ FROZEN_LAB_COMMIT = "d100ce23462989dd1047ceabf0a30dc7e5b0d62d"
 FROZEN_LAB_HEAD = "5c1e7a90d2b4"
 NON_SETTINGS_PROFILE_KEYS = {"TZ"}                      # variavel do sistema operacional, nao do Settings
 ADDITIVE_MIGRATION_OPS = {"create_table", "create_index"}
+# excecao revisada (AREA2-TASK049): revisao -> (pai, SHA-256 do arquivo com CRLF->LF); ver is_additive_migration
+REVIEWED_SQL_MIGRATIONS = {
+    "c3a8f1e6d204": ("b428d1a6c903", "b6ca34d0d157319f7bae0c406a796e6c3a8d0abf97e0a570e7856b02c930afe2"),
+}
+REVIEWED_SQL_OPS = ADDITIVE_MIGRATION_OPS | {"execute"}
 LLM_TOKENS = ("openai", "anthropic", "ollama", "litellm", "langchain", "gemini", "claude_api", "llm_api")
 PROD_DATABASE_URL = "postgresql+psycopg://sim:Zx9qLm4Tn7Vb2Kc8Rw5Yd1@sim-postgres:5432/auneron_sim"
 PROD_API_KEY = "Q7d9R2m8L4x1P6v3N5k0T8z2B9c4W7y1"
@@ -266,6 +272,59 @@ def upgrade_ops(path: Path) -> set[str]:
     return ops
 
 
+def migration_sha256(path: Path) -> str:
+    """SHA-256 dos bytes do arquivo; so CRLF->LF e normalizado (checkout Windows)."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def is_additive_migration(revision: str, parents: tuple[str, ...], path: Path) -> bool:
+    """Aditiva = so create_table/create_index. Unica excecao: SQL bruto revisado, aceito apenas na revisao
+    fixada em REVIEWED_SQL_MIGRATIONS, com o pai fixado, exatamente as ops REVIEWED_SQL_OPS e os bytes
+    revisados (o hash amarra o SQL, os nomes de tabela/funcao/trigger e os metadados). Revisao
+    desconhecida, byte alterado ou op destrutiva continuam recusados; SQL arbitrario nao e liberado."""
+    ops = upgrade_ops(path)
+
+    if ops <= ADDITIVE_MIGRATION_OPS:
+        return True
+
+    pinned = REVIEWED_SQL_MIGRATIONS.get(revision)
+    return (
+        pinned is not None
+        and ops == REVIEWED_SQL_OPS
+        and parents == (pinned[0],)
+        and migration_sha256(path) == pinned[1]
+    )
+
+
+def upgrade_execute_sql(path: Path) -> list[str]:
+    """Texto de cada op.execute do upgrade, resolvendo so constantes str do modulo (sem parser de SQL)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    constants = {
+        node.targets[0].id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+    }
+    upgrade = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "upgrade")
+    statements = []
+
+    for node in ast.walk(upgrade):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "op"
+            and node.func.attr == "execute"
+        ):
+            (arg,) = node.args
+            parts = arg.values if isinstance(arg, ast.JoinedStr) else [arg]
+            statements.append(
+                "".join(part.value if isinstance(part, ast.Constant) else constants[part.value.id] for part in parts)
+            )
+
+    return statements
+
+
 def test_the_alembic_graph_has_a_single_head_that_extends_the_frozen_lab_head():
     revisions = read_revisions()
     parents = {p for ps, _ in revisions.values() for p in ps}
@@ -288,7 +347,7 @@ def test_migrations_after_the_frozen_head_are_additive_only():
     for revision in after:
         ops = upgrade_ops(revisions[revision][1])
         assert ops, revision
-        assert ops <= ADDITIVE_MIGRATION_OPS, (revision, sorted(ops - ADDITIVE_MIGRATION_OPS))
+        assert is_additive_migration(revision, *revisions[revision]), (revision, sorted(ops - ADDITIVE_MIGRATION_OPS))
 
 
 def test_the_additive_detector_would_catch_a_destructive_migration(tmp_path):
@@ -310,3 +369,64 @@ def test_the_ancestry_detector_rejects_unrelated_chains():
 
     assert ancestors_after(unrelated, "b", "a") == ["b"]
     assert read_revisions()[FROZEN_LAB_HEAD][0], "o head congelado do laboratorio deveria ter pai"
+
+
+# ---------------------------------------------------------------------------- excecao revisada de SQL (AREA2-TASK049)
+def test_the_reviewed_sql_only_creates_a_new_function_and_a_trigger_on_its_own_new_table():
+    parents, path = read_revisions()["c3a8f1e6d204"]
+    source = path.read_text(encoding="utf-8")
+
+    assert is_additive_migration("c3a8f1e6d204", parents, path)
+    assert upgrade_ops(path) == REVIEWED_SQL_OPS
+    assert "TABLE = 'account_data_entry_audit_events'" in source
+    assert "op.create_table(\n        TABLE," in source             # a tabela do trigger nasce nesta revisao
+    assert upgrade_execute_sql(path) == [
+        "CREATE FUNCTION account_data_entry_audit_append_only() RETURNS trigger LANGUAGE plpgsql "
+        "AS $$ BEGIN RAISE EXCEPTION 'account_data_entry_audit_events is append-only'; END $$",
+        "CREATE TRIGGER trg_account_data_entry_audit_append_only BEFORE UPDATE OR DELETE "
+        "ON account_data_entry_audit_events FOR EACH ROW EXECUTE FUNCTION account_data_entry_audit_append_only()",
+    ]
+
+
+def test_the_reviewed_sql_exception_is_pinned_to_the_exact_reviewed_bytes(tmp_path):
+    parents, path = read_revisions()["c3a8f1e6d204"]
+    source = path.read_bytes().replace(b"\r\n", b"\n")
+
+    crlf = tmp_path / "crlf.py"
+    crlf.write_bytes(source.replace(b"\n", b"\r\n"))
+    assert is_additive_migration("c3a8f1e6d204", parents, crlf)    # checkout Windows nao falha em falso
+
+    for altered in (
+        source.replace(b"CREATE FUNCTION {FUNCTION}()", b"CREATE OR REPLACE FUNCTION {FUNCTION}()"),
+        source.replace(b"CREATE FUNCTION {FUNCTION}()", b"DROP TABLE accounts; CREATE FUNCTION {FUNCTION}()"),
+        source.replace(b"BEFORE UPDATE OR DELETE", b"BEFORE DELETE"),
+        source + b"\n",
+    ):
+        assert altered != source
+        changed = tmp_path / "changed.py"
+        changed.write_bytes(altered)
+        assert upgrade_ops(changed) == REVIEWED_SQL_OPS
+        assert not is_additive_migration("c3a8f1e6d204", parents, changed)
+
+    assert not is_additive_migration("c3a8f1e6d204", (FROZEN_LAB_HEAD,), path)   # pai diferente do revisado
+
+
+def test_raw_sql_and_destructive_ops_stay_rejected_outside_the_reviewed_exception(tmp_path):
+    def migration(revision: str, body: str) -> Path:
+        path = tmp_path / f"{revision}_{len(list(tmp_path.iterdir()))}.py"
+        path.write_text(f'revision = "{revision}"\ndown_revision = "b428d1a6c903"\n\n\ndef upgrade():\n{body}', encoding="utf-8")
+        return path
+
+    sql = '    op.create_table("n")\n    op.create_index("i", "n", ["c"])\n    op.execute("CREATE FUNCTION f() RETURNS trigger")\n'
+    unknown = migration("zz", sql)
+    impostor = migration("c3a8f1e6d204", sql)
+    destructive = migration("c3a8f1e6d204", sql + '    op.drop_column("t", "c")\n')
+    ordinary_destructive = migration("zz", '    op.create_table("n")\n    op.drop_table("t")\n')
+    ordinary = migration("zz", '    op.create_table("n")\n    op.create_index("i", "n", ["c"])\n')
+
+    assert not is_additive_migration("zz", ("b428d1a6c903",), unknown)               # revisao sem revisao humana
+    assert not is_additive_migration("c3a8f1e6d204", ("b428d1a6c903",), impostor)    # bytes nao revisados
+    assert not is_additive_migration("c3a8f1e6d204", ("b428d1a6c903",), destructive)
+    assert not is_additive_migration("zz", ("b428d1a6c903",), ordinary_destructive)
+    assert is_additive_migration("zz", ("b428d1a6c903",), ordinary)                  # comportamento antigo
+    assert ADDITIVE_MIGRATION_OPS == {"create_table", "create_index"}                # execute nao virou aditivo

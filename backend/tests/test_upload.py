@@ -1,5 +1,17 @@
+import hashlib
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.account import Account
+from app.models.account_data_entry_audit_event import AccountDataEntryAuditEvent
+from app.models.user import User
+
+# Mesmo usuário privilegiado criado pelo conftest (fixture client).
+TEST_CLIENT_EMAIL = "developer.test@example.com"
 
 
 def upload_csv(
@@ -171,3 +183,77 @@ def test_25o_import_rejects_non_aberto_initial_status_source_contract() -> None:
     assert 'if status and status != "aberto":' in source
     assert 'status = "aberto"' in source
     assert 'status="aberto"' in source
+
+
+# ---- F1: duplicata normalizada dentro do mesmo arquivo legado ----------
+
+# Linha 2 inválida com a mesma identidade (não reserva a chave); linha 3
+# aceita; linha 4 equivalente pela identidade v1 (espaços, caixa, valor
+# decimal e formato de data diferentes) => duplicado, não importado.
+F1_CSV = (
+    "cliente,valor,vencimento,status\n"
+    "Cliente F1 Sintetico,1500.00,2026-12-31,pendente\n"
+    "Cliente F1 Sintetico,1500.00,2026-12-31,aberto\n"
+    "  CLIENTE   f1 SINTETICO ,1500,31/12/2026,\n"
+)
+
+
+def _counts(db_session: Session) -> tuple[int, int]:
+    result = (
+        db_session.scalar(select(func.count()).select_from(Account)),
+        db_session.scalar(
+            select(func.count()).select_from(AccountDataEntryAuditEvent)
+        ),
+    )
+    db_session.rollback()
+    return result
+
+
+def test_upload_f1_in_file_equivalent_rows_insert_once(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    response = upload_csv(client, F1_CSV)
+
+    assert response.status_code == 200
+    result = response.json()["resultado"]
+    assert result["summary"] == {
+        "importados": 1,
+        "duplicados": 1,
+        "erros": 1,
+        "valor_total": pytest.approx(1500.0),
+    }
+    assert [d["linha"] for d in result["detalhes_erros"]] == [2]
+    assert _counts(db_session) == (1, 1)
+
+    event = db_session.execute(select(AccountDataEntryAuditEvent)).scalar_one()
+    account = db_session.execute(select(Account)).scalar_one()
+    user = db_session.execute(
+        select(User).where(User.email == TEST_CLIENT_EMAIL)
+    ).scalar_one()
+    db_session.rollback()
+
+    assert account.cliente == "Cliente F1 Sintetico"
+    assert (event.operation, event.channel) == ("create", "legacy_csv_upload")
+    assert event.account_reference == account.id
+    # Compatibilidade de ator: o usuário da sessão do fixture, sem fallback.
+    assert event.actor_user_id == user.id
+    assert event.actor_reference == f"user:{user.id}"
+    assert event.auth_session_id is not None
+    assert event.source_row == 3
+    assert event.source_sha256 == hashlib.sha256(F1_CSV.encode("utf-8")).hexdigest()
+
+
+def test_upload_f1_existing_db_duplicate_adds_no_account_or_audit(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    assert upload_csv(client, F1_CSV).status_code == 200
+    assert _counts(db_session) == (1, 1)
+
+    response = upload_csv(client, F1_CSV)
+
+    assert response.status_code == 200
+    summary = response.json()["resultado"]["summary"]
+    assert (summary["importados"], summary["duplicados"], summary["erros"]) == (0, 2, 1)
+    assert _counts(db_session) == (1, 1)
