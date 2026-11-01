@@ -10,6 +10,8 @@ It proves ONLY that the table account_data_entry_audit_events (24 columns, 22 na
 its index, its function and enabled trigger, and one synthetic row survive a native
 pg_dump/pg_restore into a newly created database at head c3a8f1e6d204 (38 tables), and that
 UPDATE/DELETE stay rejected there. The area1 full recovery and Layer B are NOT repeated.
+Catalog facts must match strictly, except three named CHECKs whose exact source/target texts are a frozen
+allowlist (pg_restore re-renders the varchar ANY array cast); see KNOWN_CHECK_RENDERINGS.
 
 psycopg is imported lazily (execute only). Native tools run through ``docker exec`` in the
 service container against 127.0.0.1; the password goes only through the child env
@@ -115,6 +117,44 @@ SQL_UPDATE_PROBE = f"UPDATE {TABLE} SET request_id = request_id WHERE id = %s"
 SQL_DELETE_PROBE = f"DELETE FROM {TABLE} WHERE id = %s"
 SQL_LOCK = f"LOCK TABLE {TABLE} IN ACCESS EXCLUSIVE MODE"
 SQL_TRUNCATE = f"TRUNCATE TABLE {TABLE}"  # the only TRUNCATE; guarded in truncate_own_row()
+SQL_READ_ONLY = "SET TRANSACTION READ ONLY"
+
+
+def _any_text(column_ref, literals, per_element):
+    """Exact pg_get_constraintdef text of ``(column)::text = ANY (...)`` over varchar literals, in one of the
+    two renderings seen in CI run 41257863930: whole-array cast to text[] (migrated source) or per-element
+    cast to text (pg_restore target). Built only from the frozen constants below, never from catalog input."""
+    if per_element:
+        array = "ARRAY[" + ", ".join(f"('{v}'::character varying)::text" for v in literals) + "]"
+    else:
+        array = "(ARRAY[" + ", ".join(f"'{v}'::character varying" for v in literals) + "])::text[]"
+    return f"(({column_ref})::text = ANY ({array}))"
+
+
+# TASK051: the ONLY tolerated source/target CHECK difference. Each name maps to its exact (source, target)
+# definition pair; any other difference (literal, operator, type, column, name, presence, reversed or
+# otherwise reformatted text) still fails schema_source_target_differ. Equal definitions pass as before.
+KNOWN_CHECK_LITERALS = {
+    "ck_account_data_entry_audit_channel": ("channel", ("manual_api", "legacy_csv_upload")),
+    "ck_account_data_entry_audit_operation": ("operation", ("create", "update", "delete")),
+    "ck_account_data_entry_audit_status": ("status_at_operation", ("aberto", "atrasado", "pago")),
+}
+KNOWN_CHECK_RENDERINGS = {
+    name: (f"CHECK ({_any_text(column, literals, False)})", f"CHECK ({_any_text(column, literals, True)})")
+    for name, (column, literals) in KNOWN_CHECK_LITERALS.items()}
+# Read-only truth-value probes: both renderings must agree with plain membership on fixed trusted values.
+# Finite probes support, but do not prove, equivalence; the exact allowlist above is the boundary.
+PROBE_REF = "%s::character varying"
+PROBE_OUTSIDE = ("", " ", "unknown", "manual-api", "pagó", "créate", "аberto")
+CHECK_PROBE_SQL = {name: f"SELECT {_any_text(PROBE_REF, literals, False)}, {_any_text(PROBE_REF, literals, True)}"
+                   for name, (_, literals) in KNOWN_CHECK_LITERALS.items()}
+
+
+def probe_values(literals):
+    return (*literals, *(v.upper() for v in literals), *(f"{v} " for v in literals), *PROBE_OUTSIDE, None)
+
+
+PROBE_COUNT = sum(len(probe_values(literals)) for _, literals in KNOWN_CHECK_LITERALS.values())  # 48
 
 
 class GateError(Exception):
@@ -395,7 +435,7 @@ def _bounded_body(src, limit=FUNCTION_BODY_LIMIT):
 
 def compare_schema(source, target, source_bodies, target_bodies):
     """Diagnostic only (TASK050): reports which catalog facts differ, verbatim and bounded. It never decides
-    the outcome; the strict ``target_facts == source_facts`` require stays the gate."""
+    the outcome; ``facts_match`` (strict equality plus the TASK051 exact allowlist) is the gate."""
     keys = sorted(set(source) | set(target))
     differing = [k for k in keys if source.get(k) != target.get(k)]
     comparison = {"equal": source == target, "differing_keys": differing}
@@ -411,6 +451,44 @@ def compare_schema(source, target, source_bodies, target_bodies):
                                          "source": [_bounded_body(s) for s in source_bodies],
                                          "target": [_bounded_body(s) for s in target_bodies]}
     return comparison
+
+
+def facts_match(source, target):
+    """TASK051 gate: every fact is strictly equal, except that a CHECK listed in KNOWN_CHECK_RENDERINGS may
+    differ by exactly its frozen (source, target) pair. Returns (matched, names accepted via that pair)."""
+    if set(source) != set(target) or any(source[k] != target[k] for k in source if k != "checks"):
+        return False, []
+    src, tgt = source.get("checks"), target.get("checks")
+    if not (isinstance(src, list) and isinstance(tgt, list) and len(src) == len(tgt)):
+        return False, []
+    accepted = []
+    for s, t in zip(src, tgt):
+        if s == t:
+            continue
+        if not (isinstance(s, (list, tuple)) and isinstance(t, (list, tuple)) and len(s) == len(t) == 2
+                and s[0] == t[0] and KNOWN_CHECK_RENDERINGS.get(s[0]) == (s[1], t[1])):
+            return False, []
+        accepted.append(s[0])
+    return True, accepted
+
+
+def probe_check_renderings(conn):
+    """Read-only transaction; one parameterised SELECT per fixed value; no table, no catalog text used."""
+    conn.rollback()
+    conn.execute(SQL_READ_ONLY)
+    count, mismatches = 0, []
+    for name in sorted(CHECK_PROBE_SQL):
+        literals = KNOWN_CHECK_LITERALS[name][1]
+        for value in probe_values(literals):
+            src, tgt = one(conn, CHECK_PROBE_SQL[name], (value, value))
+            expected = None if value is None else value in literals
+            count += 1
+            if not (src is expected and tgt is expected):
+                mismatches.append({"check": name, "value": value, "expected": expected, "source_form": src,
+                                   "target_form": tgt})
+    conn.rollback()
+    return {"count": count, "expected_count": PROBE_COUNT, "passed": count - len(mismatches),
+            "mismatches": mismatches}
 
 
 def check_schema(facts, where):
@@ -500,9 +578,17 @@ def drill(ctx, db, run, ledger, report, envs):
         require((current, revision, tables) == (ctx.target, HEAD_REVISION, TABLE_COUNT), "target_identity")
         target_bodies = []
         target_facts = schema_facts(conn, target_bodies)
-        report["schema_comparison"] = compare_schema(source_facts, target_facts, source_bodies, target_bodies)
+        comparison = compare_schema(source_facts, target_facts, source_bodies, target_bodies)
+        matched, accepted = facts_match(source_facts, target_facts)
+        # "equal" stays the raw comparison; acceptance of known renderings is reported separately
+        comparison["accepted_known_check_renderings"] = accepted
+        comparison["decision"] = ("EQUAL" if comparison["equal"] else
+                                  "EQUAL_EXCEPT_KNOWN_CHECK_RENDERINGS" if matched else "DIFFERENT")
+        report["schema_comparison"] = comparison
         check_schema(target_facts, "target")
-        require(target_facts == source_facts, "schema_source_target_differ")
+        report["check_rendering_probes"] = probes = probe_check_renderings(conn)
+        require(matched, "schema_source_target_differ")
+        require(probes["count"] == PROBE_COUNT and probes["mismatches"] == [], "check_rendering_probe_mismatch")
         target_rows = rows(conn, SQL_ROWS)
         require(own_row(target_rows, ledger), "target_row_not_restored_exactly")
         conn.rollback()

@@ -25,6 +25,82 @@ TARGET = "auneron_audit_recovery_41203778900_1"
 FUNCTION_SRC = " BEGIN RAISE EXCEPTION 'account_data_entry_audit_events is append-only'; END "
 
 
+# Verbatim from the CI run 41257863930 report (area2-audit-recovery.json, schema_comparison.details.checks);
+# embedded so the tests never read an external artifact.
+_CK = "ck_account_data_entry_audit_"
+_HEX = "CHECK ((({0} IS NULL) OR (({0})::text ~ '^[0-9a-f]{{64}}$'::text)))"
+ARTIFACT_SOURCE_CHECKS = [
+    (_CK + "account_reference", "CHECK ((account_reference > 0))"),
+    (_CK + "actor_reference", "CHECK (((actor_reference)::text = ('user:'::text || (actor_user_id)::text)))"),
+    (_CK + "actor_type", "CHECK (((actor_type)::text = 'user'::text))"),
+    (_CK + "actor_user_id", "CHECK ((actor_user_id > 0))"),
+    (_CK + "after_cliente_sha256_hex", _HEX.format("after_cliente_sha256")),
+    (_CK + "after_email_sha256_hex", _HEX.format("after_email_sha256")),
+    (_CK + "after_whatsapp_sha256_hex", _HEX.format("after_whatsapp_sha256")),
+    (_CK + "auth_session_id", "CHECK (((auth_session_id IS NULL) OR (auth_session_id > 0)))"),
+    (_CK + "before_cliente_sha256_hex", _HEX.format("before_cliente_sha256")),
+    (_CK + "before_email_sha256_hex", _HEX.format("before_email_sha256")),
+    (_CK + "before_whatsapp_sha256_hex", _HEX.format("before_whatsapp_sha256")),
+    (_CK + "changed_fields_array", "CHECK ((jsonb_typeof(changed_fields) = 'array'::text))"),
+    (_CK + "channel", "CHECK (((channel)::text = ANY ((ARRAY['manual_api'::character varying, "
+                      "'legacy_csv_upload'::character varying])::text[])))"),
+    (_CK + "create_shape", "CHECK ((((operation)::text <> 'create'::text) OR ((before_valor IS NULL) AND "
+                           "(before_vencimento IS NULL) AND (before_cliente_sha256 IS NULL) AND (before_email_sha256 "
+                           "IS NULL) AND (before_whatsapp_sha256 IS NULL) AND (after_valor IS NOT NULL) AND "
+                           "(after_vencimento IS NOT NULL) AND (after_cliente_sha256 IS NOT NULL))))"),
+    (_CK + "delete_shape", "CHECK ((((operation)::text <> 'delete'::text) OR ((after_valor IS NULL) AND "
+                           "(after_vencimento IS NULL) AND (after_cliente_sha256 IS NULL) AND (after_email_sha256 IS "
+                           "NULL) AND (after_whatsapp_sha256 IS NULL) AND (before_valor IS NOT NULL) AND "
+                           "(before_vencimento IS NOT NULL) AND (before_cliente_sha256 IS NOT NULL) AND "
+                           "(changed_fields = '[]'::jsonb))))"),
+    (_CK + "legacy_create_only", "CHECK ((((channel)::text = 'manual_api'::text) OR ((operation)::text = "
+                                 "'create'::text)))"),
+    (_CK + "operation", "CHECK (((operation)::text = ANY ((ARRAY['create'::character varying, 'update'::character "
+                        "varying, 'delete'::character varying])::text[])))"),
+    (_CK + "source_by_channel", "CHECK ((((channel)::text = 'legacy_csv_upload'::text) = ((source_sha256 IS NOT "
+                                "NULL) AND (source_row IS NOT NULL))))"),
+    (_CK + "source_row", "CHECK (((source_row IS NULL) OR (source_row >= 2)))"),
+    (_CK + "source_sha256_hex", _HEX.format("source_sha256")),
+    (_CK + "status", "CHECK (((status_at_operation)::text = ANY ((ARRAY['aberto'::character varying, "
+                     "'atrasado'::character varying, 'pago'::character varying])::text[])))"),
+    (_CK + "update_shape", "CHECK ((((operation)::text <> 'update'::text) OR ((before_valor IS NOT NULL) AND "
+                           "(after_valor IS NOT NULL) AND (before_vencimento IS NOT NULL) AND (after_vencimento IS "
+                           "NOT NULL) AND (before_cliente_sha256 IS NOT NULL) AND (after_cliente_sha256 IS NOT "
+                           "NULL) AND (jsonb_array_length(changed_fields) > 0))))"),
+]
+ARTIFACT_TARGET_ONLY = {
+    _CK + "channel": "CHECK (((channel)::text = ANY (ARRAY[('manual_api'::character varying)::text, "
+                     "('legacy_csv_upload'::character varying)::text])))",
+    _CK + "operation": "CHECK (((operation)::text = ANY (ARRAY[('create'::character varying)::text, "
+                       "('update'::character varying)::text, ('delete'::character varying)::text])))",
+    _CK + "status": "CHECK (((status_at_operation)::text = ANY (ARRAY[('aberto'::character varying)::text, "
+                    "('atrasado'::character varying)::text, ('pago'::character varying)::text])))",
+}
+ARTIFACT_LITERALS = {_CK + "channel": ("manual_api", "legacy_csv_upload"),
+                     _CK + "operation": ("create", "update", "delete"),
+                     _CK + "status": ("aberto", "atrasado", "pago")}
+KNOWN = sorted(ARTIFACT_TARGET_ONLY)
+
+
+def artifact_target_checks(names=KNOWN):
+    return [(n, ARTIFACT_TARGET_ONLY[n] if n in names else d) for n, d in ARTIFACT_SOURCE_CHECKS]
+
+
+def artifact_facts(checks=None):
+    facts = good_facts()
+    facts["checks"] = list(ARTIFACT_SOURCE_CHECKS if checks is None else checks)
+    return facts
+
+
+def catalog(checks=None):
+    """Facts in the exact shape schema_facts() returns (lists of lists), for facts_match unit tests."""
+    return {"columns": list(rd.COLUMNS),
+            "checks": [list(c) for c in (ARTIFACT_SOURCE_CHECKS if checks is None else checks)],
+            "index": [f"CREATE INDEX {rd.INDEX} ON public.{rd.TABLE} {rd.INDEX_SUFFIX}"],
+            "function": [["plpgsql", "trigger", rd.sha256_text(FUNCTION_SRC), True]],
+            "trigger": [["O", rd.TRIGGER_TYPE, rd.FUNCTION]]}
+
+
 def boom(*args, **kwargs):
     raise AssertionError("no child process or connection may be started")
 
@@ -60,6 +136,7 @@ class FakeServer:
         self.counts = {"users": 0, "accounts": 0, "import_confirmation_receipts": 0}
         self.calls, self.dropped, self.truncated, self.next_oid, self.next_id = [], [], 0, 30000, 1
         self.hooks, self.fail = {}, set()
+        self.probe = lambda name, value, truth: (truth, truth)  # PostgreSQL agreeing with plain membership
 
     def new_db(self, oid, comment=None, facts=None):
         return {"oid": oid, "comment": comment, "rows": [], "facts": facts or good_facts(),
@@ -114,8 +191,13 @@ class FakeConn:
             if d["update_rejected" if sql == rd.SQL_UPDATE_PROBE else "delete_rejected"]:
                 raise FakePgError("P0001", rd.APPEND_ONLY_MESSAGE)
             return Cursor([])
-        if sql == rd.SQL_LOCK:
+        if sql == rd.SQL_LOCK or sql == rd.SQL_READ_ONLY:
             return Cursor([])
+        for check, query in rd.CHECK_PROBE_SQL.items():
+            if sql == query:
+                assert params[0] == params[1] and (params[0] is None or isinstance(params[0], str))
+                truth = None if params[0] is None else params[0] in ARTIFACT_LITERALS[check]
+                return Cursor([s.probe(check, params[0], truth)])
         if sql == rd.SQL_TRUNCATE:
             assert self.db == rd.SOURCE_DB
             s.truncated += 1
@@ -411,6 +493,7 @@ class FlowTests(unittest.TestCase):
         self.assertNotIn("cleanup_status", report)
         comparison = report["schema_comparison"]
         self.assertFalse(comparison["equal"])
+        self.assertEqual((comparison["decision"], comparison["accepted_known_check_renderings"]), ("DIFFERENT", []))
         text = json.dumps(comparison)
         self.assertNotIn(PASSWORD, out)
         self.assertNotIn(report["seed"]["marker"], text)
@@ -420,7 +503,10 @@ class FlowTests(unittest.TestCase):
     def test_equal_schema_reports_equal_and_still_passes(self):
         result, _, report, server, _, leftovers = run_main()
         self.assertEqual((result, report["outcome"]), (0, "PASS"))
-        self.assertEqual(report["schema_comparison"], {"equal": True, "differing_keys": []})
+        self.assertEqual(report["schema_comparison"], {"equal": True, "differing_keys": [],
+                                                       "accepted_known_check_renderings": [], "decision": "EQUAL"})
+        self.assertEqual(report["check_rendering_probes"],
+                         {"count": 48, "expected_count": 48, "passed": 48, "mismatches": []})
         self.assert_cleaned(report, server, leftovers)
 
     def test_check_definition_difference_is_reported_verbatim(self):
@@ -538,6 +624,256 @@ class FlowTests(unittest.TestCase):
         fake_run.dump_bytes = b"-- plain SQL"
         result, _, report, _, _, _ = run_main(server=server, fake_run=fake_run)
         self.assertEqual((result, report["error"]), (1, "StepFailed: dump_not_custom_format"))
+
+
+class KnownCheckRenderingTests(unittest.TestCase):
+    """TASK051: only the three exact pairs observed in CI run 41257863930 are tolerated."""
+
+    def assert_cleaned(self, report, server, leftovers):
+        FlowTests.assert_cleaned(self, report, server, leftovers)
+
+    def flow(self, target_checks, source_checks=None, extra=None, probe=None):
+        server = FakeServer()
+        server.dbs[rd.SOURCE_DB]["facts"] = artifact_facts(source_checks)
+        if probe:
+            server.probe = probe
+
+        def after_restore():
+            server.dbs[TARGET]["facts"]["checks"] = list(target_checks)
+            if extra:
+                extra(server)
+        server.hooks["after_restore"] = after_restore
+        result, out, report, server, _, leftovers = run_main(server=server)
+        self.assertNotIn(PASSWORD, out)
+        self.assert_cleaned(report, server, leftovers)
+        return result, report, server
+
+    def assert_differ(self, target_checks, source_checks=None):
+        result, report, _ = self.flow(target_checks, source_checks)
+        self.assertEqual((result, report["outcome"], report["error"]),
+                         (1, "FAIL", "StepFailed: schema_source_target_differ"), report)
+        comparison = report["schema_comparison"]
+        self.assertEqual((comparison["equal"], comparison["decision"]), (False, "DIFFERENT"))
+        self.assertEqual(comparison["accepted_known_check_renderings"], [])
+        self.assertNotIn("delta", report)
+        return comparison
+
+    # --- frozen allowlist ---------------------------------------------------------------------------------
+    def test_allowlist_is_exactly_the_three_observed_pairs(self):
+        source = dict(ARTIFACT_SOURCE_CHECKS)
+        self.assertEqual(rd.KNOWN_CHECK_RENDERINGS, {n: (source[n], ARTIFACT_TARGET_ONLY[n]) for n in KNOWN})
+        self.assertEqual(sorted(rd.KNOWN_CHECK_LITERALS), KNOWN)
+        self.assertEqual({n: v[1] for n, v in rd.KNOWN_CHECK_LITERALS.items()}, ARTIFACT_LITERALS)
+        self.assertTrue(set(KNOWN) <= rd.CHECKS)
+        self.assertEqual(sorted(n for n, _ in ARTIFACT_SOURCE_CHECKS), sorted(rd.CHECKS))
+
+    def test_artifact_forms_pass_with_raw_difference_preserved(self):
+        result, report, server = self.flow(artifact_target_checks())
+        self.assertEqual((result, report["outcome"]), (0, "PASS"), report)
+        comparison = report["schema_comparison"]
+        self.assertFalse(comparison["equal"])  # raw comparison is never relabelled
+        self.assertEqual(comparison["differing_keys"], ["checks"])
+        self.assertEqual(comparison["decision"], "EQUAL_EXCEPT_KNOWN_CHECK_RENDERINGS")
+        self.assertEqual(comparison["accepted_known_check_renderings"], KNOWN)
+        detail = comparison["details"]["checks"]
+        source = dict(ARTIFACT_SOURCE_CHECKS)
+        self.assertEqual(detail["source_only"], [[n, source[n]] for n in KNOWN])
+        self.assertEqual(detail["target_only"], [[n, ARTIFACT_TARGET_ONLY[n]] for n in KNOWN])
+        self.assertEqual((detail["source_count"], detail["target_count"]), (22, 22))
+        self.assertEqual(report["check_rendering_probes"],
+                         {"count": 48, "expected_count": 48, "passed": 48, "mismatches": []})
+        self.assertEqual(report["delta"]["audit_rows"], 1)
+
+    def test_subset_of_known_renderings_passes_and_lists_only_that_subset(self):
+        result, report, _ = self.flow(artifact_target_checks([_CK + "status"]))
+        self.assertEqual(result, 0, report)
+        self.assertEqual(report["schema_comparison"]["accepted_known_check_renderings"], [_CK + "status"])
+
+    def test_identical_artifact_checks_are_equal(self):
+        result, report, _ = self.flow(ARTIFACT_SOURCE_CHECKS)
+        self.assertEqual(result, 0, report)
+        self.assertEqual((report["schema_comparison"]["equal"], report["schema_comparison"]["decision"]),
+                         (True, "EQUAL"))
+
+    # --- every other check difference is rejected ---------------------------------------------------------
+    def target_with(self, name, definition):
+        return [(n, definition if n == name else d) for n, d in artifact_target_checks()]
+
+    def variants(self):
+        ch, op, st = (ARTIFACT_TARGET_ONLY[_CK + k] for k in ("channel", "operation", "status"))
+        src = dict(ARTIFACT_SOURCE_CHECKS)
+        return {
+            "changed_literal": (_CK + "status", st.replace("'pago'", "'pagos'")),
+            "case_literal": (_CK + "status", st.replace("'pago'", "'PAGO'")),
+            "removed_literal": (_CK + "channel", ch.replace(", ('legacy_csv_upload'::character varying)::text", "")),
+            "added_literal": (_CK + "operation", op.replace("])))", ", ('archive'::character varying)::text])))")),
+            "element_type": (_CK + "status", st.replace("'aberto'::character varying", "'aberto'::text")),
+            "column_cast_type": (_CK + "status", st.replace("(status_at_operation)::text", "(status_at_operation)::name")),
+            "operator_not_all": (_CK + "channel", ch.replace("= ANY", "<> ALL")),
+            "operator_all": (_CK + "operation", op.replace("= ANY", "= ALL")),
+            "column": (_CK + "channel", ch.replace("(channel)::text", "(operation)::text")),
+            "whitespace": (_CK + "channel", ch.replace("ANY (ARRAY", "ANY  (ARRAY")),
+            "lowercase_array": (_CK + "operation", op.replace("ARRAY[", "array[")),
+            "not_valid": (_CK + "status", st + " NOT VALID"),
+            "pair_under_other_name": (_CK + "status", ch),
+            "source_form_reversed_into_target": (_CK + "channel", src[_CK + "channel"].replace("'manual_api'", "'x'")),
+            "unlisted_check_same_cast_style": (_CK + "actor_type",
+                                               "CHECK (((actor_type)::text = ANY (ARRAY[('user'::character varying)::text])))"),
+        }
+
+    def test_changed_known_target_forms_are_rejected(self):
+        for label, (name, definition) in self.variants().items():
+            with self.subTest(variant=label):
+                target = self.target_with(name, definition)
+                self.assertEqual(rd.facts_match(catalog(), catalog(target)), (False, []))
+        label, (name, definition) = "changed_literal", self.variants()["changed_literal"]
+        comparison = self.assert_differ(self.target_with(name, definition))
+        self.assertIn([name, definition], comparison["details"]["checks"]["target_only"])
+
+    def test_flow_rejects_operator_type_and_unknown_forms(self):
+        for label in ("operator_not_all", "element_type", "whitespace", "pair_under_other_name"):
+            with self.subTest(variant=label):
+                self.assert_differ(self.target_with(*self.variants()[label]))
+
+    def test_reversed_pair_and_changed_source_are_rejected(self):
+        src = dict(ARTIFACT_SOURCE_CHECKS)
+        reversed_source = [(n, ARTIFACT_TARGET_ONLY.get(n, d)) for n, d in ARTIFACT_SOURCE_CHECKS]
+        reversed_target = list(ARTIFACT_SOURCE_CHECKS)
+        self.assertEqual(rd.facts_match(catalog(reversed_source), catalog(reversed_target)), (False, []))
+        self.assert_differ(reversed_target, reversed_source)
+        changed_source = [(n, d.replace("'pago'", "'pagos'") if n == _CK + "status" else d)
+                          for n, d in ARTIFACT_SOURCE_CHECKS]
+        self.assertNotEqual(changed_source, ARTIFACT_SOURCE_CHECKS)
+        self.assertEqual(rd.facts_match(catalog(changed_source), catalog(artifact_target_checks())), (False, []))
+        self.assertIn("'pago'", src[_CK + "status"])
+
+    def test_constraint_presence_changes_are_rejected(self):
+        target = artifact_target_checks()
+        renamed = [(n + "_v2" if n == _CK + "channel" else n, d) for n, d in target]
+        cases = {
+            "removed": [c for c in target if c[0] != _CK + "status"],
+            "added": target + [(_CK + "zz_extra", "CHECK (true)")],
+            "duplicated": target + [target[12]],
+            "renamed": renamed,
+            "empty": [],
+        }
+        for label, checks in cases.items():
+            with self.subTest(case=label):
+                self.assertEqual(rd.facts_match(catalog(), catalog(checks)), (False, []))
+        for label, code in (("removed", "target_check_constraints"), ("added", "target_check_constraints"),
+                            ("renamed", "target_check_constraints")):
+            with self.subTest(flow=label):
+                result, report, _ = self.flow(cases[label])
+                self.assertEqual((result, report["error"]), (1, f"StepFailed: {code}"))
+                self.assertEqual(report["schema_comparison"]["decision"], "DIFFERENT")
+
+    def test_malformed_check_rows_are_rejected(self):
+        good = catalog()
+        for label, checks in (("not_list", "x"), ("short_row", [["only_name"]] + good["checks"][1:])):
+            with self.subTest(case=label):
+                self.assertEqual(rd.facts_match(good, dict(good, checks=checks)), (False, []))
+        self.assertEqual(rd.facts_match(good, catalog()), (True, []))
+
+    # --- other schema facts stay strictly equal -----------------------------------------------------------
+    def test_other_fact_mutations_are_rejected_even_with_known_renderings(self):
+        known = catalog(artifact_target_checks())
+        self.assertEqual(rd.facts_match(catalog(), known), (True, KNOWN))
+        mutations = {
+            "columns": lambda f: f.update(columns=f["columns"][::-1]),
+            "index": lambda f: f.update(index=["CREATE UNIQUE INDEX x " + rd.INDEX_SUFFIX]),
+            "function_hash": lambda f: f.update(function=[["plpgsql", "trigger", "0" * 64, True]]),
+            "trigger": lambda f: f.update(trigger=[["D", rd.TRIGGER_TYPE, rd.FUNCTION]]),
+            "extra_key": lambda f: f.update(extra=[]),
+            "missing_key": lambda f: f.pop("index"),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(fact=label):
+                target = catalog(artifact_target_checks())
+                mutate(target)
+                self.assertEqual(rd.facts_match(catalog(), target), (False, []))
+
+    def test_flow_function_or_index_change_fails_despite_known_renderings(self):
+        changed = FUNCTION_SRC.replace("BEGIN", "BEGIN NULL;")
+        index = f"CREATE UNIQUE INDEX {rd.INDEX} ON public.{rd.TABLE} {rd.INDEX_SUFFIX}"
+        for label, hook in (("function", lambda s: s.dbs[TARGET]["facts"].update(
+                                function=[("plpgsql", "trigger", changed)])),
+                            ("index", lambda s: s.dbs[TARGET]["facts"].update(index=[(index,)]))):
+            with self.subTest(fact=label):
+                result, report, _ = self.flow(artifact_target_checks(), extra=hook)
+                self.assertEqual((result, report["error"]), (1, "StepFailed: schema_source_target_differ"))
+                comparison = report["schema_comparison"]
+                self.assertEqual(comparison["differing_keys"], sorted(["checks", label]))
+                self.assertEqual(comparison["decision"], "DIFFERENT")
+
+    def test_row_hash_and_append_only_still_required_with_known_renderings(self):
+        cases = [(lambda s: s.dbs[TARGET]["rows"][0].update(json=s.dbs[TARGET]["rows"][0]["json"] + " "),
+                  "target_row_not_restored_exactly"),
+                 (lambda s: s.dbs[TARGET].update(update_rejected=False), "target_update_not_rejected"),
+                 (lambda s: s.dbs[TARGET].update(delete_rejected=False), "target_delete_not_rejected")]
+        for hook, code in cases:
+            with self.subTest(code=code):
+                result, report, _ = self.flow(artifact_target_checks(), extra=hook)
+                self.assertEqual((result, report["error"]), (1, f"StepFailed: {code}"))
+
+    # --- read-only truth-value probes ---------------------------------------------------------------------
+    def test_probe_sql_is_exactly_the_two_allowed_expressions_on_a_parameter(self):
+        def inner(definition, column):
+            self.assertTrue(definition.startswith("CHECK (") and definition.endswith(")"))
+            return definition[len("CHECK ("):-1].replace(f"(({column})::text", f"(({rd.PROBE_REF})::text", 1)
+        source = dict(ARTIFACT_SOURCE_CHECKS)
+        for name in KNOWN:
+            column = rd.KNOWN_CHECK_LITERALS[name][0]
+            expected = f"SELECT {inner(source[name], column)}, {inner(ARTIFACT_TARGET_ONLY[name], column)}"
+            self.assertEqual(rd.CHECK_PROBE_SQL[name], expected)
+            sql = rd.CHECK_PROBE_SQL[name].upper()
+            self.assertEqual(sql.count("%S"), 2)
+            for word in ("FROM", "INSERT", "UPDATE ", "DELETE ", "DROP", "TRUNCATE", "CREATE", "ALTER", ";", "\""):
+                self.assertNotIn(word, sql.replace("'UPDATE'", "").replace("'DELETE'", "").replace("'CREATE'", ""))
+
+    def test_probe_values_are_fixed_bounded_and_cover_edges(self):
+        self.assertEqual(rd.PROBE_COUNT, 48)
+        for name, literals in ARTIFACT_LITERALS.items():
+            values = rd.probe_values(literals)
+            self.assertEqual(len(values), 3 * len(literals) + 8)
+            self.assertTrue(set(literals) <= set(values))
+            for edge in (None, "", " ", "pagó", "аberto", literals[0].upper(), literals[0] + " "):
+                self.assertIn(edge, values)
+            self.assertTrue(all(v is None or isinstance(v, str) for v in values))
+            self.assertEqual(sum(v in literals for v in values if v is not None), len(literals))
+
+    def test_probes_run_read_only_on_target_only(self):
+        result, report, server = self.flow(artifact_target_checks())
+        self.assertEqual(result, 0, report)
+        probe_sqls = set(rd.CHECK_PROBE_SQL.values())
+        target_calls = [sql for db, sql in server.calls if db == TARGET]
+        first = next(i for i, sql in enumerate(target_calls) if sql in probe_sqls)
+        self.assertEqual(target_calls[first - 1], rd.SQL_READ_ONLY)
+        self.assertEqual(sum(sql in probe_sqls for sql in target_calls), 48)
+        self.assertEqual([sql for db, sql in server.calls if db != TARGET and sql in probe_sqls], [])
+        self.assertEqual(target_calls[first:first + 48], [sql for sql in target_calls if sql in probe_sqls])
+
+    def test_probe_mismatch_fails_and_cleanup_is_still_verified(self):
+        cases = {
+            "target_disagrees_on_literal": lambda n, v, t: (t, False if v == "pago" else t),
+            "source_disagrees_on_null": lambda n, v, t: (False if v is None else t, t),
+            "both_accept_outside_value": lambda n, v, t: (True, True) if v == "unknown" else (t, t),
+            "both_accept_unicode_variant": lambda n, v, t: (True, True) if v == "pagó" else (t, t),
+            "integer_instead_of_bool": lambda n, v, t: (1, 1) if v == "create" else (t, t),
+        }
+        for label, probe in cases.items():
+            with self.subTest(case=label):
+                result, report, _ = self.flow(artifact_target_checks(), probe=probe)
+                self.assertEqual((result, report["outcome"], report["error"]),
+                                 (1, "FAIL", "StepFailed: check_rendering_probe_mismatch"), report)
+                probes = report["check_rendering_probes"]
+                self.assertEqual((probes["count"], len(probes["mismatches"])), (48, probes["count"] - probes["passed"]))
+                self.assertGreaterEqual(len(probes["mismatches"]), 1)
+                self.assertNotIn("delta", report)
+        result, report, _ = self.flow(ARTIFACT_SOURCE_CHECKS, probe=cases["target_disagrees_on_literal"])
+        self.assertEqual(report["error"], "StepFailed: check_rendering_probe_mismatch")
+        self.assertEqual(report["check_rendering_probes"]["mismatches"],
+                         [{"check": _CK + "status", "value": "pago", "expected": True, "source_form": True,
+                           "target_form": False}])
 
 
 class FakeProc:
