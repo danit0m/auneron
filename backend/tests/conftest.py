@@ -102,6 +102,7 @@ def _clean_database() -> None:
                     users,
                     knowledge,
                     account_data_entry_audit_events,
+                    account_title_references,
                     accounts
                 RESTART IDENTITY
                 CASCADE

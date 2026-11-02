@@ -2,6 +2,7 @@
 
 import ast
 import contextlib
+import copy
 import io
 import json
 import os
@@ -23,6 +24,8 @@ GOOD_ENV = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": rd.REPOSITORY, "GITHU
             "CI_POSTGRES_CONTAINER_ID": CID, "GITHUB_RUN_ID": "41203778900", "GITHUB_RUN_ATTEMPT": "1"}
 TARGET = "auneron_audit_recovery_41203778900_1"
 FUNCTION_SRC = " BEGIN RAISE EXCEPTION 'account_data_entry_audit_events is append-only'; END "
+REF_FUNCTION_SRC = " BEGIN RAISE EXCEPTION 'account_title_references is append-only'; END "
+REF_KEY = ("account_title_references", "account_id", 1)
 
 
 # Verbatim from the CI run 41257863930 report (area2-audit-recovery.json, schema_comparison.details.checks);
@@ -92,13 +95,24 @@ def artifact_facts(checks=None):
     return facts
 
 
+def ref_index_rows():
+    return [(name, f"CREATE {'UNIQUE ' if unique else ''}INDEX {name} ON public.{rd.REF_TABLE} {suffix}")
+            for name, (unique, suffix) in sorted(rd.REF_INDEXES.items())]
+
+
 def catalog(checks=None):
     """Facts in the exact shape schema_facts() returns (lists of lists), for facts_match unit tests."""
     return {"columns": list(rd.COLUMNS),
             "checks": [list(c) for c in (ARTIFACT_SOURCE_CHECKS if checks is None else checks)],
             "index": [f"CREATE INDEX {rd.INDEX} ON public.{rd.TABLE} {rd.INDEX_SUFFIX}"],
             "function": [["plpgsql", "trigger", rd.sha256_text(FUNCTION_SRC), True]],
-            "trigger": [["O", rd.TRIGGER_TYPE, rd.FUNCTION]]}
+            "trigger": [["O", rd.TRIGGER_TYPE, rd.FUNCTION]],
+            "ref_columns": list(rd.REF_COLUMNS),
+            "ref_checks": [[name, f"CHECK ({name})"] for name in sorted(rd.REF_CHECKS)],
+            "ref_keys": [[n, t, d] for n, (t, d) in sorted(rd.REF_KEYS.items())],
+            "ref_indexes": [list(r) for r in ref_index_rows()],
+            "ref_function": [["plpgsql", "trigger", rd.sha256_text(REF_FUNCTION_SRC), True]],
+            "ref_trigger": [["O", rd.TRIGGER_TYPE, rd.REF_FUNCTION]]}
 
 
 def boom(*args, **kwargs):
@@ -110,7 +124,13 @@ def good_facts():
             "checks": [(name, f"CHECK ({name})") for name in sorted(rd.CHECKS)],
             "index": [(f"CREATE INDEX {rd.INDEX} ON public.{rd.TABLE} {rd.INDEX_SUFFIX}",)],
             "function": [("plpgsql", "trigger", FUNCTION_SRC)],
-            "trigger": [("O", rd.TRIGGER_TYPE, rd.FUNCTION)]}
+            "trigger": [("O", rd.TRIGGER_TYPE, rd.FUNCTION)],
+            "ref_columns": [(c,) for c in rd.REF_COLUMNS],
+            "ref_checks": [(name, f"CHECK ({name})") for name in sorted(rd.REF_CHECKS)],
+            "ref_keys": [(n, t, d) for n, (t, d) in sorted(rd.REF_KEYS.items())],
+            "ref_indexes": ref_index_rows(),
+            "ref_function": [("plpgsql", "trigger", REF_FUNCTION_SRC)],
+            "ref_trigger": [("O", rd.TRIGGER_TYPE, rd.REF_FUNCTION)]}
 
 
 class FakePgError(Exception):
@@ -127,22 +147,30 @@ class Cursor:
         return list(self._result)
 
 
+TRANSACTIONAL = ("rows", "accounts", "refs")
+
+
 class FakeServer:
-    """In-memory stand-in for the service PostgreSQL. Writes apply immediately (no MVCC)."""
+    """In-memory stand-in for the service PostgreSQL. Writes apply immediately (no MVCC); a non-autocommit
+    connection that wrote and then rolls back or closes without commit restores rows/accounts/refs."""
 
     def __init__(self):
         self.system_id, self.docker_system_id = "7400000000000000001", "7400000000000000001"
         self.dbs = {rd.SOURCE_DB: self.new_db(16384)}
-        self.counts = {"users": 0, "accounts": 0, "import_confirmation_receipts": 0}
+        self.counts = {"users": 0, "import_confirmation_receipts": 0}
         self.calls, self.dropped, self.truncated, self.next_oid, self.next_id = [], [], 0, 30000, 1
+        self.ref_truncated, self.deleted_accounts, self.commits = 0, [], []
+        self.child_keys = [REF_KEY, ("account_events", "account_id", 1), ("knowledge", "account_id", 1)]
+        self.child_rows = {}  # (table, column) -> set of referenced account ids
         self.hooks, self.fail = {}, set()
         self.timeouts, self.connections = [], 0  # (connection no., db, sql, statement_timeout ms in effect)
         self.probe = lambda name, value, truth: (truth, truth)  # PostgreSQL agreeing with plain membership
 
     def new_db(self, oid, comment=None, facts=None):
-        return {"oid": oid, "comment": comment, "rows": [], "facts": facts or good_facts(),
-                "revision": rd.HEAD_REVISION, "tables": rd.TABLE_COUNT, "update_rejected": True,
-                "delete_rejected": True}
+        return {"oid": oid, "comment": comment, "rows": [], "accounts": [], "refs": [],
+                "facts": facts or good_facts(), "revision": rd.HEAD_REVISION, "tables": rd.TABLE_COUNT,
+                "update_rejected": True, "delete_rejected": True, "ref_update_rejected": True,
+                "ref_delete_rejected": True, "fk_restricts": True}
 
     def connect(self, **kw):
         assert kw["hostaddr"] == "127.0.0.1" and kw["port"] == 5432 and kw["password"] == PASSWORD
@@ -158,11 +186,20 @@ class FakeConn:
     def __init__(self, server, db, number=0, autocommit=False):
         self.server, self.db, self.number, self.autocommit = server, db, number, autocommit
         self.statement_timeout = 30000  # what CONNECT_OPTIONS sets for every session
+        self.snapshot = None
+
+    def _write(self):
+        if not self.autocommit and self.snapshot is None:
+            d = self.server.dbs[self.db]
+            self.snapshot = copy.deepcopy({k: d[k] for k in TRANSACTIONAL})
 
     def execute(self, sql, params=None):
         s, d = self.server, self.server.dbs[self.db]
         s.calls.append((self.db, sql))
         s.timeouts.append((self.number, self.db, sql, self.statement_timeout))
+        result = self._reference_sql(s, d, sql, params)
+        if result is not None:
+            return result
         if sql == rd.SQL_DROP_BUDGET:
             if "set_budget" in s.fail:
                 raise FakePgError("42501", "permission denied to set parameter \"statement_timeout\"")
@@ -178,21 +215,27 @@ class FakeConn:
         if sql == rd.SQL_SYSTEM_ID:
             return Cursor([(s.system_id,)])
         if sql == rd.SQL_COUNTS:
-            return Cursor([(len(d["rows"]), s.counts["users"], s.counts["accounts"],
-                            s.counts["import_confirmation_receipts"])])
+            return Cursor([(len(d["rows"]), s.counts["users"], len(d["accounts"]),
+                            s.counts["import_confirmation_receipts"], len(d["refs"]))])
         if sql == rd.SQL_DB_BY_NAME:
             found = s.dbs.get(params[0])
             return Cursor([(found["oid"], found["comment"])] if found else [])
         if sql == rd.SQL_DB_BY_OID:
             return Cursor([(sum(1 for x in s.dbs.values() if x["oid"] == params[0]),)])
-        for key, query in (("columns", rd.SQL_COLUMNS), ("checks", rd.SQL_CHECKS), ("index", rd.SQL_INDEX),
-                           ("function", rd.SQL_FUNCTION), ("trigger", rd.SQL_TRIGGER)):
+        if sql == rd.SQL_COLUMNS:
+            return Cursor(facts["columns" if params[0] == rd.TABLE else "ref_columns"])
+        if sql == rd.SQL_FUNCTION:
+            return Cursor(facts["function" if params[0] == rd.FUNCTION else "ref_function"])
+        for key, query in (("checks", rd.SQL_CHECKS), ("index", rd.SQL_INDEX), ("trigger", rd.SQL_TRIGGER),
+                           ("ref_checks", rd.SQL_REF_CHECKS), ("ref_keys", rd.SQL_REF_KEYS),
+                           ("ref_indexes", rd.SQL_INDEXES), ("ref_trigger", rd.SQL_REF_TRIGGER)):
             if sql == query:
                 return Cursor(facts[key])
         if sql == rd.SQL_ROWS:
             return Cursor([(r["id"], r["request_id"], r["json"]) for r in d["rows"]])
         if sql == rd.SQL_SEED:
             assert self.db == rd.SOURCE_DB
+            self._write()
             row = {"id": s.next_id, "request_id": params[3],
                    "json": json.dumps({"id": s.next_id, "request_id": params[3], "valor": str(params[4])})}
             s.next_id += 1
@@ -212,6 +255,7 @@ class FakeConn:
                 return Cursor([s.probe(check, params[0], truth)])
         if sql == rd.SQL_TRUNCATE:
             assert self.db == rd.SOURCE_DB
+            self._write()
             s.truncated += 1
             d["rows"].clear()
             return Cursor([])
@@ -235,18 +279,84 @@ class FakeConn:
             s.dropped.append(name)
             del s.dbs[name]
             return Cursor([])
-        if sql == f"SELECT count(*) FROM {rd.TABLE}":
-            return Cursor([(len(d["rows"]),)])
+        if sql == rd.SQL_FINAL_COUNTS:
+            return Cursor([(len(d["rows"]), len(d["accounts"]), len(d["refs"]))])
         raise AssertionError(f"unexpected SQL: {sql}")
 
+    def _reference_sql(self, s, d, sql, params):
+        """TASK054 statements: owned account/reference seed, rows, probes and the guarded cleanup."""
+        if sql == rd.SQL_SEED_ACCOUNT:
+            assert self.db == rd.SOURCE_DB
+            self._write()
+            row = {"id": s.next_id, "cliente": params[0],
+                   "json": json.dumps({"id": s.next_id, "cliente": params[0], "valor": str(params[1])})}
+            s.next_id += 1
+            d["accounts"].append(row)
+            return Cursor([(row["id"],)])
+        if sql == rd.SQL_SEED_REFERENCE:
+            assert self.db == rd.SOURCE_DB
+            self._write()
+            if "ref_seed_fk" in s.fail or not any(a["id"] == params[0] for a in d["accounts"]):
+                raise FakePgError("23503", "insert violates foreign key constraint")
+            row = {"id": s.next_id, "account_id": params[0], "request_id": params[4],
+                   "json": json.dumps({"id": s.next_id, "account_id": params[0], "title_reference": params[2]})}
+            s.next_id += 1
+            d["refs"].append(row)
+            return Cursor([(row["id"],)])
+        if sql == rd.SQL_ACCOUNT_ROWS:
+            return Cursor([(a["id"], a["cliente"], a["json"]) for a in d["accounts"]])
+        if sql == rd.SQL_REF_ROWS:
+            return Cursor([(r["id"], r["request_id"], r["json"]) for r in d["refs"]])
+        if sql in (rd.SQL_REF_UPDATE_PROBE, rd.SQL_REF_DELETE_PROBE):
+            if d["ref_update_rejected" if sql == rd.SQL_REF_UPDATE_PROBE else "ref_delete_rejected"]:
+                raise FakePgError("P0001", rd.REF_APPEND_ONLY_MESSAGE)
+            return Cursor([])
+        if sql == rd.SQL_ACCOUNT_FK_PROBE:
+            assert self.db != rd.SOURCE_DB  # the FK probe never runs on the source
+            if d["fk_restricts"] and any(r["account_id"] == params[0] for r in d["refs"]):
+                raise FakePgError("23503", "update or delete violates foreign key constraint")
+            return Cursor([])  # would delete; the caller always rolls back
+        if sql in (rd.SQL_LOCK_ACCOUNTS, rd.SQL_LOCK_REFERENCES):
+            return Cursor([])
+        if sql == rd.SQL_LOCK_OWN_ACCOUNT:
+            return Cursor([(a["id"],) for a in d["accounts"] if a["id"] == params[0]])
+        if sql == rd.SQL_ACCOUNT_CHILD_KEYS:
+            return Cursor(list(s.child_keys))
+        children = {f"SELECT count(*) FROM {t} WHERE {c} = %s": (t, c) for t, c, _ in s.child_keys}
+        if sql in children:
+            assert self.db == rd.SOURCE_DB
+            return Cursor([(len({params[0]} & s.child_rows.get(children[sql], set())),)])
+        if sql == rd.SQL_TRUNCATE_REFERENCES:
+            assert self.db == rd.SOURCE_DB
+            self._write()
+            s.ref_truncated += 1
+            d["refs"].clear()
+            return Cursor([])
+        if sql == rd.SQL_DELETE_OWN_ACCOUNT:
+            assert self.db == rd.SOURCE_DB
+            self._write()
+            if any(r["account_id"] == params[0] for r in d["refs"]):
+                raise FakePgError("23503", "update or delete violates foreign key constraint")
+            if "delete_noop" in s.fail:
+                return Cursor([])
+            gone = [a for a in d["accounts"] if a["id"] == params[0] and a["cliente"] == params[1]]
+            d["accounts"][:] = [a for a in d["accounts"] if a not in gone]
+            s.deleted_accounts.extend(a["id"] for a in gone)
+            return Cursor([(a["id"],) for a in gone])
+        return None
+
     def commit(self):
-        pass
+        self.server.commits.append((self.number, self.db))
+        self.snapshot = None
 
     def rollback(self):
-        pass
+        if self.snapshot is not None:
+            self.server.dbs[self.db].update(copy.deepcopy(self.snapshot))
+            self.snapshot = None
 
     def close(self):
-        pass
+        if self.db in self.server.dbs:
+            self.rollback()  # psycopg: closing without commit discards the transaction
 
 
 class FakeRun:
@@ -273,7 +383,8 @@ class FakeRun:
         if tool == "pg_dump":
             source = s.dbs[rd.SOURCE_DB]
             payload = self.dump_bytes or b"PGDMP" + json.dumps(
-                {"rows": source["rows"], "facts": source["facts"]}).encode()
+                {"rows": source["rows"], "accounts": source["accounts"], "refs": source["refs"],
+                 "facts": source["facts"]}).encode()
             Path(stdout_path).write_bytes(payload)
             s.hooks.get("after_dump", lambda: None)()
             return rd.Result(0, "", "")
@@ -283,6 +394,8 @@ class FakeRun:
             restored = json.loads(data[5:])
             target = s.dbs[argv[argv.index("-d") + 1]]
             target["rows"] = [dict(r) for r in restored["rows"]]
+            target["accounts"] = [dict(r) for r in restored["accounts"]]
+            target["refs"] = [dict(r) for r in restored["refs"]]
             target["facts"] = {k: [tuple(x) for x in v] for k, v in restored["facts"].items()}
             s.hooks.get("after_restore", lambda: None)()
             return rd.Result(0, "", "")
@@ -312,7 +425,10 @@ class DryPlanTests(unittest.TestCase):
             self.assertEqual(rd.main([], environ={}, popen=boom, connect=boom), 0)
         plan = json.loads(out.getvalue())
         self.assertEqual((plan["mode"], plan["executed"]), ("DRY_PLAN", False))
-        self.assertEqual(plan["head_revision"], "c3a8f1e6d204")
+        self.assertEqual((plan["head_revision"], plan["tables"]), ("e9a4c7d2b135", 39))
+        self.assertEqual(plan["reference_table"]["table"], "account_title_references")
+        self.assertEqual(plan["cleanup_steps"], ["target_database", "source_audit_row",
+                                                 "source_reference_and_account", "temp_files", "final_state"])
 
 
 class GateTests(unittest.TestCase):
@@ -374,9 +490,12 @@ class GateTests(unittest.TestCase):
 class FlowTests(unittest.TestCase):
     def assert_cleaned(self, report, server, leftovers):
         self.assertEqual(report["cleanup"], {"target_database": "DROPPED_VERIFIED", "source_audit_row": "TRUNCATED",
+                                             "source_reference_and_account": "REMOVED",
                                              "temp_files": "REMOVED", "final_state": "VERIFIED"})
-        self.assertEqual((server.dropped, server.truncated), ([TARGET], 1))
-        self.assertEqual(server.dbs[rd.SOURCE_DB]["rows"], [])
+        self.assertEqual((server.dropped, server.truncated, server.ref_truncated), ([TARGET], 1, 1))
+        self.assertEqual(server.deleted_accounts, [report["ledger"]["account_id"]])
+        source = server.dbs[rd.SOURCE_DB]
+        self.assertEqual((source["rows"], source["accounts"], source["refs"]), ([], [], []))
         self.assertEqual(list(server.dbs), [rd.SOURCE_DB])
         self.assertEqual(leftovers, [])
 
@@ -384,7 +503,7 @@ class FlowTests(unittest.TestCase):
         result, out, report, server, fake_run, leftovers = run_main()
         self.assertEqual((result, report["outcome"]), (0, "PASS"), report)
         delta = report["delta"]
-        self.assertEqual((delta["tables"], delta["revision"], delta["columns"]), (38, "c3a8f1e6d204", 24))
+        self.assertEqual((delta["tables"], delta["revision"], delta["columns"]), (39, "e9a4c7d2b135", 24))
         self.assertEqual(len(delta["check_constraints"]), 22)
         self.assertTrue(delta["update_rejected"] and delta["delete_rejected"])
         self.assertEqual(report["target"]["database"], TARGET)
@@ -397,6 +516,7 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(fake_run.calls[0][:2], ["docker", "inspect"])
         self.assertEqual([argv[argv.index(CID) + 1] for argv in fake_run.calls[1:]], ["psql", "pg_dump", "pg_restore"])
         self.assertEqual(len(server.sql(rd.SQL_SEED)), 1)
+        self.assertEqual((len(server.sql(rd.SQL_SEED_ACCOUNT)), len(server.sql(rd.SQL_SEED_REFERENCE))), (1, 1))
         self.assertNotIn(PASSWORD, json.dumps(fake_run.envs[0]))
 
     def test_pass_on_pull_request_into_main(self):
@@ -410,8 +530,11 @@ class FlowTests(unittest.TestCase):
         if expect:
             self.assertEqual(report["error"], expect)
         self.assertEqual(server.sql(rd.SQL_SEED), [])
+        self.assertEqual(server.sql(rd.SQL_SEED_ACCOUNT), [])
         self.assertEqual(server.sql("CREATE DATABASE "), [])
-        self.assertEqual((server.dropped, server.truncated), ([], 0))
+        self.assertEqual((server.dropped, server.truncated, server.ref_truncated), ([], 0, 0))
+        self.assertEqual(server.deleted_accounts, [])
+        self.assertEqual(report["cleanup"]["source_reference_and_account"], "NOT_SEEDED")
         self.assertEqual(leftovers, [])
         return report, server
 
@@ -427,8 +550,8 @@ class FlowTests(unittest.TestCase):
         self.blocked_before_seed(server, expect="server_identity_mismatch")
 
     def test_wrong_head_or_table_count_blocks(self):
-        for key, value, code in (("revision", "b428d1a6c903", "source_head_not_c3a8f1e6d204"),
-                                 ("tables", 37, "source_table_count_not_38")):
+        for key, value, code in (("revision", "c3a8f1e6d204", "source_head_not_e9a4c7d2b135"),
+                                 ("tables", 38, "source_table_count_not_39")):
             with self.subTest(code=code):
                 server = FakeServer()
                 server.dbs[rd.SOURCE_DB][key] = value
@@ -631,8 +754,10 @@ class FlowTests(unittest.TestCase):
                 fake_run.abort.add(step)
                 result, _, report, server, _, leftovers = run_main(server=server, fake_run=fake_run)
                 self.assertEqual((result, report["outcome"]), (3, "ABORTED"))
-                self.assertEqual(server.truncated, 1)
-                self.assertEqual(server.dbs[rd.SOURCE_DB]["rows"], [])
+                self.assertEqual((server.truncated, server.ref_truncated), (1, 1))
+                source = server.dbs[rd.SOURCE_DB]
+                self.assertEqual((source["rows"], source["accounts"], source["refs"]), ([], [], []))
+                self.assertEqual(report["cleanup"]["source_reference_and_account"], "REMOVED")
                 self.assertEqual(leftovers, [])
 
     def test_non_custom_dump_fails(self):
@@ -660,8 +785,8 @@ class CleanupDropBudgetTests(unittest.TestCase):
         self.assertEqual((result, report["outcome"], report["cleanup_status"]), (2, "BLOCKED", "BLOCKED"), report)
         self.assertIn(TARGET, server.dbs)
         self.assertEqual(report["cleanup"]["final_state"], "FAILED:StepFailed:target_present")
-        self.assertEqual((report["cleanup"]["source_audit_row"], report["cleanup"]["temp_files"]),
-                         ("TRUNCATED", "REMOVED"))
+        self.assertEqual((report["cleanup"]["source_audit_row"], report["cleanup"]["source_reference_and_account"],
+                          report["cleanup"]["temp_files"]), ("TRUNCATED", "REMOVED", "REMOVED"))
 
     def test_budget_and_defaults_are_declared(self):
         self.assertEqual(rd.CLEANUP_DROP_STATEMENT_TIMEOUT_MS, 180000)
@@ -1022,6 +1147,263 @@ class KnownCheckRenderingTests(unittest.TestCase):
                            "target_form": False}])
 
 
+class ReferenceTableTests(unittest.TestCase):
+    """TASK054 (TI1): side-table catalog, owned account+reference survival and the fail-closed cleanup."""
+
+    def assert_cleaned(self, report, server, leftovers):
+        FlowTests.assert_cleaned(self, report, server, leftovers)
+
+    def run_with(self, hook=None, when="after_restore", server=None):
+        server = server or FakeServer()
+        if hook:
+            server.hooks[when] = lambda: hook(server)
+        return run_main(server=server)
+
+    # --- pass ---------------------------------------------------------------------------------------------
+    def test_pass_restores_both_owned_rows_exactly_and_proves_probes(self):
+        result, out, report, server, _, leftovers = run_main()
+        self.assertEqual((result, report["outcome"]), (0, "PASS"), report)
+        ref = report["delta"]["reference_table"]
+        self.assertEqual((ref["table"], ref["columns"], len(ref["check_constraints"])),
+                         ("account_title_references", 11, 7))
+        self.assertEqual(ref["keys"], sorted(rd.REF_KEYS))
+        self.assertEqual(ref["indexes"], sorted(rd.REF_INDEXES))
+        self.assertEqual((ref["account_rows"], ref["reference_rows"]), (1, 1))
+        self.assertTrue(ref["update_rejected"] and ref["delete_rejected"] and ref["account_delete_restricted"])
+        seed = report["seed_reference"]
+        self.assertEqual(seed["initial_counts"], {"accounts": 0, "account_title_references": 0})
+        self.assertEqual(seed["marker"], report["seed"]["marker"])
+        ledger = report["ledger"]
+        self.assertEqual((ledger["initial_account_count"], ledger["initial_reference_count"]), (0, 0))
+        self.assertEqual((ledger["account_id"], ledger["reference_id"]), (seed["account_id"], seed["reference_id"]))
+        self.assertEqual(len(ledger["account_fingerprint"]), 64)
+        self.assertEqual(len(ledger["reference_fingerprint"]), 64)
+        self.assertEqual(report["cleanup_steps"], list(rd.CLEANUP_STEPS))
+        self.assert_cleaned(report, server, leftovers)
+        self.assertNotIn(PASSWORD, out)
+        # probes: reference UPDATE/DELETE and account DELETE ran on the target only
+        for sql in (rd.SQL_REF_UPDATE_PROBE, rd.SQL_REF_DELETE_PROBE, rd.SQL_ACCOUNT_FK_PROBE):
+            self.assertEqual({db for db, s in server.calls if s == sql}, {TARGET})
+
+    def test_seed_and_cleanup_are_single_transactions_with_fixed_lock_order(self):
+        result, _, report, server, _, _ = run_main()
+        self.assertEqual(result, 0, report)
+        source = [(n, sql) for n, db, sql, _ in server.timeouts if db == rd.SOURCE_DB]
+        seed_conn = {n for n, sql in source if sql in (rd.SQL_SEED_ACCOUNT, rd.SQL_SEED_REFERENCE)}
+        self.assertEqual(len(seed_conn), 1)
+        self.assertIn((seed_conn.pop(), rd.SOURCE_DB), server.commits)
+        order = [rd.SQL_LOCK_ACCOUNTS, rd.SQL_LOCK_REFERENCES, rd.SQL_ACCOUNT_ROWS, rd.SQL_REF_ROWS,
+                 rd.SQL_ACCOUNT_CHILD_KEYS, rd.SQL_LOCK_OWN_ACCOUNT, rd.SQL_TRUNCATE_REFERENCES,
+                 rd.SQL_DELETE_OWN_ACCOUNT]
+        (conn,) = {n for n, sql in source if sql == rd.SQL_TRUNCATE_REFERENCES}
+        session = [sql for n, sql in source if n == conn]
+        self.assertEqual([s for s in session if s in order], order + [rd.SQL_ACCOUNT_ROWS, rd.SQL_REF_ROWS])
+        self.assertEqual(sum(c == (conn, rd.SOURCE_DB) for c in server.commits), 1)
+        self.assertEqual(server.deleted_accounts, [report["ledger"]["account_id"]])
+
+    # --- baseline and source schema -------------------------------------------------------------------------
+    def test_foreign_account_or_reference_at_start_blocks_and_is_never_touched(self):
+        for key, row in (("accounts", {"id": 501, "cliente": "foreign", "json": "{}"}),
+                         ("refs", {"id": 502, "account_id": 501, "request_id": "foreign", "json": "{}"})):
+            with self.subTest(table=key):
+                server = FakeServer()
+                server.dbs[rd.SOURCE_DB][key].append(row)
+                report, server = FlowTests.blocked_before_seed(self, server, expect="source_not_empty_ci_baseline")
+                self.assertEqual(server.dbs[rd.SOURCE_DB][key], [row])
+                self.assertTrue(report["cleanup"]["final_state"].startswith("FAILED:StepFailed:source_"))
+                self.assertEqual(report["cleanup_status"], "BLOCKED")
+
+    def test_source_reference_schema_defects_fail_before_any_seed(self):
+        cases = [("ref_trigger", [("D", rd.TRIGGER_TYPE, rd.REF_FUNCTION)], "source_reference_trigger_not_enabled"),
+                 ("ref_keys", [], "source_reference_keys"),
+                 ("ref_function", [], "source_reference_function")]
+        for key, value, code in cases:
+            with self.subTest(code=code):
+                server = FakeServer()
+                server.dbs[rd.SOURCE_DB]["facts"][key] = value
+                result, _, report, server, _, _ = run_main(server=server)
+                self.assertEqual((result, report["error"]), (1, f"StepFailed: {code}"))
+                self.assertEqual((server.sql(rd.SQL_SEED), server.sql(rd.SQL_SEED_ACCOUNT)), ([], []))
+
+    # --- target catalog -------------------------------------------------------------------------------------
+    def test_target_reference_catalog_defects_fail_and_still_clean_up(self):
+        fk = "fk_account_title_references_account_id"
+
+        def keys(f, definition):
+            f["ref_keys"] = [(n, t, definition if n == fk else d) for n, t, d in f["ref_keys"]]
+        cases = [
+            (lambda f: f.update(ref_columns=f["ref_columns"][:-1]), "target_reference_columns"),
+            (lambda f: f.update(ref_checks=f["ref_checks"][1:]), "target_reference_check_constraints"),
+            (lambda f: keys(f, "FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE"),
+             "target_reference_keys"),
+            (lambda f: keys(f, "FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT NOT VALID"),
+             "target_reference_keys"),
+            (lambda f: f.update(ref_keys=[k for k in f["ref_keys"] if k[0] != fk]), "target_reference_keys"),
+            (lambda f: f.update(ref_indexes=[(n, d.replace("UNIQUE ", "")) for n, d in f["ref_indexes"]]),
+             "target_reference_indexes"),
+            (lambda f: f.update(ref_indexes=f["ref_indexes"][:-1]), "target_reference_indexes"),
+            (lambda f: f.update(ref_function=[]), "target_reference_function"),
+            (lambda f: f.update(ref_trigger=[("D", rd.TRIGGER_TYPE, rd.REF_FUNCTION)]),
+             "target_reference_trigger_not_enabled"),
+        ]
+        for mutate, code in cases:
+            with self.subTest(code=code):
+                server = FakeServer()
+                server.hooks["after_restore"] = lambda s=server, m=mutate: m(s.dbs[TARGET]["facts"])
+                result, _, report, server, _, leftovers = run_main(server=server)
+                self.assertEqual((result, report["outcome"], report["error"]), (1, "FAIL", f"StepFailed: {code}"))
+                self.assert_cleaned(report, server, leftovers)
+
+    def test_reference_check_definitions_are_strict_with_no_allowlist(self):
+        name = sorted(rd.REF_CHECKS)[0]
+        in_list = "CHECK (((assigned_via)::text = ANY ((ARRAY['import_v2'::character varying])::text[])))"
+
+        def redefine(f):
+            f["ref_checks"] = [(n, in_list if n == name else d) for n, d in f["ref_checks"]]
+        server = FakeServer()
+        server.hooks["after_restore"] = lambda: redefine(server.dbs[TARGET]["facts"])
+        result, _, report, server, _, leftovers = run_main(server=server)
+        self.assertEqual((result, report["error"]), (1, "StepFailed: schema_source_target_differ"))
+        comparison = report["schema_comparison"]
+        self.assertEqual((comparison["differing_keys"], comparison["decision"]), (["ref_checks"], "DIFFERENT"))
+        self.assertEqual(comparison["accepted_known_check_renderings"], [])
+        self.assertFalse(set(rd.KNOWN_CHECK_RENDERINGS) & rd.REF_CHECKS)
+        self.assert_cleaned(report, server, leftovers)
+
+    def test_reference_function_difference_reports_only_its_bounded_body(self):
+        changed = REF_FUNCTION_SRC.replace("BEGIN", "BEGIN NULL;")
+        server = FakeServer()
+        server.hooks["after_restore"] = lambda: server.dbs[TARGET]["facts"].update(
+            ref_function=[("plpgsql", "trigger", changed)])
+        result, _, report, _, _, _ = run_main(server=server)
+        self.assertEqual(report["error"], "StepFailed: schema_source_target_differ")
+        comparison = report["schema_comparison"]
+        self.assertEqual(comparison["differing_keys"], ["ref_function"])
+        self.assertNotIn("function_bodies", comparison)
+        self.assertEqual(comparison["ref_function_bodies"]["name"], rd.REF_FUNCTION)
+        self.assertEqual(comparison["ref_function_bodies"]["target"][0]["text"], changed)
+
+    def test_facts_match_is_strict_for_every_reference_fact(self):
+        self.assertEqual(rd.facts_match(catalog(), catalog()), (True, []))
+        for key in ("ref_columns", "ref_checks", "ref_keys", "ref_indexes", "ref_function", "ref_trigger"):
+            with self.subTest(fact=key):
+                target = catalog()
+                target[key] = list(reversed(target[key])) if len(target[key]) > 1 else []
+                self.assertEqual(rd.facts_match(catalog(), target), (False, []))
+
+    # --- row survival and probes ----------------------------------------------------------------------------
+    def test_restored_rows_and_probes_are_required_for_pass(self):
+        def tamper(table):
+            def go(s):
+                s.dbs[TARGET][table][0]["json"] += " "
+            return go
+        cases = [
+            (tamper("accounts"), "target_reference_rows_not_restored_exactly"),
+            (tamper("refs"), "target_reference_rows_not_restored_exactly"),
+            (lambda s: s.dbs[TARGET]["refs"].clear(), "target_reference_rows_not_restored_exactly"),
+            (lambda s: s.dbs[TARGET]["accounts"].append({"id": 900, "cliente": "x", "json": "{}"}),
+             "target_reference_rows_not_restored_exactly"),
+            (lambda s: s.dbs[TARGET].update(ref_update_rejected=False), "target_reference_update_not_rejected"),
+            (lambda s: s.dbs[TARGET].update(ref_delete_rejected=False), "target_reference_delete_not_rejected"),
+            (lambda s: s.dbs[TARGET].update(fk_restricts=False), "target_account_delete_not_restricted"),
+        ]
+        for hook, code in cases:
+            with self.subTest(code=code):
+                result, _, report, server, _, leftovers = self.run_with(hook)
+                self.assertEqual((result, report["error"]), (1, f"StepFailed: {code}"))
+                self.assert_cleaned(report, server, leftovers)
+                self.assertNotIn("delta", report)
+
+    def test_reference_seed_fk_failure_fails_and_leaves_nothing(self):
+        server = FakeServer()
+        server.fail.add("ref_seed_fk")
+        result, _, report, server, _, leftovers = run_main(server=server)
+        self.assertEqual((result, report["outcome"]), (1, "FAIL"))
+        self.assertEqual(report["error"], "FakePgError: insert violates foreign key constraint")
+        self.assertNotIn("seed_reference", report)
+        self.assertEqual(report["cleanup"]["source_reference_and_account"], "ABSENT")  # rolled back with the seed
+        self.assertEqual(report["cleanup"]["final_state"], "VERIFIED")
+        self.assertEqual(server.sql("CREATE DATABASE "), [])
+        source = server.dbs[rd.SOURCE_DB]
+        self.assertEqual((source["accounts"], source["refs"], server.deleted_accounts), ([], [], []))
+        self.assertEqual(leftovers, [])
+
+    # --- cleanup refusals (never PASS, never delete unknown rows) --------------------------------------------
+    def refused(self, hook, status, error=None, when="after_restore", server=None):
+        result, _, report, server, _, _ = self.run_with(hook, when, server)
+        self.assertNotEqual(result, 0)
+        self.assertEqual(report["cleanup_status"], "BLOCKED")
+        self.assertEqual(report["cleanup"]["source_reference_and_account"], status)
+        if error:
+            self.assertEqual(report["error"], error)
+        self.assertEqual((server.ref_truncated, server.deleted_accounts), (0, []))
+        self.assertTrue(report["cleanup"]["final_state"].startswith("FAILED:StepFailed:source_"))
+        self.assertEqual(report["cleanup"]["target_database"], "DROPPED_VERIFIED")
+        return report, server
+
+    def test_foreign_account_added_during_the_run_refuses_cleanup(self):
+        foreign = {"id": 777, "cliente": "foreign", "json": "{}"}
+        report, server = self.refused(lambda s: s.dbs[rd.SOURCE_DB]["accounts"].append(foreign),
+                                      "REFUSED:unexpected_source_rows", "StepFailed: source_reference_rows_changed")
+        self.assertIn(foreign, server.dbs[rd.SOURCE_DB]["accounts"])
+        self.assertEqual(len(server.dbs[rd.SOURCE_DB]["refs"]), 1)
+
+    def test_foreign_reference_added_during_the_run_refuses_cleanup(self):
+        def add(s):
+            own = s.dbs[rd.SOURCE_DB]["accounts"][0]["id"]
+            s.dbs[rd.SOURCE_DB]["refs"].append({"id": 778, "account_id": own, "request_id": "x", "json": "{}"})
+        report, server = self.refused(add, "REFUSED:unexpected_source_rows", "StepFailed: source_reference_rows_changed")
+        self.assertEqual(len(server.dbs[rd.SOURCE_DB]["refs"]), 2)
+
+    def test_modified_own_rows_refuse_cleanup(self):
+        for table in ("accounts", "refs"):
+            with self.subTest(table=table):
+                def tamper(s, t=table):
+                    s.dbs[rd.SOURCE_DB][t][0]["json"] += "x"
+                self.refused(tamper, "REFUSED:unexpected_source_rows", "StepFailed: source_reference_rows_changed")
+
+    def test_own_account_referenced_elsewhere_is_never_deleted(self):
+        def reference(s):
+            s.child_rows[("account_events", "account_id")] = {s.dbs[rd.SOURCE_DB]["accounts"][0]["id"]}
+        report, server = self.refused(reference, "REFUSED:account_still_referenced")
+        self.assertEqual(report["outcome"], "BLOCKED")  # the drill passed; cleanup uncertainty blocks PASS
+        source = server.dbs[rd.SOURCE_DB]
+        self.assertEqual((len(source["accounts"]), len(source["refs"])), (1, 1))
+
+    def test_unexpected_foreign_key_shape_refuses_cleanup(self):
+        for keys in ([REF_KEY, ('bad"name', "account_id", 1)], [REF_KEY, ("account_events", "account_id", 2)],
+                     [REF_KEY, ("account_events", "Account_Id", 1)]):
+            with self.subTest(keys=keys):
+                server = FakeServer()
+                server.child_keys = keys
+                self.refused(None, "REFUSED:unexpected_account_references", server=server)
+
+    def test_inexact_delete_rolls_back_the_truncate(self):
+        server = FakeServer()
+        server.fail.add("delete_noop")
+        result, _, report, server, _, _ = run_main(server=server)
+        self.assertEqual((result, report["outcome"]), (2, "BLOCKED"))
+        self.assertEqual(report["cleanup"]["source_reference_and_account"], "REFUSED:cleanup_not_exact")
+        source = server.dbs[rd.SOURCE_DB]
+        self.assertEqual((len(source["accounts"]), len(source["refs"])), (1, 1))  # TRUNCATE undone by rollback
+        self.assertEqual(server.deleted_accounts, [])
+
+    def test_cleanup_is_absent_when_rows_already_gone_and_refuses_non_zero_baseline(self):
+        result, _, report, _, _, _ = self.run_with(
+            lambda s: s.dbs[rd.SOURCE_DB].update(accounts=[], refs=[]))
+        self.assertEqual(report["cleanup"]["source_reference_and_account"], "ABSENT")
+        self.assertEqual(report["error"], "StepFailed: source_reference_rows_changed")
+        ledger = rd.Ledger(account_seed_attempted=True, initial_account_count=1, initial_reference_count=0,
+                           account_id=1, reference_id=2, account_fingerprint="a" * 64, reference_fingerprint="b" * 64,
+                           marker="m")
+        server = FakeServer()
+        server.dbs[rd.SOURCE_DB]["accounts"].append({"id": 1, "cliente": "m", "json": "{}"})
+        ctx = rd.check_gate(dict(GOOD_ENV, RUNNER_TEMP=tempfile.gettempdir()))
+        status = rd.remove_own_reference_and_account(rd.Postgres(ctx, server.connect), ledger)
+        self.assertEqual(status, "REFUSED:unexpected_source_rows")
+        self.assertEqual(server.deleted_accounts, [])
+
+
 class FakeProc:
     def __init__(self, argv, stdout, stderr, polls_until_exit, returncode=0, write_out=b"", write_err=b""):
         self.argv, self.pid, self.returncode, self._polls, self.killed = argv, 4242, None, polls_until_exit, False
@@ -1156,14 +1538,31 @@ class StaticTests(unittest.TestCase):
         text = " ".join(self.code_strings()).upper()
         for word in ("DISABLE TRIGGER", "CASCADE", "PRUNE", "ALTER TABLE", ".ENV", "DOCKER RM", "VOLUME"):
             self.assertNotIn(word, text)
-        self.assertEqual(sum("TRUNCATE TABLE" in s.upper() for s in self.code_strings()), 1)
+        self.assertEqual(sum("TRUNCATE TABLE" in s.upper() for s in self.code_strings()), 2)
         self.assertEqual(rd.SQL_TRUNCATE, "TRUNCATE TABLE account_data_entry_audit_events")
+        self.assertEqual(rd.SQL_TRUNCATE_REFERENCES, "TRUNCATE TABLE account_title_references")
+        for word in ("TRUNCATE TABLE ACCOUNTS", "TRUNCATE TABLE USERS", "TRUNCATE ACCOUNTS", "TRUNCATE USERS",
+                     "DISABLE", "SESSION_REPLICATION_ROLE", "DROP CONSTRAINT", "DROP TRIGGER", "ONLY ACCOUNTS"):
+            self.assertNotIn(word, text)
+        # exactly two DELETE FROM accounts statements: the restored-target FK probe and the owned-id cleanup
+        deletes = sorted(s for s in self.code_strings() if "DELETE FROM ACCOUNTS" in s.upper())
+        self.assertEqual(deletes, sorted([rd.SQL_ACCOUNT_FK_PROBE, rd.SQL_DELETE_OWN_ACCOUNT]))
+        self.assertEqual(rd.SQL_DELETE_OWN_ACCOUNT, "DELETE FROM accounts WHERE id = %s AND cliente = %s RETURNING id")
 
     def test_destructive_statements_live_only_in_their_guards(self):
         def users(name):
             return sorted({f.name for f in ast.walk(self.TREE) if isinstance(f, ast.FunctionDef)
                            for n in ast.walk(f) if isinstance(n, ast.Name) and n.id == name})
         self.assertEqual(users("SQL_TRUNCATE"), ["truncate_own_row"])
+        self.assertEqual(users("SQL_TRUNCATE_REFERENCES"), ["remove_own_reference_and_account"])
+        self.assertEqual(users("SQL_DELETE_OWN_ACCOUNT"), ["remove_own_reference_and_account"])
+        self.assertEqual(users("SQL_ACCOUNT_FK_PROBE"), ["drill"])
+        self.assertEqual(users("SQL_SEED_ACCOUNT"), ["drill"])
+        self.assertEqual(users("SQL_SEED_REFERENCE"), ["drill"])
+        dynamic = sorted({f.name for f in ast.walk(self.TREE) if isinstance(f, ast.FunctionDef)
+                          for n in ast.walk(f) if isinstance(n, ast.JoinedStr)
+                          and any(isinstance(v, ast.Constant) and "count(*) FROM" in str(v.value) for v in n.values)})
+        self.assertEqual(dynamic, ["remove_own_reference_and_account"])
         drops = sorted({f.name for f in ast.walk(self.TREE) if isinstance(f, ast.FunctionDef)
                         for n in ast.walk(f) if isinstance(n, ast.Constant) and isinstance(n.value, str)
                         and "DROP DATABASE" in n.value})
@@ -1196,6 +1595,8 @@ class StaticTests(unittest.TestCase):
         self.assertEqual(workflow.count("retention-days: 7"), 1)
         self.assertEqual(workflow.count("uses: actions/upload-artifact@v4"), 1)
         self.assertIn('assert result["account_data_entry_audit_events"] == 0, result', workflow)
+        self.assertIn('assert result["account_title_references"] == 0, result', workflow)
+        self.assertIn('assert result["accounts"] == 0, result', workflow)
         self.assertNotIn(".dump", workflow)
 
 

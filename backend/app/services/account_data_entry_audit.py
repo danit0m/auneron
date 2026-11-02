@@ -24,6 +24,7 @@ DIGEST_DOMAIN = b"auneron:account-data-entry-audit:v1:"
 AUDITED_FIELDS = ("cliente", "email", "valor", "vencimento", "whatsapp")
 DIGEST_FIELDS = ("cliente", "email", "whatsapp")
 CHANNELS = ("manual_api", "legacy_csv_upload")
+TITLE_REFERENCE_FIELDS = ("title_reference", "title_source")
 
 
 class AuditActorRequired(RuntimeError):
@@ -131,6 +132,16 @@ def record_update(db: Session, before: dict, account: Account, actor: AuditActor
     _add(db, "update", "manual_api", account.id, after["status"], actor, changed,
          before, after)
     return True
+
+
+def record_title_reference_assigned(db: Session, account: Account, actor: AuditActor):
+    # TASK054: a referencia vive na tabela lateral; accounts nao muda, por
+    # isso before == after. Aqui entram so os NOMES dos campos, nunca o valor
+    # (que pode ser dado pessoal). record_update nao serve: nao ha diff em
+    # AUDITED_FIELDS e ele nao gravaria nada.
+    values = snapshot(account)
+    return _add(db, "update", "manual_api", account.id, values["status"], actor,
+                TITLE_REFERENCE_FIELDS, values, values)
 
 
 def record_delete(db: Session, account: Account, actor: AuditActor):

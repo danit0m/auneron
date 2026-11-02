@@ -13,6 +13,10 @@ Amended:     2026-10-31, TASK046 refresh after the user's MVP scope
 Amended:     2026-10-31, TASK047 audit recovery gate PREPARED (CI runner,
              offline tests and workflow staged outside the repository;
              proposed, not run; no PASS exists)
+Amended:     2026-11-01, TASK054 stable title reference TI1
+             PREPARED_NOT_APPLIED (candidate files staged outside the
+             repository; migration e9a4c7d2b135 not applied; PostgreSQL
+             tests not run; recovery-gate extension not run)
 Accepted by: — (none; this document has no effect until a named human
              records acceptance in a separate, dated record)
 ```
@@ -60,6 +64,12 @@ dump/restore (§4). It has no result until an approved GitHub run passes.
 Designed, **not implemented**: stable title reference (§2) and the
 assisted-reconciliation transaction contract (§6), both in
 `CONTRACT-046-TITLE-IDENTITY-AND-RECONCILIATION.md`.
+
+Prepared, **not applied, not merged and not run**: TASK054 TI1, the first
+slice of the stable title reference (§2, "TI1"). The PO scope record
+`PO-DECISION-054-20261101.json` sets its scope; it is not human
+authorization of any database operation, migration, CI run or
+publication (`execution_authorized_by_this_record=false`).
 
 ## 1. Scope and references
 
@@ -148,6 +158,59 @@ This is how the code behaves today. It is not the final policy.
 - No bypass: names, values or dates must not be altered to get past the
   rule.
 
+**TI1 (TASK054, PREPARED_NOT_APPLIED): manual reference on a legacy
+title.** Candidate code only. Migration `e9a4c7d2b135` (parent
+`c3a8f1e6d204`) is not applied anywhere; its PostgreSQL tests and the
+recovery-gate extension have not run. Nothing below is claimed to work
+until then.
+
+- Storage (PO decision D1): a separate insert-only table
+  `account_title_references` (one row per account, `UNIQUE(account_id)`,
+  unique `(title_source, title_reference)`, FK `accounts.id` `RESTRICT`,
+  append-only trigger against UPDATE/DELETE). `accounts`, the v1 mirror,
+  the v1 import SQL and receipts, and the TASK045 audit table are not
+  changed.
+- Only path: `POST /accounts/{id}/title-reference` with `clients.manage`.
+  It takes the identity advisory lock, then the account row `FOR UPDATE`.
+  The values are trimmed, NFC-normalized and validated (source
+  `^[a-z0-9][a-z0-9._-]{0,63}$`; reference 1-128 characters with no
+  control or invisible format characters).
+- An assigned reference is immutable: a second assign for the same
+  account → 409 `title_reference_already_assigned`. A reference owned by
+  another account → 409 `reference_exists` with that account ID.
+- Tuple rule: if another title with the same normalized client, value
+  and due date is **unreferenced**, the assign is blocked (409
+  `legacy_duplicate_review`, no override, D6). If every coincident title
+  is **referenced**, the assign succeeds with a
+  `coincident_referenced_tuple` warning.
+- `DELETE /accounts/{id}` of a referenced account → 409 through the
+  existing governed-history guard (the side table is added to it), with
+  the FK `RESTRICT` as database backstop (D7). Unreferenced accounts stay
+  deletable as before.
+- Audit (D8): the side-table row and one TASK045 `update` row (field
+  names only) are written in one transaction; if either fails, both are
+  rolled back.
+- `POST`/`PUT /accounts` reject only the `title_source` and
+  `title_reference` keys (422). Other unknown keys are still ignored, and
+  the v1 tuple 409 text is unchanged. Manual creation stays unreferenced
+  and keeps the conservative 409 against any coincident title.
+- Not in TI1: import identity v2 (TI2, only after TI1 is reviewed and
+  accepted), create-with-reference, override, idempotent manual create
+  (area4, D2/D3), UI, bank and LLM work.
+
+Personal data and retention (TI1): a reference can contain personal data
+(CPF/CNPJ, names, order numbers). It is stored only in the side table.
+It is not written to logs, error bodies or either audit table, and only
+the caller who supplied it gets it back in the 201 response. The row is
+append-only and the account cannot be deleted while it exists, so a
+stored reference **cannot currently be erased** through the product.
+Only synthetic data may be written to this table now. Real data needs a
+named retention, access and erasure procedure before area5 activation.
+Known limit: the existing generic 422 response of `POST`/`PUT /accounts`
+echoes the request body back to the same caller; it is not logged or
+stored by the application. The new assign route answers with fixed codes
+only.
+
 ## 3. D2 — Human separation of duties
 
 Status: PO recommendation within the user-approved MVP scope. No
@@ -220,9 +283,12 @@ CSV upload. Design:
   audited accounts stay deletable.
 - Import confirmation keeps its own audit and is not changed.
 
-The stable-reference implementation (§2) will extend this table in a
-**separate, later** migration (reference fields in `changed_fields`).
-`c3a8f1e6d204` stays as prepared.
+The stable-reference implementation (§2, TI1, PREPARED_NOT_APPLIED)
+does **not** change this table: there is no audit DDL. A manual assign
+writes one `update` row in the same transaction as the side-table row,
+with `changed_fields = ["title_reference", "title_source"]` and identical
+before/after snapshots of the audited account fields. The reference
+value itself is never stored here. `c3a8f1e6d204` is unchanged.
 
 Until that change has been tested and merged, the gaps in the table above
 remain open.
@@ -273,6 +339,34 @@ The gate's GitHub context checks are not proof of human approval. The
 gate counts as passed only after a PO-approved run reports PASS with
 its cleanup verified. A failure, timeout or uncertain cleanup is never a
 pass.
+
+TI1 extension of the same gate (TASK054, **PREPARED_NOT_APPLIED, not
+run**; PO decision D9 rejected a catalog-only check): head `e9a4c7d2b135`,
+39 tables. In addition to the audit proof above it would:
+
+- check `account_title_references` strictly on source and target:
+  11 columns, 7 named CHECKs (no IN lists, so no rendering allowlist),
+  the exact PK/UNIQUE/FK `ON DELETE RESTRICT` definitions, its 3 indexes,
+  the function and the enabled trigger. If CI renders any definition
+  differently, the run fails and the difference must be reviewed;
+- seed exactly **one** synthetic account and **one** reference (run
+  marker) into the empty CI `auneron_test` only, and record their IDs,
+  full-row fingerprints and the initial zero counts;
+- after native restore, require both rows to be byte-identical, the
+  reference UPDATE/DELETE rejected and the account DELETE refused by the
+  FK;
+- clean up in a **separate** step and one transaction: lock `accounts`,
+  then the side table; proceed only if both were empty at the start, now
+  hold exactly the run's rows, and no other row references the account;
+  then TRUNCATE only the side table and DELETE only the owned account ID.
+  It never truncates `accounts` or `users`, never deletes an unknown
+  account, and never disables a trigger or FK. Any other state is
+  reported and blocks PASS.
+
+These extra seed and cleanup steps widen the gate's write surface. A new
+human authorization for that exact CI scope is required before the first
+run. The 48 CHECK probes and the 180 s owned-target DROP budget are
+unchanged.
 
 Residual (PO-accepted at this scope, not fixed): approval-request
 creation checks that the target account exists without locking it. A
@@ -369,8 +463,12 @@ contract; it has no HTTP route and is not activated (D4).
   merge are **pending**.
 - Legacy CSV in-file duplicate finding F1 (§2): fix prepared in TASK045,
   **not tested**.
-- Stable title reference (§2): design in CONTRACT-046 §A, implementation
-  **pending** (next area2 bundle, after TASK045).
+- Stable title reference (§2): TI1 (manual assign) **prepared, not
+  applied, not run** (TASK054). PO review, then a separately authorized
+  test run, CI recovery-gate run and merge are pending. TI2 (import v2)
+  is not started and needs TI1 accepted first.
+- Retention, access and erasure procedure for stored title references
+  (§2, TI1): named decision required before real data or area5.
 - Targeted recovery delta for the new audit table and trigger (§4):
   gate prepared in TASK047, **proposed, not run**. Its first execution
   needs specific approval: a fresh GitHub run that applies migration
