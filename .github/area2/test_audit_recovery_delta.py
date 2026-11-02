@@ -1600,5 +1600,80 @@ class StaticTests(unittest.TestCase):
         self.assertNotIn(".dump", workflow)
 
 
+
+
+class ReferenceCheckRenderingTests(unittest.TestCase):
+    # Verbatim catalog definitions from CI run 41512773186, not built from production constants.
+    NAME = "ck_account_title_references_title_reference"
+    SOURCE = "CHECK ((((char_length((title_reference)::text) >= 1) AND (char_length((title_reference)::text) <= 128)) AND ((title_reference)::text = btrim((title_reference)::text)) AND ((title_reference)::text !~ '[\\x01-\\x1f\\x7f-\\x9f]'::text)))"
+    TARGET = "CHECK (((char_length((title_reference)::text) >= 1) AND (char_length((title_reference)::text) <= 128) AND ((title_reference)::text = btrim((title_reference)::text)) AND ((title_reference)::text !~ '[\\x01-\\x1f\\x7f-\\x9f]'::text)))"
+
+    def facts(self, target=False):
+        f = catalog(artifact_target_checks() if target else None)
+        f["ref_checks"] = [list(row) for row in
+            [["ck_account_title_references_actor_user_id","CHECK ((actor_user_id > 0))"],["ck_account_title_references_assigned_via","CHECK ((((assigned_via)::text = 'import_v2'::text) OR ((assigned_via)::text = 'manual_assign'::text)))"],["ck_account_title_references_auth_session_id","CHECK (((auth_session_id IS NULL) OR (auth_session_id > 0)))"],["ck_account_title_references_import_content_sha256_hex","CHECK (((import_content_sha256 IS NULL) OR ((import_content_sha256)::text ~ '^[0-9a-f]{64}$'::text)))"],["ck_account_title_references_provenance","CHECK (((((assigned_via)::text = 'import_v2'::text) AND (import_content_sha256 IS NOT NULL) AND (import_idempotency_key IS NOT NULL)) OR (((assigned_via)::text = 'manual_assign'::text) AND (import_content_sha256 IS NULL) AND (import_idempotency_key IS NULL))))"],["ck_account_title_references_title_reference","CHECK ((((char_length((title_reference)::text) >= 1) AND (char_length((title_reference)::text) <= 128)) AND ((title_reference)::text = btrim((title_reference)::text)) AND ((title_reference)::text !~ '[\\x01-\\x1f\\x7f-\\x9f]'::text)))"],["ck_account_title_references_title_source","CHECK (((title_source)::text ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))"]]]
+        if target:
+            f["ref_checks"] = [[n, self.TARGET if n == self.NAME else d] for n, d in f["ref_checks"]]
+        return f
+
+    def test_only_exact_artifact_pair_is_allowed(self):
+        self.assertEqual(rd.KNOWN_REF_CHECK_RENDERINGS, {self.NAME: (self.SOURCE, self.TARGET)})
+        self.assertEqual(rd.facts_match(self.facts(), self.facts(True)),
+                         (True, [*KNOWN, self.NAME]))
+        self.assertEqual(rd.facts_match(self.facts(), self.facts()), (True, []))
+        self.assertEqual(rd.facts_match(self.facts(True), self.facts()), (False, []))
+
+    def test_changed_rules_and_other_facts_still_fail(self):
+        variants = [
+            self.TARGET.replace(">= 1", ">= 0"),
+            self.TARGET.replace("<= 128", "<= 129"),
+            self.TARGET.replace(" AND ", " OR ", 1),
+            self.TARGET.replace("!~", "~"),
+            self.TARGET.replace("::text", "::varchar", 1),
+            self.TARGET.replace("btrim", "ltrim"),
+            self.TARGET.replace("title_reference", "title_source"),
+            self.TARGET + " NOT VALID",
+            self.TARGET.replace("CHECK (", "CHECK  (", 1),
+        ]
+        for definition in variants:
+            with self.subTest(definition=definition):
+                target = self.facts(True)
+                target["ref_checks"] = [[n, definition if n == self.NAME else d]
+                                        for n, d in target["ref_checks"]]
+                self.assertEqual(rd.facts_match(self.facts(), target), (False, []))
+        for key in ("ref_keys", "ref_indexes", "ref_function", "ref_trigger", "ref_columns"):
+            target = self.facts(True)
+            target[key] = []
+            self.assertEqual(rd.facts_match(self.facts(), target), (False, []))
+        for key in ("checks", "ref_checks"):
+            target = self.facts(True)
+            target[key] = target[key][1:]
+            self.assertEqual(rd.facts_match(self.facts(), target), (False, []))
+
+    def test_changed_source_or_wrong_table_or_name_is_rejected(self):
+        source = self.facts()
+        source["ref_checks"] = [[n, d.replace("<= 128", "<= 127")] for n, d in source["ref_checks"]]
+        self.assertEqual(rd.facts_match(source, self.facts(True)), (False, []))
+        for key in ("checks", "ref_checks"):
+            source, target = catalog(), catalog()
+            name = self.NAME if key == "checks" else "other_constraint"
+            source[key].append([name, self.SOURCE])
+            target[key].append([name, self.TARGET])
+            self.assertEqual(rd.facts_match(source, target), (False, []))
+
+    def test_complete_drill_preserves_diagnostics_and_cleanup(self):
+        server = FakeServer()
+        server.dbs[rd.SOURCE_DB]["facts"] = artifact_facts()
+        server.dbs[rd.SOURCE_DB]["facts"]["ref_checks"] = [tuple(r) for r in self.facts()["ref_checks"]]
+        def after_restore():
+            server.dbs[TARGET]["facts"]["checks"] = artifact_target_checks()
+            server.dbs[TARGET]["facts"]["ref_checks"] = [tuple(r) for r in self.facts(True)["ref_checks"]]
+        server.hooks["after_restore"] = after_restore
+        result, _, report, server, _, leftovers = run_main(server=server)
+        self.assertEqual((result, report["outcome"]), (0, "PASS"), report)
+        self.assertEqual(report["schema_comparison"]["differing_keys"], ["checks", "ref_checks"])
+        self.assertEqual(report["schema_comparison"]["accepted_known_check_renderings"], [*KNOWN, self.NAME])
+        FlowTests.assert_cleaned(self, report, server, leftovers)
+
 if __name__ == "__main__":
     unittest.main()

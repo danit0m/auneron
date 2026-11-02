@@ -16,7 +16,8 @@ reference UPDATE/DELETE rejected and the account DELETE restricted by the FK in 
 The area1 full recovery and Layer B are NOT repeated.
 Catalog facts must match strictly, except three named audit CHECKs whose exact source/target texts are a frozen
 allowlist (pg_restore re-renders the varchar ANY array cast); see KNOWN_CHECK_RENDERINGS. The side table has
-no IN-list CHECK and no allowlist entry: any rendering difference there fails and must be reviewed.
+no IN-list CHECK; only the exact title_reference AND regrouping observed in CI run 41512773186
+is tolerated. Every other rendering difference fails and must be reviewed.
 
 psycopg is imported lazily (execute only). Native tools run through ``docker exec`` in the
 service container against 127.0.0.1; the password goes only through the child env
@@ -220,6 +221,16 @@ KNOWN_CHECK_LITERALS = {
 KNOWN_CHECK_RENDERINGS = {
     name: (f"CHECK ({_any_text(column, literals, False)})", f"CHECK ({_any_text(column, literals, True)})")
     for name, (column, literals) in KNOWN_CHECK_LITERALS.items()}
+# Exact source/restore pair from CI run 41512773186. PostgreSQL flattens the
+# nested AND of the two length bounds; AND is associative, including NULL.
+# No expression is parsed or normalised. Operators, bounds, regex and casts
+# must match these reviewed bytes, in this direction and under this name only.
+KNOWN_REF_CHECK_RENDERINGS = {
+    "ck_account_title_references_title_reference": (
+        "CHECK ((((char_length((title_reference)::text) >= 1) AND (char_length((title_reference)::text) <= 128)) AND ((title_reference)::text = btrim((title_reference)::text)) AND ((title_reference)::text !~ '[\\x01-\\x1f\\x7f-\\x9f]'::text)))",
+        "CHECK (((char_length((title_reference)::text) >= 1) AND (char_length((title_reference)::text) <= 128) AND ((title_reference)::text = btrim((title_reference)::text)) AND ((title_reference)::text !~ '[\\x01-\\x1f\\x7f-\\x9f]'::text)))",
+    ),
+}
 # Read-only truth-value probes: both renderings must agree with plain membership on fixed trusted values.
 # Finite probes support, but do not prove, equivalence; the exact allowlist above is the boundary.
 PROBE_REF = "%s::character varying"
@@ -569,21 +580,26 @@ def compare_schema(source, target, source_bodies, target_bodies, source_ref_bodi
 
 
 def facts_match(source, target):
-    """TASK051 gate: every fact is strictly equal, except that a CHECK listed in KNOWN_CHECK_RENDERINGS may
-    differ by exactly its frozen (source, target) pair. Returns (matched, names accepted via that pair)."""
-    if set(source) != set(target) or any(source[k] != target[k] for k in source if k != "checks"):
-        return False, []
-    src, tgt = source.get("checks"), target.get("checks")
-    if not (isinstance(src, list) and isinstance(tgt, list) and len(src) == len(tgt)):
+    """Strict facts, except the exact reviewed CHECK rendering pairs, by table and name."""
+    check_groups = {"checks": KNOWN_CHECK_RENDERINGS, "ref_checks": KNOWN_REF_CHECK_RENDERINGS}
+    if set(source) != set(target) or any(
+            source[k] != target[k] for k in source if k not in check_groups):
         return False, []
     accepted = []
-    for s, t in zip(src, tgt):
-        if s == t:
+    for key, allowed in check_groups.items():
+        # Preserve the historical behavior for callers without reference facts.
+        if key not in source:
             continue
-        if not (isinstance(s, (list, tuple)) and isinstance(t, (list, tuple)) and len(s) == len(t) == 2
-                and s[0] == t[0] and KNOWN_CHECK_RENDERINGS.get(s[0]) == (s[1], t[1])):
+        src, tgt = source[key], target[key]
+        if not (isinstance(src, list) and isinstance(tgt, list) and len(src) == len(tgt)):
             return False, []
-        accepted.append(s[0])
+        for s, t in zip(src, tgt):
+            if s == t:
+                continue
+            if not (isinstance(s, (list, tuple)) and isinstance(t, (list, tuple)) and len(s) == len(t) == 2
+                    and s[0] == t[0] and allowed.get(s[0]) == (s[1], t[1])):
+                return False, []
+            accepted.append(s[0])
     return True, accepted
 
 
