@@ -64,6 +64,18 @@ class AccountBase(BaseModel):
     )
 
 
+# TASK054: a referencia de titulo so entra pela rota de atribuicao. Em
+# POST/PUT /accounts estas chaves sao recusadas (422); as demais chaves
+# desconhecidas continuam ignoradas como antes (sem extra="forbid").
+TITLE_REFERENCE_KEYS = frozenset({"title_source", "title_reference"})
+
+
+def _reject_title_reference_keys(data):
+    if isinstance(data, dict) and TITLE_REFERENCE_KEYS.intersection(data):
+        raise ValueError("title_reference_fields_not_accepted")
+    return data
+
+
 class AccountCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -72,6 +84,11 @@ class AccountCreate(BaseModel):
     whatsapp: str | None = Field(default=None, max_length=30)
     valor: Money
     vencimento: date
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_title_reference(cls, data):
+        return _reject_title_reference_keys(data)
 
 
 class AccountUpdate(BaseModel):
@@ -94,6 +111,11 @@ class AccountUpdate(BaseModel):
 
     valor: Money | None = None
     vencimento: date | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_title_reference(cls, data):
+        return _reject_title_reference_keys(data)
 
 
 class ReceivableLifecycle(BaseModel):
@@ -138,6 +160,29 @@ class AccountResponse(AccountBase):
         )
 
         return self
+
+
+# TASK054 (TI1): atribuicao manual da referencia de origem a um titulo
+# legado. Strict e extra="forbid" so neste schema novo. A rota valida o
+# corpo por conta propria e responde 422 com codigo fixo, sem ecoar valores;
+# a normalizacao (strip, NFC, regras) fica em account_title_reference.
+class TitleReferenceAssignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    title_source: str
+    title_reference: str
+
+
+class TitleReferenceWarning(BaseModel):
+    code: Literal["coincident_referenced_tuple"]
+    account_ids: list[int]
+
+
+class TitleReferenceAssignResponse(BaseModel):
+    account_id: int
+    title_source: str
+    title_reference: str
+    warnings: list[TitleReferenceWarning]
 
 
 AccountMarkPaidExpectedStatus = Literal[

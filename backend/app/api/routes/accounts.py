@@ -1,5 +1,8 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,6 +22,7 @@ from app.models.account_event import AccountEvent
 from app.models.account_vencimento_change import AccountVencimentoChange
 from app.models.approval import ApprovalRequest
 from app.models.business_effect_verification import BusinessEffectVerification
+from app.models.import_confirmation import account_title_references
 from app.models.policy_authority_consumption import PolicyAuthorityConsumption
 from app.repositories.memory_repository import MemoryRepository
 from app.repositories.skill_repository import SkillRepository
@@ -28,6 +32,12 @@ from app.schemas.account import (
     AccountResponse,
     AccountUpdate,
     ClientClassificationDetail,
+    TitleReferenceAssignRequest,
+    TitleReferenceAssignResponse,
+)
+from app.services.account_title_reference import (
+    TitleReferenceError,
+    assign_title_reference,
 )
 from app.services.authenticated_advisory_envelope_assembly import (
     AuthenticatedAdvisoryEnvelopeAssemblyService,
@@ -91,13 +101,15 @@ def _writers_busy() -> HTTPException:
 # historico); as demais guardam o id sem FK (o DELETE as deixaria orfas).
 # Apenas checagem: sem DDL, sem soft delete. account_data_entry_audit_events
 # fica FORA de proposito: senao toda conta criada manualmente seria
-# impossivel de excluir.
+# impossivel de excluir. account_title_references (TASK054) entra: conta
+# referenciada recebe 409 limpo antes do FK RESTRICT do banco.
 GOVERNED_HISTORY_COLUMNS = (
     AccountEvent.account_id,
     AccountVencimentoChange.account_id,
     ApprovalRequest.target_account_id,
     PolicyAuthorityConsumption.target_account_id,
     BusinessEffectVerification.target_account_id,
+    account_title_references.c.account_id,
 )
 
 
@@ -394,6 +406,90 @@ def delete_account(
     return Response(
         status_code=status.HTTP_204_NO_CONTENT,
     )
+
+
+def _invalid_title_reference_request() -> HTTPException:
+    # Codigo fixo; o corpo recebido nunca e ecoado (pode conter dado pessoal).
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"code": "invalid_title_reference_request"},
+    )
+
+
+@router.post(
+    "/{account_id}/title-reference",
+    response_model=TitleReferenceAssignResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def assign_account_title_reference(
+    account_id: int,
+    body: Any = Body(default=None),
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("clients.manage")
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    TASK054 (TI1): atribui a referencia de origem imutavel a um titulo
+    legado (sem referencia). Sem evento, advisory ou efeito financeiro: a
+    linha de accounts nem e alterada. Linha lateral + auditoria TASK045 (so
+    nomes de campo) no mesmo commit.
+    """
+    try:
+        payload = TitleReferenceAssignRequest.model_validate(body)
+    except ValidationError:
+        payload = None
+    if payload is None:
+        raise _invalid_title_reference_request()
+
+    try:
+        lock_account_identity(db)
+    except AccountWritersBusy:
+        raise _writers_busy() from None
+
+    actor = audit_actor(authenticated)
+
+    # Mesma ordem de PUT/DELETE: lock de identidade, depois a linha da conta.
+    account = db.execute(
+        select(Account)
+        .where(Account.id == account_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+
+    rejection = None
+    try:
+        assigned = assign_title_reference(
+            db, account, payload.title_source, payload.title_reference, actor
+        )
+    except TitleReferenceError as error:
+        rejection = error
+    if rejection is not None:
+        db.rollback()
+        raise HTTPException(
+            status_code=rejection.status_code,
+            detail=rejection.detail(),
+        )
+
+    db.commit()
+
+    warnings = (
+        [{"code": "coincident_referenced_tuple",
+          "account_ids": list(assigned.coincident_account_ids)}]
+        if assigned.coincident_account_ids
+        else []
+    )
+    return {
+        "account_id": assigned.account_id,
+        "title_source": assigned.title_source,
+        "title_reference": assigned.title_reference,
+        "warnings": warnings,
+    }
 
 
 @router.post(

@@ -239,6 +239,10 @@ jobs:
       # proprio run. Area1/Layer B nao sao repetidos. O executor remove o
       # banco que criou e apenas a propria linha; o gate e de contexto, nao
       # prova criptografica de aprovacao humana.
+      # TASK054 (TI1, PREPARADO): head e9a4c7d2b135 (39 tabelas); o mesmo
+      # passo prova tambem account_title_references (catalogo estrito, FK
+      # RESTRICT, trigger) com UMA conta e UMA referencia sinteticas do run,
+      # removidas por limpeza propria, transacional e fail-closed.
       - name: Delta de recuperação da auditoria de cadastro (PostgreSQL nativo)
         if: github.event_name == 'push' || github.event_name == 'pull_request'
         working-directory: ${{ github.workspace }}
@@ -292,7 +296,10 @@ jobs:
                               AS import_confirmation_audit_events,
                           (SELECT COUNT(*)
                               FROM account_data_entry_audit_events)
-                              AS account_data_entry_audit_events
+                              AS account_data_entry_audit_events,
+                          (SELECT COUNT(*)
+                              FROM account_title_references)
+                              AS account_title_references
                       """
                   )
               ).mappings().one()
@@ -304,6 +311,7 @@ jobs:
           assert result["import_confirmation_receipts"] == 0, result
           assert result["import_confirmation_audit_events"] == 0, result
           assert result["account_data_entry_audit_events"] == 0, result
+          assert result["account_title_references"] == 0, result
 
           print(
               "Banco de testes limpo:",

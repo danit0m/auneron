@@ -37,6 +37,8 @@ ADDITIVE_MIGRATION_OPS = {"create_table", "create_index"}
 # excecao revisada (AREA2-TASK049): revisao -> (pai, SHA-256 do arquivo com CRLF->LF); ver is_additive_migration
 REVIEWED_SQL_MIGRATIONS = {
     "c3a8f1e6d204": ("b428d1a6c903", "b6ca34d0d157319f7bae0c406a796e6c3a8d0abf97e0a570e7856b02c930afe2"),
+    # AREA2-TASK054 (TI1): tabela lateral account_title_references + funcao/trigger append-only proprios
+    "e9a4c7d2b135": ("c3a8f1e6d204", "d22031ab97651e98a6a3e986e1996b98e349bc95067b581e264266b3db2f4175"),
 }
 REVIEWED_SQL_OPS = ADDITIVE_MIGRATION_OPS | {"execute"}
 LLM_TOKENS = ("openai", "anthropic", "ollama", "litellm", "langchain", "gemini", "claude_api", "llm_api")
@@ -430,3 +432,53 @@ def test_raw_sql_and_destructive_ops_stay_rejected_outside_the_reviewed_exceptio
     assert not is_additive_migration("zz", ("b428d1a6c903",), ordinary_destructive)
     assert is_additive_migration("zz", ("b428d1a6c903",), ordinary)                  # comportamento antigo
     assert ADDITIVE_MIGRATION_OPS == {"create_table", "create_index"}                # execute nao virou aditivo
+
+
+# ---------------------------------------------------------------------------- excecao revisada de SQL (AREA2-TASK054)
+TITLE_REFERENCES_REVISION = "e9a4c7d2b135"
+
+
+def test_the_title_reference_sql_only_creates_a_new_function_and_a_trigger_on_its_own_new_table():
+    parents, path = read_revisions()[TITLE_REFERENCES_REVISION]
+    source = path.read_text(encoding="utf-8")
+
+    assert parents == ("c3a8f1e6d204",)
+    assert is_additive_migration(TITLE_REFERENCES_REVISION, parents, path)
+    assert upgrade_ops(path) == REVIEWED_SQL_OPS
+    assert "TABLE = 'account_title_references'" in source
+    assert "op.create_table(\n        TABLE," in source             # a tabela do trigger nasce nesta revisao
+    assert upgrade_execute_sql(path) == [
+        "CREATE FUNCTION account_title_references_append_only() RETURNS trigger LANGUAGE plpgsql "
+        "AS $$ BEGIN RAISE EXCEPTION 'account_title_references is append-only'; END $$",
+        "CREATE TRIGGER trg_account_title_references_append_only BEFORE UPDATE OR DELETE "
+        "ON account_title_references FOR EACH ROW EXECUTE FUNCTION account_title_references_append_only()",
+    ]
+
+
+def test_the_title_reference_exception_is_pinned_to_its_exact_bytes_and_parent(tmp_path):
+    parents, path = read_revisions()[TITLE_REFERENCES_REVISION]
+    source = path.read_bytes().replace(b"\r\n", b"\n")
+
+    crlf = tmp_path / "crlf.py"
+    crlf.write_bytes(source.replace(b"\n", b"\r\n"))
+    assert is_additive_migration(TITLE_REFERENCES_REVISION, parents, crlf)
+
+    for altered in (
+        source.replace(b"CREATE FUNCTION {FUNCTION}()", b"CREATE OR REPLACE FUNCTION {FUNCTION}()"),
+        source.replace(b"ON {TABLE} FOR EACH ROW", b"ON accounts FOR EACH ROW"),
+        source.replace(b"BEFORE UPDATE OR DELETE", b"BEFORE DELETE"),
+        source.replace(b"ondelete='RESTRICT'", b"ondelete='CASCADE'"),
+        source + b"\n",
+    ):
+        assert altered != source
+        changed = tmp_path / "changed.py"
+        changed.write_bytes(altered)
+        assert upgrade_ops(changed) == REVIEWED_SQL_OPS
+        assert not is_additive_migration(TITLE_REFERENCES_REVISION, parents, changed)
+
+    assert not is_additive_migration(TITLE_REFERENCES_REVISION, ("b428d1a6c903",), path)   # pai diferente
+    # O pin da c3a8f1e6d204 nao amarra outra revisao: os mesmos bytes sob outro id sao recusados.
+    assert not is_additive_migration("c3a8f1e6d204", ("c3a8f1e6d204",), path)
+    assert set(REVIEWED_SQL_MIGRATIONS) == {"c3a8f1e6d204", TITLE_REFERENCES_REVISION}
+    assert REVIEWED_SQL_OPS == {"create_table", "create_index", "execute"}
+    assert ADDITIVE_MIGRATION_OPS == {"create_table", "create_index"}

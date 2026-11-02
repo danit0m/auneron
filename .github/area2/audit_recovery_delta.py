@@ -8,10 +8,16 @@ These are context checks, NOT cryptographic proof of human approval.
 
 It proves ONLY that the table account_data_entry_audit_events (24 columns, 22 named CHECKs),
 its index, its function and enabled trigger, and one synthetic row survive a native
-pg_dump/pg_restore into a newly created database at head c3a8f1e6d204 (38 tables), and that
-UPDATE/DELETE stay rejected there. The area1 full recovery and Layer B are NOT repeated.
-Catalog facts must match strictly, except three named CHECKs whose exact source/target texts are a frozen
-allowlist (pg_restore re-renders the varchar ANY array cast); see KNOWN_CHECK_RENDERINGS.
+pg_dump/pg_restore into a newly created database at head e9a4c7d2b135 (39 tables), and that
+UPDATE/DELETE stay rejected there. TASK054 (TI1, PREPARED, not run) adds the same proof for the side
+table account_title_references (11 columns, 7 named CHECKs, PK/UNIQUE/FK RESTRICT, 3 indexes, function and
+enabled trigger) with ONE owned synthetic account and ONE owned reference: both rows restored exactly,
+reference UPDATE/DELETE rejected and the account DELETE restricted by the FK in the restored database.
+The area1 full recovery and Layer B are NOT repeated.
+Catalog facts must match strictly, except three named audit CHECKs whose exact source/target texts are a frozen
+allowlist (pg_restore re-renders the varchar ANY array cast); see KNOWN_CHECK_RENDERINGS. The side table has
+no IN-list CHECK; only the exact title_reference AND regrouping observed in CI run 41512773186
+is tolerated. Every other rendering difference fails and must be reviewed.
 
 psycopg is imported lazily (execute only). Native tools run through ``docker exec`` in the
 service container against 127.0.0.1; the password goes only through the child env
@@ -19,6 +25,11 @@ service container against 127.0.0.1; the password goes only through the child en
 No Docker resource is created, removed, pruned or adopted. Cleanup drops ONLY the database
 this run created (same OID + run-marker comment) and TRUNCATEs the audit table ONLY when it
 holds exactly this run's row (id + marker + full fingerprint) and was empty before.
+A separate step (TASK054) removes the owned reference and account in ONE transaction, ONLY when accounts and
+account_title_references were empty before and now hold exactly this run's rows (ids + marker + fingerprints)
+and nothing else references the account: LOCK accounts then the side table (fixed order), TRUNCATE ONLY the side
+table, DELETE ONLY the owned account id. It never truncates accounts or users, never deletes an unknown account
+and never disables a trigger or FK; any other state is reported and blocks PASS.
 Only the DROP of that owned database runs with a longer, bounded statement_timeout (TASK052,
 CLEANUP_DROP_BUDGET); every other statement keeps CONNECT_OPTIONS.
 Exit codes: 0 PASS / dry plan, 1 FAIL, 2 BLOCKED (gate, precondition or cleanup), 3 ABORTED.
@@ -47,8 +58,8 @@ from urllib.parse import urlsplit
 
 REPOSITORY = "danit0m/auneron"
 SOURCE_DB = "auneron_test"
-HEAD_REVISION = "c3a8f1e6d204"
-TABLE_COUNT = 38
+HEAD_REVISION = "e9a4c7d2b135"
+TABLE_COUNT = 39
 PG_IMAGE = "postgres:17"
 TABLE = "account_data_entry_audit_events"
 INDEX = "ix_account_data_entry_audit_account_occurred"
@@ -71,7 +82,34 @@ CHECKS = frozenset({f"ck_account_data_entry_audit_{name}" for name in (
     "actor_user_id", "actor_reference", "auth_session_id", "changed_fields_array", "status",
     "source_by_channel", "source_row", "create_shape", "update_shape", "delete_shape",
     *(f"{column}_hex" for column in _DIGESTS))})
-EMPTY_AT_START = (TABLE, "users", "accounts", "import_confirmation_receipts")
+# TASK054 (TI1): side table with the stable title reference (migration e9a4c7d2b135).
+REF_TABLE = "account_title_references"
+REF_INDEX = "uq_account_title_references_source_ref"
+REF_FUNCTION = "account_title_references_append_only"
+REF_TRIGGER = "trg_account_title_references_append_only"
+REF_APPEND_ONLY_MESSAGE = f"{REF_TABLE} is append-only"
+REF_COLUMNS = ("id", "account_id", "title_source", "title_reference", "assigned_via", "actor_user_id",
+               "auth_session_id", "request_id", "import_idempotency_key", "import_content_sha256", "created_at")
+REF_CHECKS = frozenset({f"ck_account_title_references_{name}" for name in (
+    "title_source", "title_reference", "assigned_via", "actor_user_id", "auth_session_id",
+    "import_content_sha256_hex", "provenance")})
+# name -> (contype, exact pg_get_constraintdef); a different CI rendering fails and must be reviewed.
+REF_KEYS = {
+    "account_title_references_pkey": ("p", "PRIMARY KEY (id)"),
+    "fk_account_title_references_account_id":
+        ("f", "FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT"),
+    "uq_account_title_references_account": ("u", "UNIQUE (account_id)"),
+}
+# indexname -> (unique, exact indexdef suffix)
+REF_INDEXES = {
+    "account_title_references_pkey": (True, "USING btree (id)"),
+    REF_INDEX: (True, "USING btree (title_source, title_reference)"),
+    "uq_account_title_references_account": (True, "USING btree (account_id)"),
+}
+REF_SOURCE = "area2-recovery"
+FOREIGN_KEY_VIOLATION = "23503"
+EMPTY_AT_START = (TABLE, "users", "accounts", "import_confirmation_receipts", REF_TABLE)
+IDENT_RE = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 TARGET_RE = re.compile(r"auneron_audit_recovery_[1-9]\d{0,19}_[1-9]\d{0,2}")
 MARKER_RE = re.compile(r"area2-audit-recovery:[1-9]\d{0,19}:[1-9]\d{0,2}:[0-9a-f]{16}")
 CONTAINER_RE = re.compile(r"[0-9a-f]{64}")
@@ -129,6 +167,36 @@ SQL_TRUNCATE = f"TRUNCATE TABLE {TABLE}"  # the only TRUNCATE; guarded in trunca
 SQL_READ_ONLY = "SET TRANSACTION READ ONLY"
 SQL_DROP_BUDGET = f"SET statement_timeout = {CLEANUP_DROP_STATEMENT_TIMEOUT_MS}"  # session only; drop_target()
 SQL_STATEMENT_TIMEOUT = "SELECT setting FROM pg_settings WHERE name = 'statement_timeout'"  # raw value in ms
+# TASK054 side table: catalog, owned rows, probes and the guarded cleanup.
+SQL_REF_CHECKS = (f"SELECT conname::text, pg_get_constraintdef(oid) FROM pg_constraint "
+                  f"WHERE conrelid = 'public.{REF_TABLE}'::regclass AND contype = 'c' ORDER BY conname")
+SQL_REF_KEYS = (f"SELECT conname::text, contype::text, pg_get_constraintdef(oid) FROM pg_constraint "
+                f"WHERE conrelid = 'public.{REF_TABLE}'::regclass AND contype <> 'c' ORDER BY conname")
+SQL_INDEXES = ("SELECT indexname::text, indexdef FROM pg_indexes "
+               "WHERE schemaname = 'public' AND tablename = %s ORDER BY indexname")
+SQL_REF_TRIGGER = (f"SELECT t.tgenabled::text, t.tgtype::int, p.proname::text FROM pg_trigger t "
+                   f"JOIN pg_proc p ON p.oid = t.tgfoid WHERE t.tgrelid = 'public.{REF_TABLE}'::regclass "
+                   f"AND t.tgname = %s AND NOT t.tgisinternal")
+SQL_SEED_ACCOUNT = ("INSERT INTO accounts (cliente, valor, vencimento, status) "
+                    "VALUES (%s, %s, %s, 'aberto') RETURNING id")
+SQL_SEED_REFERENCE = (f"INSERT INTO {REF_TABLE} (account_id, title_source, title_reference, assigned_via, "
+                      "actor_user_id, request_id) VALUES (%s, %s, %s, 'manual_assign', %s, %s) RETURNING id")
+SQL_ACCOUNT_ROWS = "SELECT id, cliente, to_jsonb(a)::text FROM accounts a ORDER BY id"
+SQL_REF_ROWS = f"SELECT id, request_id, to_jsonb(r)::text FROM {REF_TABLE} r ORDER BY id"
+SQL_REF_UPDATE_PROBE = f"UPDATE {REF_TABLE} SET request_id = request_id WHERE id = %s"
+SQL_REF_DELETE_PROBE = f"DELETE FROM {REF_TABLE} WHERE id = %s"
+SQL_ACCOUNT_FK_PROBE = "DELETE FROM accounts WHERE id = %s"  # restored target only; must fail with 23503
+SQL_LOCK_ACCOUNTS = "LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE"  # fixed order: accounts first
+SQL_LOCK_REFERENCES = f"LOCK TABLE {REF_TABLE} IN ACCESS EXCLUSIVE MODE"
+SQL_LOCK_OWN_ACCOUNT = "SELECT id FROM accounts WHERE id = %s FOR UPDATE"
+SQL_ACCOUNT_CHILD_KEYS = ("SELECT c.conrelid::regclass::text, a.attname::text, cardinality(c.conkey) "
+                          "FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid "
+                          "AND a.attnum = ANY (c.conkey) WHERE c.contype = 'f' "
+                          "AND c.confrelid = 'public.accounts'::regclass ORDER BY 1, 2")
+SQL_TRUNCATE_REFERENCES = f"TRUNCATE TABLE {REF_TABLE}"  # guarded in remove_own_reference_and_account()
+SQL_DELETE_OWN_ACCOUNT = "DELETE FROM accounts WHERE id = %s AND cliente = %s RETURNING id"  # same guard
+SQL_FINAL_COUNTS = (f"SELECT (SELECT count(*) FROM {TABLE}), (SELECT count(*) FROM accounts), "
+                    f"(SELECT count(*) FROM {REF_TABLE})")
 
 
 def _any_text(column_ref, literals, per_element):
@@ -153,6 +221,16 @@ KNOWN_CHECK_LITERALS = {
 KNOWN_CHECK_RENDERINGS = {
     name: (f"CHECK ({_any_text(column, literals, False)})", f"CHECK ({_any_text(column, literals, True)})")
     for name, (column, literals) in KNOWN_CHECK_LITERALS.items()}
+# Exact source/restore pair from CI run 41512773186. PostgreSQL flattens the
+# nested AND of the two length bounds; AND is associative, including NULL.
+# No expression is parsed or normalised. Operators, bounds, regex and casts
+# must match these reviewed bytes, in this direction and under this name only.
+KNOWN_REF_CHECK_RENDERINGS = {
+    "ck_account_title_references_title_reference": (
+        "CHECK ((((char_length((title_reference)::text) >= 1) AND (char_length((title_reference)::text) <= 128)) AND ((title_reference)::text = btrim((title_reference)::text)) AND ((title_reference)::text !~ '[\\x01-\\x1f\\x7f-\\x9f]'::text)))",
+        "CHECK (((char_length((title_reference)::text) >= 1) AND (char_length((title_reference)::text) <= 128) AND ((title_reference)::text = btrim((title_reference)::text)) AND ((title_reference)::text !~ '[\\x01-\\x1f\\x7f-\\x9f]'::text)))",
+    ),
+}
 # Read-only truth-value probes: both renderings must agree with plain membership on fixed trusted values.
 # Finite probes support, but do not prove, equivalence; the exact allowlist above is the boundary.
 PROBE_REF = "%s::character varying"
@@ -233,6 +311,14 @@ class Ledger:
     target_create_attempted: bool = False
     target_oid: int | None = None
     restore_attempted: bool = False
+    # TASK054: the owned synthetic account + reference (same marker), recorded before commit
+    initial_account_count: int | None = None
+    initial_reference_count: int | None = None
+    account_seed_attempted: bool = False
+    account_id: int | None = None
+    account_fingerprint: str | None = None
+    reference_id: int | None = None
+    reference_fingerprint: str | None = None
 
 
 def parse_database_url(url):
@@ -410,28 +496,53 @@ def one(conn, sql, params=None):
     return found[0]
 
 
-def rejected(conn, sql, params):
+def rejected(conn, sql, params, message=APPEND_ONLY_MESSAGE):
     """True only if the statement raised the trigger's error; the transaction is always rolled back."""
     try:
         conn.execute(sql, params)
     except Exception as error:  # psycopg.errors.RaiseException (P0001) is the expected path
         conn.rollback()
-        return getattr(error, "sqlstate", None) == "P0001" and APPEND_ONLY_MESSAGE in str(error)
+        return getattr(error, "sqlstate", None) == "P0001" and message in str(error)
     conn.rollback()
     return False
 
 
-def schema_facts(conn, bodies=None):
-    """Catalog facts only (no rows). ``bodies`` collects the raw source of FUNCTION, kept out of the facts."""
+def restricted(conn, sql, params):
+    """True only if the statement failed with a foreign-key violation (23503); always rolled back."""
+    try:
+        conn.execute(sql, params)
+    except Exception as error:  # psycopg.errors.ForeignKeyViolation is the expected path
+        conn.rollback()
+        return getattr(error, "sqlstate", None) == FOREIGN_KEY_VIOLATION
+    conn.rollback()
+    return False
+
+
+def _function_facts(functions, message):
+    return [[lang, ret, sha256_text(src), message in src] for lang, ret, src in functions]
+
+
+def schema_facts(conn, bodies=None, ref_bodies=None):
+    """Catalog facts only (no rows). ``bodies``/``ref_bodies`` collect the raw source of FUNCTION/REF_FUNCTION,
+    kept out of the facts."""
     functions = rows(conn, SQL_FUNCTION, (FUNCTION,))
+    ref_functions = rows(conn, SQL_FUNCTION, (REF_FUNCTION,))
     if bodies is not None:
         bodies.extend(src for _, _, src in functions)
+    if ref_bodies is not None:
+        ref_bodies.extend(src for _, _, src in ref_functions)
     return {
         "columns": [r[0] for r in rows(conn, SQL_COLUMNS, (TABLE,))],
         "checks": [list(r) for r in rows(conn, SQL_CHECKS)],
         "index": [r[0] for r in rows(conn, SQL_INDEX, (TABLE, INDEX))],
-        "function": [[lang, ret, sha256_text(src), APPEND_ONLY_MESSAGE in src] for lang, ret, src in functions],
+        "function": _function_facts(functions, APPEND_ONLY_MESSAGE),
         "trigger": [list(r) for r in rows(conn, SQL_TRIGGER, (TRIGGER,))],
+        "ref_columns": [r[0] for r in rows(conn, SQL_COLUMNS, (REF_TABLE,))],
+        "ref_checks": [list(r) for r in rows(conn, SQL_REF_CHECKS)],
+        "ref_keys": [list(r) for r in rows(conn, SQL_REF_KEYS)],
+        "ref_indexes": [list(r) for r in rows(conn, SQL_INDEXES, (REF_TABLE,))],
+        "ref_function": _function_facts(ref_functions, REF_APPEND_ONLY_MESSAGE),
+        "ref_trigger": [list(r) for r in rows(conn, SQL_REF_TRIGGER, (REF_TRIGGER,))],
     }
 
 
@@ -444,7 +555,7 @@ def _bounded_body(src, limit=FUNCTION_BODY_LIMIT):
     return {"text": src[:limit], "chars": len(src), "truncated": len(src) > limit}
 
 
-def compare_schema(source, target, source_bodies, target_bodies):
+def compare_schema(source, target, source_bodies, target_bodies, source_ref_bodies=(), target_ref_bodies=()):
     """Diagnostic only (TASK050): reports which catalog facts differ, verbatim and bounded. It never decides
     the outcome; ``facts_match`` (strict equality plus the TASK051 exact allowlist) is the gate."""
     keys = sorted(set(source) | set(target))
@@ -461,25 +572,34 @@ def compare_schema(source, target, source_bodies, target_bodies):
         comparison["function_bodies"] = {"name": FUNCTION, "limit_chars": FUNCTION_BODY_LIMIT,
                                          "source": [_bounded_body(s) for s in source_bodies],
                                          "target": [_bounded_body(s) for s in target_bodies]}
+    if "ref_function" in differing:  # raw body of REF_FUNCTION only
+        comparison["ref_function_bodies"] = {"name": REF_FUNCTION, "limit_chars": FUNCTION_BODY_LIMIT,
+                                             "source": [_bounded_body(s) for s in source_ref_bodies],
+                                             "target": [_bounded_body(s) for s in target_ref_bodies]}
     return comparison
 
 
 def facts_match(source, target):
-    """TASK051 gate: every fact is strictly equal, except that a CHECK listed in KNOWN_CHECK_RENDERINGS may
-    differ by exactly its frozen (source, target) pair. Returns (matched, names accepted via that pair)."""
-    if set(source) != set(target) or any(source[k] != target[k] for k in source if k != "checks"):
-        return False, []
-    src, tgt = source.get("checks"), target.get("checks")
-    if not (isinstance(src, list) and isinstance(tgt, list) and len(src) == len(tgt)):
+    """Strict facts, except the exact reviewed CHECK rendering pairs, by table and name."""
+    check_groups = {"checks": KNOWN_CHECK_RENDERINGS, "ref_checks": KNOWN_REF_CHECK_RENDERINGS}
+    if set(source) != set(target) or any(
+            source[k] != target[k] for k in source if k not in check_groups):
         return False, []
     accepted = []
-    for s, t in zip(src, tgt):
-        if s == t:
+    for key, allowed in check_groups.items():
+        # Preserve the historical behavior for callers without reference facts.
+        if key not in source:
             continue
-        if not (isinstance(s, (list, tuple)) and isinstance(t, (list, tuple)) and len(s) == len(t) == 2
-                and s[0] == t[0] and KNOWN_CHECK_RENDERINGS.get(s[0]) == (s[1], t[1])):
+        src, tgt = source[key], target[key]
+        if not (isinstance(src, list) and isinstance(tgt, list) and len(src) == len(tgt)):
             return False, []
-        accepted.append(s[0])
+        for s, t in zip(src, tgt):
+            if s == t:
+                continue
+            if not (isinstance(s, (list, tuple)) and isinstance(t, (list, tuple)) and len(s) == len(t) == 2
+                    and s[0] == t[0] and allowed.get(s[0]) == (s[1], t[1])):
+                return False, []
+            accepted.append(s[0])
     return True, accepted
 
 
@@ -512,15 +632,51 @@ def check_schema(facts, where):
     require(facts["trigger"] == [["O", TRIGGER_TYPE, FUNCTION]], f"{where}_trigger_not_enabled")
 
 
+def check_reference_schema(facts, where):
+    """TASK054: exact columns, CHECK names, PK/UNIQUE/FK definitions, index set, function and enabled trigger."""
+    require(tuple(facts["ref_columns"]) == REF_COLUMNS, f"{where}_reference_columns")
+    names = [name for name, _ in facts["ref_checks"]]
+    require(len(names) == len(REF_CHECKS) == 7 and set(names) == REF_CHECKS, f"{where}_reference_check_constraints")
+    require([list(r) for r in facts["ref_keys"]] == [[n, t, d] for n, (t, d) in sorted(REF_KEYS.items())],
+            f"{where}_reference_keys")
+    indexes = {name: definition for name, definition in facts["ref_indexes"]}
+    require(len(facts["ref_indexes"]) == len(indexes) == len(REF_INDEXES) and set(indexes) == set(REF_INDEXES)
+            and all(indexes[n].startswith("CREATE UNIQUE INDEX " if unique else "CREATE INDEX ")
+                    and indexes[n].endswith(suffix) for n, (unique, suffix) in REF_INDEXES.items()),
+            f"{where}_reference_indexes")
+    require(len(facts["ref_function"]) == 1 and facts["ref_function"][0][:2] == ["plpgsql", "trigger"]
+            and facts["ref_function"][0][3] is True, f"{where}_reference_function")
+    require(facts["ref_trigger"] == [["O", TRIGGER_TYPE, REF_FUNCTION]], f"{where}_reference_trigger_not_enabled")
+
+
 def own_row(found, ledger):
     return (len(found) == 1 and found[0][0] == ledger.seed_id and found[0][1] == ledger.marker
             and ledger.fingerprint is not None and sha256_text(found[0][2]) == ledger.fingerprint)
+
+
+def own_reference_rows(accounts, references, ledger):
+    """Exactly the owned account and the owned reference: ids, marker and full-row fingerprints."""
+    return (len(accounts) == 1 and len(references) == 1
+            and accounts[0][:2] == (ledger.account_id, ledger.marker)
+            and references[0][:2] == (ledger.reference_id, ledger.marker)
+            and None not in (ledger.account_id, ledger.reference_id, ledger.account_fingerprint,
+                             ledger.reference_fingerprint)
+            and sha256_text(accounts[0][2]) == ledger.account_fingerprint
+            and sha256_text(references[0][2]) == ledger.reference_fingerprint)
 
 
 def seed_params(marker):
     digest = hashlib.sha256(b"auneron:account-data-entry-audit:v1:cliente\x00" + marker.encode()).hexdigest()
     return (SEED_REFERENCE, SEED_REFERENCE, f"user:{SEED_REFERENCE}", marker, SEED_VALOR, SEED_VENCIMENTO,
             digest)
+
+
+def account_seed_params(marker):
+    return (marker, SEED_VALOR, SEED_VENCIMENTO)  # cliente = run marker: synthetic and owned
+
+
+def reference_seed_params(account_id, marker):
+    return (account_id, REF_SOURCE, marker, SEED_REFERENCE, marker)
 
 
 def drill(ctx, db, run, ledger, report, envs):
@@ -530,23 +686,27 @@ def drill(ctx, db, run, ledger, report, envs):
     with closing(db.open(SOURCE_DB)) as conn:
         current, revision, tables = one(conn, SQL_IDENTITY)
         block(current == SOURCE_DB, "source_current_database")
-        block(revision == HEAD_REVISION, "source_head_not_c3a8f1e6d204")
-        block(tables == TABLE_COUNT, "source_table_count_not_38")
+        block(revision == HEAD_REVISION, "source_head_not_e9a4c7d2b135")
+        block(tables == TABLE_COUNT, "source_table_count_not_39")
         host_system = one(conn, SQL_SYSTEM_ID)[0]
         counts = one(conn, SQL_COUNTS)
         block(all(c == 0 for c in counts), "source_not_empty_ci_baseline")
         block(not rows(conn, SQL_DB_BY_NAME, (ctx.target,)), "target_preexists")
-        source_bodies = []
-        source_facts = schema_facts(conn, source_bodies)
+        source_bodies, source_ref_bodies = [], []
+        source_facts = schema_facts(conn, source_bodies, source_ref_bodies)
         conn.rollback()
     docker_system = run("system_identifier", exec_argv(ctx, "psql", SOURCE_DB, "-X", "-v", "ON_ERROR_STOP=1",
                                                        "-tAc", SQL_SYSTEM_ID),
                         env=envs["pg"], timeout=TIMEOUTS["psql"]).out.strip()
     block(bool(re.fullmatch(r"\d+", docker_system)) and docker_system == host_system, "server_identity_mismatch")
-    ledger.initial_audit_count = counts[0]
+    baseline = dict(zip(EMPTY_AT_START, counts))
+    ledger.initial_audit_count = baseline[TABLE]
+    ledger.initial_account_count = baseline["accounts"]
+    ledger.initial_reference_count = baseline[REF_TABLE]
     check_schema(source_facts, "source")
+    check_reference_schema(source_facts, "source")
     report["source"] = {"database": SOURCE_DB, "revision": revision, "tables": tables,
-                        "baseline_counts": dict(zip(EMPTY_AT_START, counts)), "same_server": True}
+                        "baseline_counts": baseline, "same_server": True}
 
     ledger.marker = f"area2-audit-recovery:{ctx.run_id}:{ctx.attempt}:{secrets.token_hex(8)}"
     require(bool(MARKER_RE.fullmatch(ledger.marker)), "marker_invalid")
@@ -558,6 +718,25 @@ def drill(ctx, db, run, ledger, report, envs):
         ledger.fingerprint = sha256_text(found[0][2])
         conn.commit()
     report["seed"] = {"id": ledger.seed_id, "marker": ledger.marker, "fingerprint_sha256": ledger.fingerprint}
+
+    # TASK054: exactly one owned account and one owned reference, one transaction, same marker.
+    with closing(db.open(SOURCE_DB)) as conn:
+        ledger.account_seed_attempted = True
+        ledger.account_id = one(conn, SQL_SEED_ACCOUNT, account_seed_params(ledger.marker))[0]
+        ledger.reference_id = one(conn, SQL_SEED_REFERENCE, reference_seed_params(ledger.account_id,
+                                                                                  ledger.marker))[0]
+        accounts, references = rows(conn, SQL_ACCOUNT_ROWS), rows(conn, SQL_REF_ROWS)
+        require(len(accounts) == 1 and accounts[0][:2] == (ledger.account_id, ledger.marker)
+                and len(references) == 1 and references[0][:2] == (ledger.reference_id, ledger.marker),
+                "reference_seed_readback")
+        ledger.account_fingerprint = sha256_text(accounts[0][2])
+        ledger.reference_fingerprint = sha256_text(references[0][2])
+        conn.commit()
+    report["seed_reference"] = {"account_id": ledger.account_id, "reference_id": ledger.reference_id,
+                                "marker": ledger.marker, "account_fingerprint_sha256": ledger.account_fingerprint,
+                                "reference_fingerprint_sha256": ledger.reference_fingerprint,
+                                "initial_counts": {"accounts": ledger.initial_account_count,
+                                                   REF_TABLE: ledger.initial_reference_count}}
 
     ledger.temp_dir = tempfile.mkdtemp(prefix="area2-audit-", dir=ctx.runner_temp)  # mode 0700
     dump = Path(ledger.temp_dir) / "source.dump"
@@ -587,9 +766,10 @@ def drill(ctx, db, run, ledger, report, envs):
     with closing(db.open(ctx.target)) as conn:
         current, revision, tables = one(conn, SQL_IDENTITY)
         require((current, revision, tables) == (ctx.target, HEAD_REVISION, TABLE_COUNT), "target_identity")
-        target_bodies = []
-        target_facts = schema_facts(conn, target_bodies)
-        comparison = compare_schema(source_facts, target_facts, source_bodies, target_bodies)
+        target_bodies, target_ref_bodies = [], []
+        target_facts = schema_facts(conn, target_bodies, target_ref_bodies)
+        comparison = compare_schema(source_facts, target_facts, source_bodies, target_bodies,
+                                    source_ref_bodies, target_ref_bodies)
         matched, accepted = facts_match(source_facts, target_facts)
         # "equal" stays the raw comparison; acceptance of known renderings is reported separately
         comparison["accepted_known_check_renderings"] = accepted
@@ -597,27 +777,48 @@ def drill(ctx, db, run, ledger, report, envs):
                                   "EQUAL_EXCEPT_KNOWN_CHECK_RENDERINGS" if matched else "DIFFERENT")
         report["schema_comparison"] = comparison
         check_schema(target_facts, "target")
+        check_reference_schema(target_facts, "target")
         report["check_rendering_probes"] = probes = probe_check_renderings(conn)
         require(matched, "schema_source_target_differ")
         require(probes["count"] == PROBE_COUNT and probes["mismatches"] == [], "check_rendering_probe_mismatch")
         target_rows = rows(conn, SQL_ROWS)
         require(own_row(target_rows, ledger), "target_row_not_restored_exactly")
+        target_accounts, target_references = rows(conn, SQL_ACCOUNT_ROWS), rows(conn, SQL_REF_ROWS)
+        require(own_reference_rows(target_accounts, target_references, ledger),
+                "target_reference_rows_not_restored_exactly")
         conn.rollback()
         for name, sql in (("update", SQL_UPDATE_PROBE), ("delete", SQL_DELETE_PROBE)):
             require(rejected(conn, sql, (ledger.seed_id,)), f"target_{name}_not_rejected")
         require(rows(conn, SQL_ROWS) == target_rows, "target_row_changed_by_probe")
+        for name, sql in (("update", SQL_REF_UPDATE_PROBE), ("delete", SQL_REF_DELETE_PROBE)):
+            require(rejected(conn, sql, (ledger.reference_id,), REF_APPEND_ONLY_MESSAGE),
+                    f"target_reference_{name}_not_rejected")
+        require(restricted(conn, SQL_ACCOUNT_FK_PROBE, (ledger.account_id,)), "target_account_delete_not_restricted")
+        require(rows(conn, SQL_ACCOUNT_ROWS) == target_accounts and rows(conn, SQL_REF_ROWS) == target_references,
+                "target_reference_rows_changed_by_probe")
         conn.rollback()
     with closing(db.open(SOURCE_DB)) as conn:
         source_rows = rows(conn, SQL_ROWS)
+        source_accounts, source_references = rows(conn, SQL_ACCOUNT_ROWS), rows(conn, SQL_REF_ROWS)
         conn.rollback()
     require(own_row(source_rows, ledger), "source_row_changed")
+    require(own_reference_rows(source_accounts, source_references, ledger), "source_reference_rows_changed")
     table_digest = sha256_text("\n".join(r[2] for r in source_rows))
     require(table_digest == sha256_text("\n".join(r[2] for r in target_rows)), "table_hash_differs")
+    reference_digest = sha256_text("\n".join(r[2] for r in (*source_accounts, *source_references)))
+    require(reference_digest == sha256_text("\n".join(r[2] for r in (*target_accounts, *target_references))),
+            "reference_hash_differs")
     report["delta"] = {"tables": tables, "revision": revision, "columns": len(COLUMNS),
                        "check_constraints": sorted(CHECKS), "index": INDEX, "function": FUNCTION,
                        "trigger": {"name": TRIGGER, "tgenabled": "O", "tgtype": TRIGGER_TYPE},
                        "audit_rows": 1, "table_sha256": table_digest,
-                       "update_rejected": True, "delete_rejected": True}
+                       "update_rejected": True, "delete_rejected": True,
+                       "reference_table": {
+                           "table": REF_TABLE, "columns": len(REF_COLUMNS), "check_constraints": sorted(REF_CHECKS),
+                           "keys": sorted(REF_KEYS), "indexes": sorted(REF_INDEXES), "function": REF_FUNCTION,
+                           "trigger": {"name": REF_TRIGGER, "tgenabled": "O", "tgtype": TRIGGER_TYPE},
+                           "account_rows": 1, "reference_rows": 1, "rows_sha256": reference_digest,
+                           "update_rejected": True, "delete_rejected": True, "account_delete_restricted": True}}
 
 
 def drop_target(ctx, db, ledger):
@@ -660,6 +861,43 @@ def truncate_own_row(db, ledger):
     return "TRUNCATED"
 
 
+def remove_own_reference_and_account(db, ledger):
+    """TASK054: one transaction on the source. Fixed lock order (accounts, then the side table); refuses
+    unless both tables were empty at start and now hold exactly the owned rows, and no other row references
+    the owned account. Then TRUNCATE ONLY the side table and DELETE ONLY the owned account id."""
+    if not ledger.account_seed_attempted:
+        return "NOT_SEEDED"
+    with closing(db.open(SOURCE_DB)) as conn:
+        conn.execute(SQL_LOCK_ACCOUNTS)  # bounded by lock_timeout; held until commit/rollback
+        conn.execute(SQL_LOCK_REFERENCES)
+        accounts, references = rows(conn, SQL_ACCOUNT_ROWS), rows(conn, SQL_REF_ROWS)
+        if not accounts and not references:
+            conn.rollback()
+            return "ABSENT"
+        if (ledger.initial_account_count != 0 or ledger.initial_reference_count != 0
+                or not own_reference_rows(accounts, references, ledger)):
+            conn.rollback()
+            return "REFUSED:unexpected_source_rows"
+        children = [r for r in rows(conn, SQL_ACCOUNT_CHILD_KEYS) if tuple(r) != (REF_TABLE, "account_id", 1)]
+        if not all(len(r) == 3 and r[2] == 1 and IDENT_RE.fullmatch(r[0]) and IDENT_RE.fullmatch(r[1])
+                   for r in children):
+            conn.rollback()
+            return "REFUSED:unexpected_account_references"
+        require(one(conn, SQL_LOCK_OWN_ACCOUNT, (ledger.account_id,)) == (ledger.account_id,), "own_account_lock")
+        # identifiers come from the catalog and passed IDENT_RE; the value is a bound parameter
+        if any(one(conn, f"SELECT count(*) FROM {table} WHERE {column} = %s", (ledger.account_id,))[0]
+               for table, column, _ in children):
+            conn.rollback()
+            return "REFUSED:account_still_referenced"
+        conn.execute(SQL_TRUNCATE_REFERENCES)
+        deleted = rows(conn, SQL_DELETE_OWN_ACCOUNT, (ledger.account_id, ledger.marker))
+        if deleted != [(ledger.account_id,)] or rows(conn, SQL_ACCOUNT_ROWS) or rows(conn, SQL_REF_ROWS):
+            conn.rollback()
+            return "REFUSED:cleanup_not_exact"
+        conn.commit()
+    return "REMOVED"
+
+
 def remove_temp(ledger):
     if not ledger.temp_dir:
         return "NOT_CREATED"
@@ -670,22 +908,27 @@ def remove_temp(ledger):
 
 def final_state(ctx, db):
     with closing(db.open(SOURCE_DB)) as conn:
-        audit = one(conn, f"SELECT count(*) FROM {TABLE}")[0]
+        audit, accounts, references = one(conn, SQL_FINAL_COUNTS)
         target = rows(conn, SQL_DB_BY_NAME, (ctx.target,))
         conn.rollback()
     require(audit == 0, "source_audit_not_empty")
+    require(accounts == 0, "source_accounts_not_empty")
+    require(references == 0, "source_references_not_empty")
     require(not target, "target_present")
     return "VERIFIED"
 
 
 CLEAN = frozenset({"NOT_CREATED", "ABSENT", "DROPPED_VERIFIED", "NOT_SEEDED", "TRUNCATED", "REMOVED",
                    "VERIFIED"})
+CLEANUP_STEPS = ("target_database", "source_audit_row", "source_reference_and_account", "temp_files",
+                 "final_state")
 
 
 def cleanup(ctx, db, ledger):
     status = {}
     for name, action in (("target_database", lambda: drop_target(ctx, db, ledger)),
                          ("source_audit_row", lambda: truncate_own_row(db, ledger)),
+                         ("source_reference_and_account", lambda: remove_own_reference_and_account(db, ledger)),
                          ("temp_files", lambda: remove_temp(ledger)),
                          ("final_state", lambda: final_state(ctx, db))):
         try:
@@ -700,6 +943,11 @@ def plan_summary():
             "events": ["push refs/heads/main", "pull_request base main"], "source_database": SOURCE_DB,
             "head_revision": HEAD_REVISION, "tables": TABLE_COUNT, "table": TABLE, "checks": len(CHECKS),
             "index": INDEX, "function": FUNCTION, "trigger": TRIGGER, "service_image": PG_IMAGE,
+            "reference_table": {"table": REF_TABLE, "columns": len(REF_COLUMNS), "checks": len(REF_CHECKS),
+                                "keys": sorted(REF_KEYS), "indexes": sorted(REF_INDEXES),
+                                "function": REF_FUNCTION, "trigger": REF_TRIGGER,
+                                "seed": "one owned synthetic account + one owned reference (run marker)"},
+            "cleanup_steps": list(CLEANUP_STEPS),
             "target_database": "auneron_audit_recovery_<GITHUB_RUN_ID>_<GITHUB_RUN_ATTEMPT>",
             "timeouts": TIMEOUTS, "cleanup_drop_budget": CLEANUP_DROP_BUDGET, "dump_cap_bytes": DUMP_CAP, "stream_cap_bytes": STREAM_CAP,
             "requires": "--execute --report $RUNNER_TEMP/area2-audit-recovery.json inside the gated CI job"}
@@ -722,7 +970,10 @@ def main(argv=None, environ=None, popen=subprocess.Popen, connect=None, clock=ti
         return 2
     redact = Redactor((ctx.password, environ.get("DATABASE_URL", "")))
     report = {"task": "AREA2-TASK047", "executed": True, "steps": [], "cleanup_drop_budget": CLEANUP_DROP_BUDGET,
-              "claim": "audit table/constraints/index/function+trigger/one row survive native dump/restore only"}
+              "claim": "audit table/constraints/index/function+trigger/one row and the title-reference side table/"
+                       "constraints/indexes/function+trigger/one owned account+reference survive native "
+                       "dump/restore only",
+              "cleanup_steps": list(CLEANUP_STEPS)}
     run = Runner(redact, report["steps"], popen=popen, clock=clock, sleep=sleep, spool_dir=ctx.runner_temp,
                  forbidden=(ctx.password,))
     base = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TMPDIR") if k in os.environ}

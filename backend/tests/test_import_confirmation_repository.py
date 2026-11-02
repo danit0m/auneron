@@ -1118,10 +1118,28 @@ class PrivacyTests(unittest.TestCase):
 
 class SchemaMetadataTests(unittest.TestCase):
     def test_only_contract_tables_in_independent_metadata(self):
+        # TASK054 (TI1): a tabela lateral de referencias e a unica adicao.
         self.assertEqual(
             set(repository.metadata.tables),
-            {"accounts", "import_confirmation_receipts", "import_confirmation_audit_events"},
+            {
+                "accounts",
+                "import_confirmation_receipts",
+                "import_confirmation_audit_events",
+                "account_title_references",
+            },
         )
+
+    def test_title_reference_side_table_is_the_only_foreign_key(self):
+        table = repository.metadata.tables["account_title_references"]
+        (fk,) = table.foreign_keys
+        self.assertEqual((fk.target_fullname, fk.ondelete), ("accounts.id", "RESTRICT"))
+        for other in ("accounts", "import_confirmation_receipts", "import_confirmation_audit_events"):
+            with self.subTest(table=other):
+                self.assertEqual(repository.metadata.tables[other].foreign_keys, set())
+        # O repositorio v1 nao le nem escreve a tabela lateral (TI2 e outro lote).
+        source = REPOSITORY_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("title_references_table", source)
+        self.assertNotIn("account_title_references", source)
 
     def test_receipt_constraints(self):
         table = repository.receipts_table

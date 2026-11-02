@@ -68,15 +68,25 @@ class PreparedSchemaTests(unittest.TestCase):
 
     def test_model_registers_only_import_tables_without_database_import(self):
         metadata = MetaData()
+        # TASK054: isolated ``accounts`` dependency, pre-registered solely so
+        # the title-reference FK resolves; it is not registered by the model.
+        accounts = schema.accounts_table.to_metadata(metadata)
         fake_database = types.ModuleType('app.database.database')
         fake_database.Base = types.SimpleNamespace(metadata=metadata)
         with mock.patch.dict(sys.modules, {'app.database.database': fake_database}):
             load('candidate_import_model', MODEL)
-        self.assertEqual(set(metadata.tables), {
+        registered = set(metadata.tables) - {'accounts'}
+        self.assertEqual(registered, {
             'import_confirmation_receipts', 'import_confirmation_audit_events',
+            'account_title_references',
         })
-        for name, actual in metadata.tables.items():
-            self.assertEqual(ddl(actual), ddl(schema.metadata.tables[name]))
+        self.assertIs(metadata.tables['accounts'], accounts)
+        for name in registered:
+            self.assertEqual(ddl(metadata.tables[name]), ddl(schema.metadata.tables[name]))
+        (fk,) = metadata.tables['account_title_references'].foreign_keys
+        self.assertEqual(fk.target_fullname, 'accounts.id')
+        self.assertIs(fk.column, accounts.c.id)
+        self.assertEqual(fk.ondelete, 'RESTRICT')
 
     def test_historical_receipts_and_audit_have_no_cascading_foreign_keys(self):
         for table in (schema.receipts_table, schema.audit_events_table):

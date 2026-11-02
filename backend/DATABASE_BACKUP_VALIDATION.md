@@ -250,3 +250,49 @@ ferramentas existentes no head `b428d1a6c903` (37 tabelas), incluindo
 constraints, JSONB e idempotência de recibos em nível de componente,
 com dados sintéticos e banco efêmero. Não muda o estado de G4
 (multi-instância permanece aberto; deploy continua com 1 réplica).
+
+## Delta AREA2 TI1 — `account_title_references` (TASK054, PREPARED_NOT_APPLIED)
+
+**Estado:** candidato preparado fora do repositório. A migration
+`e9a4c7d2b135` não foi aplicada em nenhum banco, os testes PostgreSQL
+não rodaram e a extensão do gate de recovery não rodou. Nada aqui é
+evidência de restore.
+
+Cadeia (lida dos campos `down_revision`):
+
+```
+b428d1a6c903 → c3a8f1e6d204 (account_data_entry_audit_events)
+  → e9a4c7d2b135 (account_title_references)
+```
+
+O novo head tem **39 tabelas**. A nova tabela é lateral e insert-only.
+Ela tem FK `accounts.id ON DELETE RESTRICT`, `UNIQUE(account_id)`, um
+índice único `(title_source, title_reference)`, 7 CHECKs nomeados sem
+lista `IN`, uma função e um trigger append-only (UPDATE/DELETE por
+linha). `accounts` e as tabelas de importação e de auditoria não mudam.
+
+Prova proposta (mesmo passo CI efêmero de `.github/area2/`; PO D9
+rejeitou a variante só de catálogo):
+
+- catálogo estrito origem/destino da nova tabela: colunas, CHECKs,
+  definições exatas de PK/UNIQUE/FK, índices, função e trigger
+  habilitado;
+- **uma** conta e **uma** referência sintéticas do próprio run no
+  `auneron_test` do CI, vazias no início; IDs, fingerprints de linha
+  inteira e contagens iniciais ficam no ledger do relatório;
+- após `pg_dump`/`pg_restore` nativos: as duas linhas idênticas,
+  UPDATE/DELETE da referência rejeitados e DELETE da conta recusado
+  pela FK no destino;
+- limpeza própria, separada e transacional: trava `accounts` e depois a
+  nova tabela; só segue se as duas estavam vazias no início, contêm
+  exatamente as linhas do run e nada mais referencia a conta; então
+  `TRUNCATE` apenas da nova tabela e `DELETE` apenas do id da conta do
+  run. Nunca `TRUNCATE` de `accounts`/`users`, nunca apaga conta
+  desconhecida, nunca desativa trigger ou FK. Estado inesperado ou
+  incerto bloqueia o PASS.
+
+Essa semeadura e essa limpeza ampliam a superfície de escrita do gate e
+exigem autorização humana nova e específica antes da primeira execução.
+Referências de título podem conter dado pessoal: o backup dessa tabela
+herda o regime de retenção ainda **não definido** para dados reais
+(decisão nomeada exigida antes do área5).
