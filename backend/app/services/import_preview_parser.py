@@ -18,7 +18,7 @@ import json
 import re
 import unicodedata
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from datetime import datetime
 from decimal import Decimal
@@ -66,6 +66,29 @@ HEADER_ALIASES = {
     "whatsapp": "whatsapp",
 }
 
+# Identidade v2 (AREA2 TI2, CONTRACT-046 §A5): coluna canônica
+# ``referencia`` e ``origem`` por arquivo. O caminho v1 (constantes acima,
+# aliases e bytes do digest) não muda; os aliases v2 só valem com
+# ``identity_version=2`` (em v1 uma coluna "documento" segue ignorada).
+IDENTITY_VERSIONS = (1, 2)
+REFERENCE_FIELD = "referencia"
+REQUIRED_FIELDS_V2 = REQUIRED_FIELDS + (REFERENCE_FIELD,)
+CANONICAL_FIELDS_V2 = CANONICAL_FIELDS + (REFERENCE_FIELD,)
+HEADER_ALIASES_V2 = {
+    **HEADER_ALIASES,
+    "referencia": REFERENCE_FIELD,
+    "referencia do titulo": REFERENCE_FIELD,
+    "documento": REFERENCE_FIELD,
+    "numero do documento": REFERENCE_FIELD,
+}
+# Mesmo padrão e mesma normalização de ``account_title_reference`` (TI1);
+# duplicados aqui porque este módulo não importa app.services.
+TITLE_SOURCE_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+REFERENCE_MAX_CHARS = 128
+_REJECTED_REFERENCE_CATEGORIES = frozenset(
+    {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}
+)
+
 CSV_DELIMITERS = (";", ",")
 
 FILE_ERROR_MESSAGES = {
@@ -96,6 +119,8 @@ FILE_ERROR_MESSAGES = {
     "malformed_workbook": "Não foi possível ler a planilha XLSX.",
     "invalid_mapping": "O mapeamento manual de colunas é inválido.",
     "invalid_delimiter": "Delimitador do CSV ausente, inválido ou não permitido.",
+    "invalid_identity_version": "Versão de identidade da importação inválida.",
+    "invalid_origin": "Origem dos títulos ausente ou inválida.",
 }
 
 ROW_ISSUE_MESSAGES = {
@@ -115,6 +140,15 @@ ROW_ISSUE_MESSAGES = {
     "invalid_status": "Status desconhecido; use aberto.",
     "extra_columns": "A linha possui mais colunas que o cabeçalho.",
     "duplicate_in_file": "Linha duplicada no arquivo (cliente, valor e vencimento).",
+    "reference_required": "Referência do título obrigatória.",
+    "invalid_reference": "Referência do título inválida.",
+    "duplicate_reference": "Referência repetida no arquivo para a mesma origem.",
+    # Aviso (v2), não bloqueia: mesmo cliente, valor e vencimento com
+    # referências diferentes.
+    "coincident_tuple_in_file": (
+        "Outra linha tem o mesmo cliente, valor e vencimento "
+        "com referência diferente."
+    ),
 }
 
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
@@ -168,8 +202,10 @@ class RowIssue:
 @dataclass(frozen=True)
 class PreviewRow:
     row_number: int
-    values: dict[str, Any] | None
+    values: dict[str, Any] | None = field(repr=False)
     issues: tuple[RowIssue, ...]
+    # Avisos v2 não bloqueantes; sempre vazio em v1.
+    warnings: tuple[RowIssue, ...] = ()
 
     @property
     def is_valid(self) -> bool:
@@ -184,6 +220,9 @@ class ImportPreview:
     column_mapping: dict[str, int]
     ignored_columns: tuple[int, ...]
     rows: tuple[PreviewRow, ...]
+    identity_version: int = 1
+    # ``origem`` declarada (v2); None em v1.
+    title_source: str | None = None
 
     @property
     def total_rows(self) -> int:
@@ -211,6 +250,8 @@ def parse_import_preview(
     *,
     column_mapping: dict[str, int] | None = None,
     csv_delimiter: str | None = None,
+    identity_version: int = 1,
+    origem: str | None = None,
 ) -> ImportPreview:
     """
     Ponto de entrada único. Não persiste nada e não registra logs.
@@ -219,6 +260,10 @@ def parse_import_preview(
     ``column_mapping`` (campo canônico -> índice zero-based), o mapeamento
     manual substitui os aliases; CSV exige ``csv_delimiter`` explícito e
     XLSX o proíbe.
+
+    ``identity_version=2`` exige ``origem`` (padrão de ``title_source``) e
+    a coluna ``referencia``; v1 proíbe ``origem``. O v1 é o default e não
+    muda.
     """
 
     if not isinstance(data, (bytes, bytearray)):
@@ -226,14 +271,30 @@ def parse_import_preview(
 
     data = bytes(data)
 
+    if type(identity_version) is not int or identity_version not in IDENTITY_VERSIONS:
+        raise ImportPreviewError("invalid_identity_version")
+
+    v2 = identity_version == 2
+
+    if v2:
+        if type(origem) is not str or not TITLE_SOURCE_PATTERN.fullmatch(origem):
+            raise ImportPreviewError("invalid_origin")
+    elif origem is not None:
+        raise ImportPreviewError("invalid_origin")
+
     if not data:
         raise ImportPreviewError("empty_file")
 
     if len(data) > MAX_FILE_BYTES:
         raise ImportPreviewError("file_too_large")
 
+    required = REQUIRED_FIELDS_V2 if v2 else REQUIRED_FIELDS
+    canonical = CANONICAL_FIELDS_V2 if v2 else CANONICAL_FIELDS
+
     kind = _detect_kind(filename)
-    manual = _check_manual_options(kind, column_mapping, csv_delimiter)
+    manual = _check_manual_options(
+        kind, column_mapping, csv_delimiter, required, canonical
+    )
 
     if kind == "csv":
         table = _read_csv_table(data, csv_delimiter)
@@ -241,10 +302,16 @@ def parse_import_preview(
         table = _read_xlsx_table(data)
 
     if manual is None:
-        mapping, ignored = _map_header(table[0])
+        mapping, ignored = _map_header(
+            table[0], HEADER_ALIASES_V2 if v2 else HEADER_ALIASES, required
+        )
     else:
         mapping, ignored = _apply_manual_mapping(table[0], manual)
-    rows = _validate_rows(table[1:], mapping, header_width=len(table[0]))
+
+    if v2:
+        rows = _validate_rows_v2(table[1:], mapping, header_width=len(table[0]))
+    else:
+        rows = _validate_rows(table[1:], mapping, header_width=len(table[0]))
 
     if not rows:
         raise ImportPreviewError("no_data_rows")
@@ -252,10 +319,15 @@ def parse_import_preview(
     return ImportPreview(
         file_kind=kind,
         file_sha256=hashlib.sha256(data).hexdigest(),
-        content_sha256=_content_digest(mapping, rows),
+        content_sha256=(
+            _content_digest_v2(mapping, rows, origem)
+            if v2 else _content_digest(mapping, rows)
+        ),
         column_mapping=mapping,
         ignored_columns=ignored,
         rows=rows,
+        identity_version=identity_version,
+        title_source=origem if v2 else None,
     )
 
 
@@ -275,6 +347,8 @@ def _check_manual_options(
     kind: str,
     column_mapping: Any,
     csv_delimiter: Any,
+    required: tuple[str, ...] = REQUIRED_FIELDS,
+    canonical: tuple[str, ...] = CANONICAL_FIELDS,
 ) -> dict[str, int] | None:
     """
     Valida a forma do mapeamento manual e do delimitador antes de ler o
@@ -298,7 +372,7 @@ def _check_manual_options(
 
     fields = set(column_mapping)
 
-    if not set(REQUIRED_FIELDS) <= fields <= set(CANONICAL_FIELDS):
+    if not set(required) <= fields <= set(canonical):
         raise ImportPreviewError("invalid_mapping")
 
     indices = list(column_mapping.values())
@@ -312,7 +386,7 @@ def _check_manual_options(
 
     return {
         field: column_mapping[field]
-        for field in CANONICAL_FIELDS
+        for field in canonical
         if field in column_mapping
     }
 
@@ -607,7 +681,11 @@ def _normalize_header(value: Any) -> str:
     return _HEADER_SEPARATORS.sub(" ", without_marks).strip()
 
 
-def _map_header(header: list[Any]) -> tuple[dict[str, int], tuple[int, ...]]:
+def _map_header(
+    header: list[Any],
+    aliases: dict[str, str] = HEADER_ALIASES,
+    required: tuple[str, ...] = REQUIRED_FIELDS,
+) -> tuple[dict[str, int], tuple[int, ...]]:
     if not header:
         raise ImportPreviewError("missing_header")
 
@@ -618,7 +696,7 @@ def _map_header(header: list[Any]) -> tuple[dict[str, int], tuple[int, ...]]:
         if _is_blank_cell(cell):
             raise ImportPreviewError("blank_header")
 
-        canonical = HEADER_ALIASES.get(_normalize_header(cell))
+        canonical = aliases.get(_normalize_header(cell))
 
         if canonical is None:
             ignored.append(index)
@@ -629,7 +707,7 @@ def _map_header(header: list[Any]) -> tuple[dict[str, int], tuple[int, ...]]:
 
         mapping[canonical] = index
 
-    if not set(REQUIRED_FIELDS) <= set(mapping):
+    if not set(required) <= set(mapping):
         raise ImportPreviewError("missing_required_fields")
 
     return mapping, tuple(ignored)
@@ -718,6 +796,86 @@ def _validate_rows(
         )
 
     return tuple(rows)
+
+
+def _validate_rows_v2(
+    records: list[list[Any] | None],
+    mapping: dict[str, int],
+    *,
+    header_width: int,
+) -> tuple[PreviewRow, ...]:
+    """
+    Validação v2: conversores v1 mais ``referencia``. A identidade da linha
+    é (origem, referência): referência repetida bloqueia a linha
+    (``duplicate_reference``). A tupla (cliente, valor, vencimento) repetida
+    com referências diferentes é só aviso, em todas as linhas envolvidas.
+    """
+
+    parsed = []
+    seen_references: set[str] = set()
+    tuples: dict[tuple[str, Decimal, date], list[int]] = {}
+
+    for offset, record in enumerate(records):
+        if record is None:
+            continue
+
+        row_number = offset + 2
+        issues: list[RowIssue] = []
+
+        if len(_trim_trailing_blanks(record)) > header_width:
+            issues.append(RowIssue(None, "extra_columns"))
+
+        def cell(field: str) -> Any:
+            index = mapping.get(field)
+
+            if index is None or index >= len(record):
+                return None
+
+            return record[index]
+
+        values: dict[str, Any] = {}
+
+        for field, converter in _CONVERTERS_V2:
+            try:
+                values[field] = converter(cell(field))
+            except _RowIssueError as issue:
+                issues.append(RowIssue(field, issue.code))
+
+        if not issues:
+            reference = values[REFERENCE_FIELD]
+
+            if reference in seen_references:
+                issues.append(RowIssue(REFERENCE_FIELD, "duplicate_reference"))
+            else:
+                seen_references.add(reference)
+                key = (
+                    " ".join(values["cliente"].split()).casefold(),
+                    values["valor"],
+                    values["vencimento"],
+                )
+                tuples.setdefault(key, []).append(len(parsed))
+
+        parsed.append((row_number, values, issues))
+
+    coincident = {
+        index
+        for indexes in tuples.values()
+        if len(indexes) > 1
+        for index in indexes
+    }
+
+    return tuple(
+        PreviewRow(
+            row_number=row_number,
+            values=None if issues else values,
+            issues=tuple(issues),
+            warnings=(
+                (RowIssue(None, "coincident_tuple_in_file"),)
+                if index in coincident else ()
+            ),
+        )
+        for index, (row_number, values, issues) in enumerate(parsed)
+    )
 
 
 class _RowIssueError(Exception):
@@ -935,6 +1093,33 @@ def _convert_status(value: Any) -> str:
     raise _RowIssueError("invalid_status")
 
 
+def _convert_referencia(value: Any) -> str:
+    """
+    strip -> NFC -> validação, na mesma ordem e com as mesmas regras de
+    ``normalize_title_reference`` (TI1): o valor devolvido é o gravado e o
+    comparado exatamente (sensível a maiúsculas).
+    """
+
+    text = _text_cell(value)
+
+    if not text:
+        raise _RowIssueError("reference_required")
+
+    text = unicodedata.normalize("NFC", text)
+
+    if (
+        len(text) > REFERENCE_MAX_CHARS
+        or text != text.strip()
+        or any(
+            unicodedata.category(char) in _REJECTED_REFERENCE_CATEGORIES
+            for char in text
+        )
+    ):
+        raise _RowIssueError("invalid_reference")
+
+    return text
+
+
 _CONVERTERS = (
     ("cliente", _convert_cliente),
     ("valor", _convert_valor),
@@ -943,6 +1128,7 @@ _CONVERTERS = (
     ("email", _convert_email),
     ("whatsapp", _convert_whatsapp),
 )
+_CONVERTERS_V2 = _CONVERTERS + ((REFERENCE_FIELD, _convert_referencia),)
 
 
 # ---------------------------------------------------------------- digest
@@ -976,6 +1162,49 @@ def _content_digest(
             for row in rows
         ],
     }
+    return _sha256_json(payload)
+
+
+def _content_digest_v2(
+    mapping: dict[str, int],
+    rows: tuple[PreviewRow, ...],
+    origem: str,
+) -> str:
+    """
+    Digest v2: domínio próprio (``identity_version`` e ``origem`` no
+    payload, ``referencia`` nos valores, avisos por linha), de modo que
+    nunca colide com um digest v1 do mesmo arquivo.
+    """
+
+    payload = {
+        "identity_version": 2,
+        "origem": origem,
+        "fields": sorted(mapping),
+        "rows": [
+            {
+                "row": row.row_number,
+                "values": None if row.values is None else {
+                    field: (
+                        None if row.values[field] is None
+                        else str(row.values[field])
+                    )
+                    for field in CANONICAL_FIELDS_V2
+                },
+                "issues": [
+                    [issue.field, issue.code] for issue in row.issues
+                ],
+                "warnings": [
+                    [warning.field, warning.code] for warning in row.warnings
+                ],
+            }
+            for row in rows
+        ],
+    }
+
+    return _sha256_json(payload)
+
+
+def _sha256_json(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,
         sort_keys=True,

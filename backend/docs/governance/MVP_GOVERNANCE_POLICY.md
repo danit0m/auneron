@@ -17,6 +17,9 @@ Amended:     2026-11-01, TASK054 stable title reference TI1
              PREPARED_NOT_APPLIED (candidate files staged outside the
              repository; migration e9a4c7d2b135 not applied; PostgreSQL
              tests not run; recovery-gate extension not run)
+Amended:     2026-11-02, TI2 import identity v2 candidate for PO review
+             (branch review/area2-import-identity-v2; no DDL; tests
+             written, not run; not merged)
 Accepted by: — (none; this document has no effect until a named human
              records acceptance in a separate, dated record)
 ```
@@ -210,6 +213,59 @@ Known limit: the existing generic 422 response of `POST`/`PUT /accounts`
 echoes the request body back to the same caller; it is not logged or
 stored by the application. The new assign route answers with fixed codes
 only.
+
+**TI2 (candidate for PO review, not merged, tests not run): import
+identity v2.** CONTRACT-046 §A5 on top of TI1 storage. **No DDL**: the TI1
+side table already allows `assigned_via = 'import_v2'` with
+`import_idempotency_key`/`import_content_sha256`; receipts already allow
+`identity_version >= 1`; the import audit `action` column is free text.
+Head stays `e9a4c7d2b135`.
+
+- Same routes, explicit version: `POST /imports/preview` and
+  `POST /imports/confirm` take query `identity_version` (`1` or `2`;
+  absent = 1) and, for v2 only, `origem` (the `title_source` pattern).
+  The body is still raw octet-stream, so these are query parameters, not
+  form fields. v1 requests, v1 responses, the v1 plan/execution modules,
+  the v1 adapter and v1 receipts are unchanged; the v1 adapter still
+  never reads or writes the side table.
+- v2 requires the canonical column `referencia` (aliases `referencia`,
+  `referencia do titulo`, `documento`, `numero do documento`; v2 only).
+  The value is trimmed, NFC-normalized and validated with the same
+  rules as TI1. A missing or invalid value is a row issue
+  (`reference_required` / `invalid_reference`). A repeated reference in
+  the file is `duplicate_reference`. Either blocks the whole file.
+  Rows with the same client, value and due date but different
+  references are a preview warning only (`coincident_tuple_in_file`).
+- The v2 digest has its own domain (`identity_version`, `origem`, the
+  reference and row warnings in the payload), so it never equals a v1
+  digest. The v1 digest bytes are unchanged.
+- Confirm v2, all under the shared identity advisory lock and in one
+  transaction: a reference that already exists with the same normalized
+  client, value and due date → `existing_same` (no insert, never
+  updated, audit `title_reference_matched`). The same reference with a
+  different payload → 409 `reference_conflict`. A new reference whose
+  tuple matches an **unreferenced** account → 409 `legacy_match_review`
+  (no override; assign the reference via TI1, then re-preview). Tuple
+  matches only referenced accounts → created with warning
+  `coincident_referenced_tuple`. All rows `existing_same` → 409
+  `nothing_to_import`, no receipt. 409 bodies carry only row numbers and
+  account IDs.
+- Each created account gets its side-table row (`import_v2`, actor
+  user ID, import key and digest) in the same transaction as the
+  account, the audit rows and the v2 receipt. The receipt covers created
+  accounts only.
+- Idempotency: a v2 retry with the same actor, key and digest returns
+  the stored receipt with no writes. A v1 receipt under the same key
+  (or a v2 receipt under a v1 request) → `idempotency_conflict`.
+  Matched rows and warnings are reported only on creation; a replay
+  returns the receipt alone.
+- Stated limits: the preview stays database-free, so classification
+  against existing titles (`existing_same`, conflicts, referenced-tuple
+  warnings) appears only at confirm time. The side-table row from import
+  has no `auth_session_id`/`request_id` (the confirm route passes only
+  the `user:<id>` actor). Still registered only under the test-only
+  confirmation guard. The UI does not send v2 yet. Retiring v1 for new
+  confirmations remains a PO decision.
 
 ## 3. D2 — Human separation of duties
 
@@ -465,8 +521,10 @@ contract; it has no HTTP route and is not activated (D4).
   **not tested**.
 - Stable title reference (§2): TI1 (manual assign) **prepared, not
   applied, not run** (TASK054). PO review, then a separately authorized
-  test run, CI recovery-gate run and merge are pending. TI2 (import v2)
-  is not started and needs TI1 accepted first.
+  test run, CI recovery-gate run and merge are pending. TI2 (import v2):
+  candidate prepared for PO review (§2), offline tests written but
+  **not run**, no PostgreSQL test of the v2 path yet (unique-index
+  backstop, lock interplay with `POST /accounts/{id}/title-reference`).
 - Retention, access and erasure procedure for stored title references
   (§2, TI1): named decision required before real data or area5.
 - Targeted recovery delta for the new audit table and trigger (§4):

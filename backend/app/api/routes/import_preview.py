@@ -47,6 +47,9 @@ from app.core.import_preview_http import internal_error_body
 ACCEPTED_CONTENT_TYPE = "application/octet-stream"
 FORMATS = ("csv", "xlsx")
 INCLUDE_VALUES_OPTIONS = {"true": True, "false": False}
+# Identidade v2 (AREA2 TI2): ``identity_version`` ausente = 1 (clientes
+# antigos inalterados); ``origem`` só existe em v2 e é validada pelo parser.
+IDENTITY_VERSION_OPTIONS = {"1": 1, "2": 2}
 
 INVALID_REQUEST_DETAIL = {
     "code": "invalid_preview_request",
@@ -81,6 +84,7 @@ def create_import_preview_router(
     async def preview_import(request: Request) -> JSONResponse:
         try:
             file_format, include_values = _read_query(request)
+            identity = _read_identity_query(request)
         except _InvalidPreviewRequest:
             return _error(422, INVALID_REQUEST_DETAIL)
 
@@ -97,10 +101,12 @@ def create_import_preview_router(
                 content_length,
                 max_bytes=max_file_bytes,
             )
+            # v1 chama o parser exatamente como antes (sem kwargs).
             preview = await run_in_threadpool(
                 parse_import_preview,
                 f"preview.{file_format}",
                 data,
+                **identity,
             )
             content = serialize_preview(
                 preview,
@@ -150,6 +156,33 @@ def _read_query(request: Request) -> tuple[str, bool]:
         raise _InvalidPreviewRequest
 
     return formats[0], INCLUDE_VALUES_OPTIONS[include[0]]
+
+
+def _read_identity_query(request: Request) -> dict:
+    """
+    ``{}`` para v1; ``{"identity_version": 2, "origem": ...}`` para v2.
+    O formato de ``origem`` é validado pelo parser (``invalid_origin``).
+    """
+
+    params = request.query_params
+    versions = params.getlist("identity_version")
+    origins = params.getlist("origem")
+
+    if len(versions) > 1 or len(origins) > 1:
+        raise _InvalidPreviewRequest
+
+    if versions and versions[0] not in IDENTITY_VERSION_OPTIONS:
+        raise _InvalidPreviewRequest
+
+    version = IDENTITY_VERSION_OPTIONS[versions[0]] if versions else 1
+
+    if version == 1:
+        if origins:
+            raise _InvalidPreviewRequest
+
+        return {}
+
+    return {"identity_version": 2, "origem": origins[0] if origins else None}
 
 
 def _accepts_content_type(request: Request) -> bool:
