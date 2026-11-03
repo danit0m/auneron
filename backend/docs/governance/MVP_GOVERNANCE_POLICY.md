@@ -1,5 +1,107 @@
 # MVP Governance Policy
 
+## Current governance review — 2026-11-03
+
+Status: TECHNICAL_EVIDENCE_VERIFIED / PENDING_NAMED_HUMAN_ACCEPTANCE.
+Area 2 is not yet administratively closed.
+
+This section supersedes the implementation-status claims in the historical
+proposal below. The proposal is preserved as history, not as the current
+delivery register. Neither this review nor a CI result supplies human consent.
+
+### Verified baseline and evidence
+
+Reviewed main: `8f4daa10b6eda7c4bde77fe5464220492c729c96`.
+Schema migration head exercised in CI: `e9a4c7d2b135`.
+
+| Delivery | Integrated evidence |
+|---|---|
+| Data-entry audit and legacy duplicate fix | PR #13; merge `3714651335719d69766a2c2c3982397e81f7ba21` |
+| Stable title reference TI1 | PR #14; merge `ab0a5575ec457a536b185e1fc48354d6fec22887` |
+| Import identity v2 TI2 | PR #15; merge `8f4daa10b6eda7c4bde77fe5464220492c729c96` |
+
+PR #15 CI: [41558329527](https://github.com/danit0m/auneron/actions/runs/41558329527).
+Post-merge CI: [41564935880](https://github.com/danit0m/auneron/actions/runs/41564935880).
+Both completed successfully; the latter belongs to the merge commit above.
+The PR run recorded 3,859 general tests, 20 existing PostgreSQL import tests
+and six dedicated native v2 tests passing. Recovery, 48 CHECK-equivalence
+probes, authenticated E2E and final database cleanup passed.
+These are CI/disposable-environment claims, not production deployment claims.
+
+### D1-D5 — consolidated policy submitted for Daniel Tomaz's acceptance
+
+| Decision | Rule |
+|---|---|
+| D1 — identity | Internal identity stays accounts.id. Origin + reference is unique in the immutable side table. Different references permit legitimate equal financial tuples. An unreferenced tuple collision blocks for review; no invented references or altered financial fields to bypass it. |
+| D2 — human separation | Approver is a named human distinct from requester and executor. Requester may execute. Different user IDs alone do not prove different humans; pilot enrollment must map users to people. No shared credentials or impersonation/reset bypass. |
+| D3 — data entry | Manual and legacy CSV writes remain RBAC-gated outside GAM V1, with transactional append-only data-entry audit. Import keeps its receipt/audit contract. This does not authorize financial status changes through data entry. |
+| D4 — autonomy | MVP remains L2, supervised, for the two assessed actions. No L3 activation or new grant. LLM work in area 3 is synthetic shadow with no financial writes or real bank data. |
+| D5 — payment | Current mark_paid is a human declaration, not bank proof. Assisted reconciliation belongs to area 4 and requires its own versioned, atomic contract. No automatic reconciliation or automatic treatment of exception cases. |
+
+TI1 uses the existing side table, a shared identity lock, database uniqueness,
+a RESTRICT FK and append-only protection. Manual assignment and its audit
+commit atomically. Assigned references cannot be edited or deleted through
+the product.
+
+TI2 explicitly selects identity_version=2 and origem, requires referencia,
+and includes origin/reference in its semantic digest. Equal existing
+reference/payload is matched without insertion; changed payload is rejected.
+New references colliding with unreferenced accounts require TI1 mapping and
+a new preview. File errors or transactional failures do not partially import.
+Same actor/key/digest replays the stored receipt without new writes.
+All-matched files return nothing_to_import without creating a receipt.
+V1 digest/receipt replay remains compatible. V1 is not retired by this record.
+
+The preview is database-free: existing-title classification occurs at confirm.
+The UI does not yet submit v2. Confirmation remains under the existing
+test-only guard. These are accepted delivery boundaries only if the named
+acceptance below is recorded; no production import activation is implied.
+
+### Residuals carried to their owning gates
+
+- Area 3: synthetic LLM shadow only; model output never creates authority.
+- Area 4: manual-create idempotency/create-with-reference, v2 UI as needed by
+  the journey, and assisted reconciliation. No claim that these are delivered.
+- Area 5: named retention/access/backup/erasure procedures for references and
+  audit data before real data; references currently cannot be erased through
+  the product. Unkeyed personal-data digests are pseudonymous, not anonymous.
+  A written credential-reset procedure and person-to-user mapping are needed
+  before the applicable pilot operations.
+- Single company per installation and single application replica.
+  Multi-instance guarantees and UP-2 authority convergence remain deferred.
+- Audit row triggers do not stop TRUNCATE or privileged owner/superuser
+  bypass, direct SQL is outside application audit, reads are not audited,
+  and pre-migration history is not synthesized.
+- The existing concurrent approval-creation/account-delete missing-target
+  residual remains explicit and fail-closed, not repaired by this delivery.
+- H2 remains the previously documented authorship exception; this review is
+  PO-authored documentation only, not a new schema or runtime implementation.
+
+### Named acceptance and H1 gate
+
+Daniel's 2026-11-03 instruction to prepare governance closure authorizes this
+documentary work. It is not recorded as informed acceptance of all D1-D5 or as
+a factual acknowledgement of H1.
+
+H1 remains OPEN: the historical proposal records a mutable execution on
+auneron_test on 2026-10-28 without prior verifiable consent. This review
+carries that recorded incident forward; it does not independently reconstruct
+it, erase it, grant retroactive authorization or claim production impact.
+Before final administrative closure, Daniel must acknowledge that recorded
+incident in his own dated statement. The PO must then append the acceptance
+and closure record, preserving the original evidence.
+
+Final gate: record Daniel's explicit acceptance of the consolidated D1-D5
+and boundaries, his factual H1 acknowledgement (not retroactive permission),
+and a PO closure entry. Until then: area 2 technical evidence verified,
+administrative closure pending. No deploy, database operation, grant,
+credential change, real-data activation or start of another area is authorized
+by this document.
+
+---
+
+## Historical proposal — retained unchanged below
+
 ```
 Status:      PROPOSED_PENDING_HUMAN_ACCEPTANCE
 Prepared by: Claude (product developer), 2026-10-30, at tree f1e641d4
