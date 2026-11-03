@@ -92,6 +92,17 @@ The target environment, eligible action set, limits and evidence sources
 have not yet been bound to an operational activation plan. The approval is
 not expanded into an unspecified production or deployment-wide grant.
 
+### Explicit acceptance of amended D4/D5 — 2026-11-03
+
+Daniel Tomaz confirmed: "ok... autorizado ajustes em D4 e D5."
+This explicitly accepts the amended D4/D5 product direction recorded above:
+governed L3 for eligible routine operations and automated evidence-bound
+reconciliation/payment posting, with human exception handling.
+The prior D4/D5 wording is superseded; no further acceptance of these same
+documented amendments is pending. Implementation and operational activation
+gates below remain applicable; no specific live grant or environment is
+selected by this statement. H1 acknowledgement is not inferred.
+
 ### D4 implementation and activation gates
 
 Existing evidence:
