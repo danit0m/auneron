@@ -1,5 +1,29 @@
 # MVP Governance Policy
 
+## Final PO acceptance record — 2026-11-03
+
+Status: ACCEPTED_FOR_INTEGRATION; area 2 closes administratively only when
+this record is merged after the current-head CI succeeds.
+This record supersedes the pending-acceptance/H1 status statements in the
+dated preparation sections below; those sections remain historical evidence.
+
+Daniel Tomaz authorized the consolidated policy with D4/D5 amendments,
+explicitly accepted those adjustments, and then answered "confirmo" to:
+"voce confirma que tomou ciencia do relato de execucao no banco de testes
+em 28/10 sem consentimento previo verificavel?"
+H1 acknowledgement is therefore recorded on 2026-11-03. The PO closes its
+acknowledgement/recording gate, preserving the original incident. This is
+not retroactive authorization, exoneration or a claim of new remediation.
+
+PO review: integrated audit, identity and v2 evidence is verified.
+D1-D3 safeguards and the amended D4/D5 product direction are accepted.
+CI 41645049326 passed for acceptance commit 5a3625e; this final record's
+commit must also pass the applicable CI before integration.
+Runtime L3 activation and automated payment reconciliation remain tracked
+implementation/activation deliverables with the gates below. Neither is
+claimed live by closing area 2. No deploy or live database/grant operation
+is authorized or performed by this documentary closure.
+
 ## Current governance review — 2026-11-03
 
 Status: TECHNICAL_EVIDENCE_VERIFIED / CONDITIONAL_ACCEPTANCE_WITH_D4_D5_AMENDMENTS.
