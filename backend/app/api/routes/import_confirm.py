@@ -22,6 +22,11 @@ suportado), 503 ``account_writers_busy`` com ``Retry-After: 5`` (lock ou
 execute 55P03/57014 desfeito antes do commit), 500 genérico sem dados. Toda resposta desta rota (inclusive 401/403/422/500) sai com
 ``Cache-Control: no-store`` via ``route_class``; outras rotas não são
 afetadas.
+
+Identidade v2 (AREA2 TI2): query opcional ``identity_version`` (``1`` ou
+``2``; ausente = 1) e ``origem`` (só v2). v2 usa ``v2_module`` e
+``v2_repository`` injetados (503 se ausentes); 409 v2 carregam só números
+de linha e ids de conta. A resposta v1 não muda.
 """
 
 from __future__ import annotations
@@ -48,6 +53,10 @@ PERMISSIONS = ("imports.execute", "clients.manage")
 ACCEPTED_CONTENT_TYPE = "application/octet-stream"
 QUERY_FIELDS = ("format", "expected_file_sha256", "expected_content_sha256")
 NO_STORE = "no-store"
+
+# Identidade v2 (AREA2 TI2): ``identity_version`` ausente = 1; ``origem``
+# só em v2. v1 inalterado (mesmo plano, execução, adaptador e resposta).
+IDENTITY_VERSION_OPTIONS = {"1": 1, "2": 2}
 
 CONFLICT_CODES = frozenset({
     'file_mismatch', 'content_mismatch',
@@ -122,6 +131,10 @@ class _Invalid(Exception):
     pass
 
 
+class _V2NotWired(Exception):
+    """Placeholder de classe de erro quando v2 não foi injetado."""
+
+
 def create_import_confirm_router(
     *,
     parser_module: Any,
@@ -132,6 +145,8 @@ def create_import_confirm_router(
     repository: Any,
     require_api_key: Any,
     require_permission: Any,
+    v2_module: Any = None,
+    v2_repository: Any = None,
 ) -> APIRouter:
     parse = parser_module.parse_import_preview
     preview_error = parser_module.ImportPreviewError
@@ -141,6 +156,8 @@ def create_import_confirm_router(
     plan_error = plan_module.ImportConfirmationError
     execution_error = execution_module.ImportConfirmationExecutionError
     repository_error = repository_module.ImportConfirmationRepositoryError
+    v2_available = v2_module is not None and v2_repository is not None
+    v2_error = v2_module.ImportIdentityV2Error if v2_available else _V2NotWired
     require_execute, require_manage = (require_permission(p) for p in PERMISSIONS)
 
     def confirm(data: bytes, query: dict, key: str, actor: str):
@@ -156,6 +173,20 @@ def create_import_confirm_router(
             repository, plan, actor_reference=actor
         )
 
+    def confirm_v2(data: bytes, query: dict, key: str, actor: str, origem):
+        plan = v2_module.plan_import_confirmation_v2(
+            parse,
+            data,
+            query["format"],
+            origem=origem,
+            expected_file_sha256=query["expected_file_sha256"],
+            expected_content_sha256=query["expected_content_sha256"],
+            idempotency_key=key,
+        )
+        return v2_module.execute_import_confirmation_v2(
+            v2_repository, plan, actor_reference=actor
+        )
+
     router = APIRouter(route_class=NoStoreRoute)
 
     @router.post(IMPORT_CONFIRM_PATH + '/', dependencies=[Depends(require_api_key)], include_in_schema=False)
@@ -169,11 +200,15 @@ def create_import_confirm_router(
 
         try:
             query, key = _read_request(request)
+            version, origem = _read_identity(request)
         except _Invalid:
             return _error(422, INVALID_REQUEST)
 
         if not _single_header(request, "content-type", ACCEPTED_CONTENT_TYPE):
             return _error(415, UNSUPPORTED_MEDIA)
+
+        if version == 2 and not v2_available:
+            return _error(503, UNAVAILABLE)
 
         try:
             lengths = request.headers.getlist("content-length")
@@ -186,7 +221,22 @@ def create_import_confirm_router(
                 lengths[0] if lengths else None,
                 max_bytes=max_bytes,
             )
-            result = await run_in_threadpool(confirm, data, query, key, actor)
+            if version == 2:
+                result = await run_in_threadpool(
+                    confirm_v2, data, query, key, actor, origem
+                )
+            else:
+                result = await run_in_threadpool(confirm, data, query, key, actor)
+        except v2_error as error:
+            if error.status_code >= 500:
+                return _error(500, INTERNAL_ERROR)
+            detail = {"code": error.code, "message": error.message}
+            # Só números de linha e ids de conta; nunca valores do arquivo.
+            if error.row_numbers:
+                detail["rows"] = list(error.row_numbers)
+            if error.account_ids:
+                detail["account_ids"] = list(error.account_ids)
+            return _error(error.status_code, detail)
         except preview_error as error:
             code = 413 if error.code == "file_too_large" else 422
             return _error(code, {"code": error.code, "message": error.message})
@@ -209,15 +259,34 @@ def create_import_confirm_router(
             return _error(500, INTERNAL_ERROR)
 
         receipt = result.receipt
+        content = {
+            "replayed": result.replayed,
+            "file_kind": receipt.file_kind,
+            "record_count": receipt.record_count,
+            "total": str(receipt.total),
+            "account_references": list(receipt.account_references),
+        }
+
+        if version == 2:
+            # Linhas já existentes e avisos só na criação; o replay devolve
+            # apenas o recibo (que cobre as contas criadas).
+            content["identity_version"] = 2
+            content["matched_existing"] = [
+                {"row_number": m.row_number, "account_id": m.account_reference}
+                for m in result.matched
+            ]
+            content["warnings"] = [
+                {
+                    "row_number": w.row_number,
+                    "code": w.code,
+                    "account_ids": list(w.account_references),
+                }
+                for w in result.warnings
+            ]
+
         return JSONResponse(
             status_code=200 if result.replayed else 201,
-            content={
-                "replayed": result.replayed,
-                "file_kind": receipt.file_kind,
-                "record_count": receipt.record_count,
-                "total": str(receipt.total),
-                "account_references": list(receipt.account_references),
-            },
+            content=content,
         )
 
     return router
@@ -248,6 +317,25 @@ def _read_request(request: Request) -> tuple[dict, str]:
         raise _Invalid
 
     return query, keys[0]
+
+
+def _read_identity(request: Request) -> tuple[int, Any]:
+    versions = request.query_params.getlist("identity_version")
+    origins = request.query_params.getlist("origem")
+
+    if len(versions) > 1 or len(origins) > 1:
+        raise _Invalid
+
+    if versions and versions[0] not in IDENTITY_VERSION_OPTIONS:
+        raise _Invalid
+
+    version = IDENTITY_VERSION_OPTIONS[versions[0]] if versions else 1
+
+    if version == 1 and origins:
+        raise _Invalid
+
+    # ``origem`` ausente em v2 vira ``invalid_origin`` (422) no plano.
+    return version, origins[0] if origins else None
 
 
 def _single_header(request: Request, name: str, expected: str) -> bool:

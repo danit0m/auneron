@@ -222,6 +222,7 @@ jobs:
         run: >-
           python -m pytest --maxfail=1
           --ignore=tests/test_import_confirmation_postgres.py
+          --ignore=tests/test_import_identity_v2_postgres.py
 
       - name: Executar testes de confirmação de importação (PostgreSQL)
         env:
@@ -229,6 +230,13 @@ jobs:
         run: >-
           python -m pytest --maxfail=1
           tests/test_import_confirmation_postgres.py
+
+      - name: Import identity v2 native PostgreSQL gate
+        env:
+          IMPORT_CONFIRMATION_TEST_ENABLED: "true"
+        run: >-
+          python -m pytest --maxfail=1 -v
+          tests/test_import_identity_v2_postgres.py
 
       - name: Diagnóstico operacional do banco
         run: python scripts/db_diagnostics.py

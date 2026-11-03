@@ -120,6 +120,7 @@ from app.api.routes.import_confirm import (
     create_import_confirm_router,
 )
 from app.services import import_confirmation_plan, import_confirmation_execution, import_confirmation_repository
+from app.services import import_identity_v2, import_confirmation_repository_v2
 from app.database.database import SessionLocal
 
 from app.core.import_preview_http import ImportPreviewHTTPMiddleware
@@ -578,14 +579,20 @@ app.include_router(create_import_capabilities_router(
     require_permission=require_permission,
 ))
 if confirmation_available:
+    # v2 (AREA2 TI2) compõe o mesmo adaptador v1: mesma sessão, lock e guard.
+    import_confirmation_base_repository = import_confirmation_repository.PostgresImportConfirmationRepository(
+        SessionLocal, import_confirmation_execution, writer_protocol_verified=True,
+    )
     app.include_router(create_import_confirm_router(
         parser_module=import_preview_parser,
         transport_module=import_preview_transport,
         plan_module=import_confirmation_plan,
         execution_module=import_confirmation_execution,
         repository_module=import_confirmation_repository,
-        repository=import_confirmation_repository.PostgresImportConfirmationRepository(
-            SessionLocal, import_confirmation_execution, writer_protocol_verified=True,
+        repository=import_confirmation_base_repository,
+        v2_module=import_identity_v2,
+        v2_repository=import_confirmation_repository_v2.PostgresImportIdentityV2Repository(
+            import_confirmation_base_repository, import_confirmation_repository, import_identity_v2,
         ),
         require_api_key=require_api_key,
         require_permission=require_permission,

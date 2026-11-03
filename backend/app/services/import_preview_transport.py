@@ -40,6 +40,13 @@ REQUIRED_VALUE_FIELDS = ("cliente", "valor", "vencimento", "status")
 OPTIONAL_VALUE_FIELDS = ("email", "whatsapp")
 FILE_KINDS = ("csv", "xlsx")
 
+# Identidade v2 (AREA2 TI2): ``referencia`` e ``origem``. Saída v1 intacta;
+# as chaves v2 só aparecem quando o parser declara ``identity_version=2``.
+REFERENCE_FIELD = "referencia"
+CANONICAL_FIELDS_V2 = CANONICAL_FIELDS + (REFERENCE_FIELD,)
+REQUIRED_VALUE_FIELDS_V2 = REQUIRED_VALUE_FIELDS + (REFERENCE_FIELD,)
+_TITLE_SOURCE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
 TRANSPORT_ERRORS = MappingProxyType({
     "invalid_content_length": (
         400,
@@ -213,6 +220,15 @@ def serialize_preview(
     if type(include_values) is not bool:
         raise ImportTransportError("invalid_option")
 
+    # Previews sem o atributo (v1 por duck typing) seguem v1.
+    version = getattr(preview, "identity_version", 1)
+
+    if type(version) is not int or version not in (1, 2):
+        raise ImportTransportError("invalid_preview")
+
+    v2 = version == 2
+    fields = CANONICAL_FIELDS_V2 if v2 else CANONICAL_FIELDS
+
     file_kind = _attr(preview, "file_kind")
 
     if type(file_kind) is not str or file_kind not in FILE_KINDS:
@@ -231,15 +247,15 @@ def serialize_preview(
         raise ImportTransportError("invalid_preview")
 
     returned = [
-        _serialize_row(row, include_values)
+        _serialize_row(row, include_values, fields, v2)
         for row in rows[:MAX_RETURNED_ROWS]
     ]
 
-    return {
+    serialized = {
         "file_kind": file_kind,
         "file_sha256": _sha256(_attr(preview, "file_sha256")),
         "content_sha256": _sha256(_attr(preview, "content_sha256")),
-        "column_mapping": _mapping(_attr(preview, "column_mapping")),
+        "column_mapping": _mapping(_attr(preview, "column_mapping"), v2),
         "ignored_columns": _indices(_attr(preview, "ignored_columns")),
         "total_rows": total_rows,
         "valid_rows": valid_rows,
@@ -250,8 +266,39 @@ def serialize_preview(
         "rows": returned,
     }
 
+    if v2:
+        title_source = _attr(preview, "title_source")
 
-def _serialize_row(row: Any, include_values: bool) -> dict[str, Any]:
+        if type(title_source) is not str or not _TITLE_SOURCE.fullmatch(
+            title_source
+        ):
+            raise ImportTransportError("invalid_preview")
+
+        serialized["identity_version"] = 2
+        serialized["origem"] = title_source
+        # Contagem sobre todas as linhas, não só as devolvidas.
+        serialized["warning_rows"] = sum(
+            1 for row in rows if _warnings(row, fields)
+        )
+
+    return serialized
+
+
+def _warnings(row: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
+    warnings = _attr(row, "warnings")
+
+    if not isinstance(warnings, (tuple, list)):
+        raise ImportTransportError("invalid_preview")
+
+    return [_serialize_issue(warning, fields) for warning in warnings]
+
+
+def _serialize_row(
+    row: Any,
+    include_values: bool,
+    fields: tuple[str, ...] = CANONICAL_FIELDS,
+    v2: bool = False,
+) -> dict[str, Any]:
     row_number = _attr(row, "row_number")
 
     if type(row_number) is not int or row_number < 1:
@@ -270,24 +317,29 @@ def _serialize_row(row: Any, include_values: bool) -> dict[str, Any]:
     serialized: dict[str, Any] = {
         "row_number": row_number,
         "valid": valid,
-        "issues": [_serialize_issue(issue) for issue in issues],
+        "issues": [_serialize_issue(issue, fields) for issue in issues],
     }
+
+    if v2:
+        serialized["warnings"] = _warnings(row, fields)
 
     if include_values:
         serialized["values"] = (
-            _serialize_values(_attr(row, "values")) if valid else None
+            _serialize_values(_attr(row, "values"), v2) if valid else None
         )
 
     return serialized
 
 
-def _serialize_issue(issue: Any) -> dict[str, Any]:
+def _serialize_issue(
+    issue: Any, fields: tuple[str, ...] = CANONICAL_FIELDS
+) -> dict[str, Any]:
     field = _attr(issue, "field")
     code = _attr(issue, "code")
     message = _attr(issue, "message")
 
     if field is not None and (
-        type(field) is not str or field not in CANONICAL_FIELDS
+        type(field) is not str or field not in fields
     ):
         raise ImportTransportError("invalid_preview")
 
@@ -300,11 +352,11 @@ def _serialize_issue(issue: Any) -> dict[str, Any]:
     return {"field": field, "code": code, "message": message}
 
 
-def _serialize_values(values: Any) -> dict[str, Any]:
+def _serialize_values(values: Any, v2: bool = False) -> dict[str, Any]:
     if type(values) is not dict:
         raise ImportTransportError("invalid_preview")
 
-    for field in CANONICAL_FIELDS:
+    for field in CANONICAL_FIELDS_V2 if v2 else CANONICAL_FIELDS:
         if field not in values:
             raise ImportTransportError("invalid_preview")
 
@@ -318,6 +370,9 @@ def _serialize_values(values: Any) -> dict[str, Any]:
     for field in OPTIONAL_VALUE_FIELDS:
         value = values[field]
         serialized[field] = None if value is None else _text(value)
+
+    if v2:
+        serialized[REFERENCE_FIELD] = _text(values[REFERENCE_FIELD])
 
     return serialized
 
@@ -345,16 +400,19 @@ def _sha256(value: Any) -> str:
     return value
 
 
-def _mapping(value: Any) -> dict[str, int]:
+def _mapping(value: Any, v2: bool = False) -> dict[str, int]:
     if type(value) is not dict:
         raise ImportTransportError("invalid_preview")
 
-    if not set(REQUIRED_VALUE_FIELDS) <= set(value) <= set(CANONICAL_FIELDS):
+    required = REQUIRED_VALUE_FIELDS_V2 if v2 else REQUIRED_VALUE_FIELDS
+    canonical = CANONICAL_FIELDS_V2 if v2 else CANONICAL_FIELDS
+
+    if not set(required) <= set(value) <= set(canonical):
         raise ImportTransportError("invalid_preview")
 
     mapping = {}
 
-    for field in CANONICAL_FIELDS:
+    for field in canonical:
         if field in value:
             mapping[field] = _index(value[field])
 
