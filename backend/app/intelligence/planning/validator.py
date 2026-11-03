@@ -11,7 +11,10 @@ from app.intelligence.gateway.contracts import DataClassification
 from app.intelligence.planning.admission import AdmissionDecision
 from app.intelligence.planning.admission import PlanAdmission
 from app.intelligence.planning.admission import StepApproval
+from app.intelligence.planning.authority import AccountAccess
+from app.intelligence.planning.authority import AuthorityContextError
 from app.intelligence.planning.authority import SyntheticAuthorityContext
+from app.intelligence.planning.canonical import CanonicalError
 from app.intelligence.planning.canonical import InputError
 from app.intelligence.planning.canonical import derive_idempotency_key
 from app.intelligence.planning.canonical import scan_value
@@ -22,10 +25,14 @@ from app.intelligence.planning.capabilities import ApprovalKind
 from app.intelligence.planning.capabilities import CapabilityDefinition
 from app.intelligence.planning.capabilities import CapabilityRegistry
 from app.intelligence.planning.capabilities import EffectClass
+from app.intelligence.planning.capabilities import RegistrySnapshotError
+from app.intelligence.planning.capabilities import snapshot_registry
 from app.intelligence.planning.codes import RejectionCode
 from app.intelligence.planning.codes import Violation
 from app.intelligence.planning.codes import make_violation
 from app.intelligence.planning.dag import analyze_dag
+from app.intelligence.planning.policy import ActionPolicyEntry
+from app.intelligence.planning.policy import AutonomyEntry
 from app.intelligence.planning.policy import PolicyReference
 from app.intelligence.planning.policy import reconcile_capability
 from app.intelligence.planning.schema import CONTRACT
@@ -76,16 +83,18 @@ def _free_text(plan: dict[str, Any]) -> Iterator[tuple[str, str]]:
 
 
 def _reject(
-    registry: CapabilityRegistry,
+    registry_digest: str | None,
     violations: list[Violation],
     *,
     context_digest: str | None = None,
     initiator_ref: str | None = None,
 ) -> PlanAdmission:
+    # Takes the digest of the SNAPSHOT (or None), never reads a digest
+    # from the object the caller passed in.
     return PlanAdmission(
         decision=AdmissionDecision.REJECTED,
         violations=tuple(sorted(set(violations))),
-        registry_digest=registry.digest,
+        registry_digest=registry_digest,
         context_digest=context_digest,
         execution_digest=None,
         presentation_digest=None,
@@ -97,6 +106,142 @@ def _reject(
         requires_step_approvals=(),
         separation_requirements=(),
         initiator_ref=initiator_ref,
+    )
+
+
+def _defect(error: Exception) -> PlanAdmission:
+    """Typed result for a failure of the validator itself. The detail is
+    a built-in exception class name or a fixed token: never a message,
+    never input content."""
+    kind = type(error)
+    detail = kind.__name__ if kind.__module__ == "builtins" else "non_builtin"
+
+    return _reject(
+        None,
+        [make_violation(RejectionCode.VALIDATOR_INTERNAL_ERROR, "$", detail)],
+    )
+
+
+# ----------------------------------------------------------------------
+# snapshots of the server-side objects. Each is read ONCE, field by field
+# from its instance dictionary (no property, no __getattr__, no foreign
+# method), with exact types; then rebuilt through its own constructor.
+# Every later use reads only the copy. Expected malformed input raises
+# _Malformed; anything else is a defect and propagates.
+# ----------------------------------------------------------------------
+
+
+class _Malformed(Exception):
+    """Internal control flow only; never leaves this module."""
+
+
+def _fields(value: Any, kind: type) -> dict[str, Any]:
+    if not isinstance(value, kind):
+        raise _Malformed()
+
+    state = vars(value)
+
+    if type(state) is not dict:
+        raise _Malformed()
+
+    return state
+
+
+def _exact(value: Any, *kinds: type) -> Any:
+    if type(value) not in kinds:
+        raise _Malformed()
+
+    return value
+
+
+def _text_set(value: Any) -> frozenset[str]:
+    if type(value) not in (frozenset, set) or not all(
+        type(item) is str for item in value
+    ):
+        raise _Malformed()
+
+    return frozenset(value)
+
+
+def _plain_dict(value: Any) -> dict[Any, Any]:
+    # Exact dict only: a mapping subclass could run code on every read.
+    return dict(_exact(value, dict))
+
+
+def _snapshot_authority(
+    authority: Any,
+) -> tuple[SyntheticAuthorityContext, str]:
+    state = _fields(authority, SyntheticAuthorityContext)
+    accounts: dict[str, AccountAccess] = {}
+
+    for ref, access in _plain_dict(state.get("accounts")).items():
+        access_state = _fields(access, AccountAccess)
+        accounts[_exact(ref, str)] = AccountAccess(
+            readable=_exact(access_state.get("readable"), bool),
+            manageable=_exact(access_state.get("manageable"), bool),
+        )
+
+    if state.get("synthetic") is not True:
+        raise _Malformed()
+
+    try:
+        # The constructor runs its checks again (including the refusal
+        # in production); the digest applies the canonical value rules
+        # to every text of the context (D1).
+        copied = SyntheticAuthorityContext(
+            initiator_ref=_exact(state.get("initiator_ref"), str),
+            role=_exact(state.get("role"), str),
+            permissions=_text_set(state.get("permissions")),
+            accounts=accounts,
+            session_elevated=_exact(state.get("session_elevated"), bool),
+            synthetic=True,
+        )
+        return copied, copied.context_digest()
+    except (AuthorityContextError, CanonicalError):
+        raise _Malformed() from None
+
+
+def _snapshot_policy(policy: PolicyReference) -> PolicyReference:
+    state = _fields(policy, PolicyReference)
+    actions: dict[str, ActionPolicyEntry] = {}
+    autonomy: dict[str, AutonomyEntry] = {}
+    routes: dict[str, frozenset[str]] = {}
+
+    for key, entry in _plain_dict(state.get("actions")).items():
+        entry_state = _fields(entry, ActionPolicyEntry)
+        actions[_exact(key, str)] = ActionPolicyEntry(
+            capability_kind=_exact(entry_state.get("capability_kind"), str),
+            initiation_actor=_exact(entry_state.get("initiation_actor"), str),
+            authority_model=_exact(entry_state.get("authority_model"), str),
+            required_authority=_exact(
+                entry_state.get("required_authority"), str
+            ),
+            execution_corridor=_exact(
+                entry_state.get("execution_corridor"), str
+            ),
+        )
+
+    for key, entry in _plain_dict(state.get("autonomy_by_effect")).items():
+        entry_state = _fields(entry, AutonomyEntry)
+        autonomy[_exact(key, str)] = AutonomyEntry(
+            disposition=_exact(entry_state.get("disposition"), str),
+            risk_level=_exact(entry_state.get("risk_level"), str),
+            approver_permission=_exact(
+                entry_state.get("approver_permission"), str, type(None)
+            ),
+        )
+
+    for key, permissions in _plain_dict(
+        state.get("read_route_permissions")
+    ).items():
+        routes[_exact(key, str)] = _text_set(permissions)
+
+    return PolicyReference(
+        actions=actions,
+        autonomy_by_effect=autonomy,
+        known_permissions=_text_set(state.get("known_permissions")),
+        read_route_permissions=routes,
+        source=_exact(state.get("source"), str),
     )
 
 
@@ -118,24 +263,67 @@ def validate_plan(
     that stage are returned, sorted by stage, code and path), so the same
     input always yields the same answer. A positive answer is NOT
     permission to execute anything: see PlanAdmission.
+
+    Malformed server-side objects (registry, authority, policy) are typed
+    rejections of their own stage. An unexpected failure of the validator
+    itself is NOT an ordinary rejection: it is the typed defect result
+    `validator_internal_error` (PlanAdmission.internal_defect is True),
+    which every gate must treat as a failure to fix. An unsupported
+    `proposer_kind` is a caller programming error and still raises.
     """
     if proposer_kind not in SUPPORTED_PROPOSER_KINDS:
         raise ValueError("Unsupported proposer_kind in this phase.")
 
-    limits = registry.limits
+    try:
+        return _validate(
+            raw,
+            registry=registry,
+            policy=policy,
+            authority=authority,
+            data_classification=data_classification,
+            pinned_registry_digest=pinned_registry_digest,
+        )
+    except Exception as error:
+        return _defect(error)
 
+
+def _validate(
+    raw: Any,
+    *,
+    registry: Any,
+    policy: Any,
+    authority: Any,
+    data_classification: Any,
+    pinned_registry_digest: Any,
+) -> PlanAdmission:
     # -- 0. registry integrity ------------------------------------------
-    if registry.digest != pinned_registry_digest:
+    # The digest is RECOMPUTED from a snapshot of what the registry holds
+    # now (D2); the cached digest of the object passed in is never read.
+    try:
+        snapshot = snapshot_registry(registry)
+    except RegistrySnapshotError:
         return _reject(
-            registry,
+            None,
             [make_violation(RejectionCode.REGISTRY_INTEGRITY_FAILURE)],
         )
+
+    registry_digest = snapshot.digest
+
+    if registry_digest != pinned_registry_digest:
+        return _reject(
+            registry_digest,
+            [make_violation(RejectionCode.REGISTRY_INTEGRITY_FAILURE)],
+        )
+
+    # Only the snapshot is used from here on.
+    registry = snapshot
+    limits = registry.limits
 
     # -- 1. input ----------------------------------------------------------
     try:
         plan = strict_parse(raw, limits)
     except InputError as error:
-        return _reject(registry, [make_violation(error.code)])
+        return _reject(registry_digest, [make_violation(error.code)])
 
     # -- 2. contract -------------------------------------------------------
     found: list[Violation] = []
@@ -169,13 +357,13 @@ def validate_plan(
             )
 
     if found:
-        return _reject(registry, found)
+        return _reject(registry_digest, found)
 
     # -- 3. value rules and closed structure ---------------------------
     found, json_depth = scan_value(plan, limits)
 
     if found:
-        return _reject(registry, found)
+        return _reject(registry_digest, found)
 
     errors = sorted(
         _SKELETON_VALIDATOR.iter_errors(plan),
@@ -184,7 +372,7 @@ def validate_plan(
 
     if errors:
         return _reject(
-            registry,
+            registry_digest,
             [
                 make_violation(
                     RejectionCode.SCHEMA_VIOLATION,
@@ -243,7 +431,7 @@ def validate_plan(
             )
 
     if found:
-        return _reject(registry, found)
+        return _reject(registry_digest, found)
 
     # -- 5. capabilities ---------------------------------------------------
     found = []
@@ -287,7 +475,7 @@ def validate_plan(
         definitions[index] = definition
 
     if found:
-        return _reject(registry, found)
+        return _reject(registry_digest, found)
 
     # -- 6. parameters and predicates ---------------------------------------
     found = []
@@ -336,13 +524,13 @@ def validate_plan(
                     )
 
     if found:
-        return _reject(registry, found)
+        return _reject(registry_digest, found)
 
     # -- 7. DAG ------------------------------------------------------------
     dag = analyze_dag(steps, limits)
 
     if dag.violations:
-        return _reject(registry, list(dag.violations))
+        return _reject(registry_digest, list(dag.violations))
 
     # -- 8. effects ----------------------------------------------------------
     found = []
@@ -408,7 +596,7 @@ def validate_plan(
                 )
 
     if found:
-        return _reject(registry, found)
+        return _reject(registry_digest, found)
 
     # -- 9. data policy --------------------------------------------------------
     found = []
@@ -425,15 +613,19 @@ def validate_plan(
             )
 
     if found:
-        return _reject(registry, found)
+        return _reject(registry_digest, found)
 
     # -- 10. authority (synthetic context) ----------------------------------------
-    if not isinstance(authority, SyntheticAuthorityContext):
+    # A missing, malformed or non-canonical context (D1) is one typed code.
+    try:
+        authority, context_digest = _snapshot_authority(authority)
+    except _Malformed:
         return _reject(
-            registry,
+            registry_digest,
             [make_violation(RejectionCode.AUTHORITY_CONTEXT_INVALID)],
         )
 
+    initiator_ref = authority.initiator_ref
     found = []
 
     for index, step in enumerate(steps):
@@ -470,19 +662,29 @@ def validate_plan(
 
     if found:
         return _reject(
-            registry,
+            registry_digest,
             found,
-            context_digest=authority.context_digest(),
-            initiator_ref=authority.initiator_ref,
+            context_digest=context_digest,
+            initiator_ref=initiator_ref,
         )
 
     # -- 11. policy reconciliation -----------------------------------------------------
     if not isinstance(policy, PolicyReference):
         return _reject(
-            registry,
+            registry_digest,
             [make_violation(RejectionCode.POLICY_REFERENCE_MISSING)],
-            context_digest=authority.context_digest(),
-            initiator_ref=authority.initiator_ref,
+            context_digest=context_digest,
+            initiator_ref=initiator_ref,
+        )
+
+    try:
+        policy = _snapshot_policy(policy)
+    except _Malformed:
+        return _reject(
+            registry_digest,
+            [make_violation(RejectionCode.POLICY_REFERENCE_INVALID)],
+            context_digest=context_digest,
+            initiator_ref=initiator_ref,
         )
 
     found = []
@@ -503,14 +705,14 @@ def validate_plan(
 
     if found:
         return _reject(
-            registry,
+            registry_digest,
             found,
-            context_digest=authority.context_digest(),
-            initiator_ref=authority.initiator_ref,
+            context_digest=context_digest,
+            initiator_ref=initiator_ref,
         )
 
     # -- 12. admission (structural only) --------------------------------------------------
-    digests = seal(plan, registry.digest)
+    digests = seal(plan, registry_digest)
     approvals: list[StepApproval] = []
     separation: set[str] = set()
 
@@ -538,8 +740,8 @@ def validate_plan(
             else AdmissionDecision.ADMITTED_READ_ONLY
         ),
         violations=(),
-        registry_digest=registry.digest,
-        context_digest=authority.context_digest(),
+        registry_digest=registry_digest,
+        context_digest=context_digest,
         execution_digest=digests["execution_digest"],
         presentation_digest=digests["presentation_digest"],
         idempotency_key=derive_idempotency_key(
@@ -557,5 +759,5 @@ def validate_plan(
             sorted(approvals, key=lambda a: a.step_key)
         ),
         separation_requirements=tuple(sorted(separation)),
-        initiator_ref=authority.initiator_ref,
+        initiator_ref=initiator_ref,
     )

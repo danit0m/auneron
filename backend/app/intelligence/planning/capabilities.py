@@ -2,14 +2,17 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import fields
 from enum import Enum
 from typing import Any
 from typing import Final
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 from app.intelligence.planning.canonical import DOMAIN_REGISTRY
 from app.intelligence.planning.canonical import digest
+from app.intelligence.planning.canonical import plain_json_copy
 from app.intelligence.planning.limits import PLAN_LIMITS
 from app.intelligence.planning.limits import PlanLimits
 
@@ -258,6 +261,155 @@ class CapabilityRegistry:
 
     def ids(self) -> tuple[str, ...]:
         return tuple(sorted({cid for (cid, _) in self._by_key}))
+
+
+# ----------------------------------------------------------------------
+# snapshot: the cached digest of a registry says nothing about what it
+# holds NOW (a schema dict can be edited in place, an attribute can be
+# reassigned, a frozen field can be forced with object.__setattr__).
+# A snapshot re-reads every field ONCE from the instance dictionary
+# (no property, no __getattr__), checks its exact type, rebuilds every
+# object through its constructor (so every invariant runs again) and
+# therefore recomputes the digest from what is really there.
+# ----------------------------------------------------------------------
+
+
+class RegistrySnapshotError(ValueError):
+    """The object is not a well-formed capability registry."""
+
+    def __init__(self) -> None:
+        super().__init__("registry")
+
+
+_MISSING: Final[object] = object()
+
+
+def _state(value: Any, kind: type) -> dict[str, Any]:
+    if not isinstance(value, kind):
+        raise RegistrySnapshotError()
+
+    state = vars(value)
+
+    if type(state) is not dict:
+        raise RegistrySnapshotError()
+
+    return state
+
+
+def _field_of(state: dict[str, Any], name: str, *kinds: type) -> Any:
+    value = state.get(name, _MISSING)
+
+    if type(value) not in kinds:
+        raise RegistrySnapshotError()
+
+    return value
+
+
+def _text_tuple(value: Any) -> tuple[str, ...]:
+    if type(value) is not tuple or not all(type(item) is str for item in value):
+        raise RegistrySnapshotError()
+
+    return tuple(value)
+
+
+def _schema(value: Any) -> dict[str, Any]:
+    copied = plain_json_copy(value)
+
+    if type(copied) is not dict:
+        raise RegistrySnapshotError()
+
+    return copied
+
+
+def _copy_limits(limits: Any) -> PlanLimits:
+    state = _state(limits, PlanLimits)
+
+    return PlanLimits(
+        **{
+            item.name: _field_of(state, item.name, int)
+            for item in fields(PlanLimits)
+        }
+    )
+
+
+def _copy_approval(policy: Any) -> ApprovalPolicy:
+    state = _state(policy, ApprovalPolicy)
+
+    return ApprovalPolicy(
+        kind=_field_of(state, "kind", ApprovalKind),
+        approver_permission=_field_of(
+            state, "approver_permission", str, type(None)
+        ),
+    )
+
+
+def _copy_prerequisite(rule: Any) -> Prerequisite:
+    state = _state(rule, Prerequisite)
+    precondition = _field_of(state, "required_precondition", tuple)
+
+    if len(precondition) != 3 or not (
+        type(precondition[0]) is str
+        and type(precondition[1]) is str
+        and type(precondition[2]) in (bool, int, str)
+    ):
+        raise RegistrySnapshotError()
+
+    return Prerequisite(
+        any_of=_text_tuple(state.get("any_of")),
+        bind=_text_tuple(state.get("bind")),
+        required_precondition=tuple(precondition),
+    )
+
+
+def _copy_definition(definition: Any) -> CapabilityDefinition:
+    state = _state(definition, CapabilityDefinition)
+    prerequisites = _field_of(state, "prerequisites", tuple)
+
+    return CapabilityDefinition(
+        capability_id=_field_of(state, "capability_id", str),
+        version=_field_of(state, "version", int),
+        registered=_field_of(state, "registered", bool),
+        enabled=_field_of(state, "enabled", bool),
+        llm_proposable=_field_of(state, "llm_proposable", bool),
+        executable=_field_of(state, "executable", bool),
+        effect_class=_field_of(state, "effect_class", EffectClass),
+        input_schema=_schema(state.get("input_schema")),
+        output_schema=_schema(state.get("output_schema")),
+        required_permissions=_text_tuple(state.get("required_permissions")),
+        approval_policy=_copy_approval(state.get("approval_policy")),
+        reference_key=_field_of(state, "reference_key", str, type(None)),
+        corridor=_field_of(state, "corridor", str, type(None)),
+        separation_requirements=_text_tuple(
+            state.get("separation_requirements")
+        ),
+        prerequisites=tuple(_copy_prerequisite(rule) for rule in prerequisites),
+    )
+
+
+def snapshot_registry(registry: Any) -> CapabilityRegistry:
+    """
+    A NEW registry rebuilt from plain copies of what `registry` holds
+    now, or RegistrySnapshotError. Only the definitions, version and
+    limits are read; the lookup index and the cached digest of the
+    original are ignored and recomputed. Expected malformed input
+    (wrong types, a missing field, a schema that is not plain JSON, a
+    constructor invariant that no longer holds) is RegistrySnapshotError;
+    anything else propagates as the defect it is.
+    """
+    state = _state(registry, CapabilityRegistry)
+    definitions = _field_of(state, "_definitions", tuple)
+
+    try:
+        return CapabilityRegistry(
+            tuple(_copy_definition(item) for item in definitions),
+            version=_field_of(state, "version", str),
+            limits=_copy_limits(state.get("limits")),
+        )
+    except RegistrySnapshotError:
+        raise
+    except (ValueError, SchemaError):
+        # constructor invariants and plain-data refusals
+        raise RegistrySnapshotError() from None
 
 
 # ----------------------------------------------------------------------

@@ -4,6 +4,7 @@ import copy
 import pytest
 
 from app.intelligence.gateway.contracts import DataClassification, ModelCallResult
+from app.intelligence.proposal.builder import project
 from intelligence_pipeline_admission_bridge import admit_model_result
 from intelligence_pipeline_simulation import simulate_proposal
 from test_intelligence_plan_validator import good_plan
@@ -50,8 +51,8 @@ def test_replay_preserves_projection_and_admission_without_grant():
 def test_unusable_fixture_is_fail_closed(payload):
     request = base_request()
     result = admit_model_result(
-        _fixture(payload), registry=request.registry,
-        policy=request.policy, authority=request.authority,
+        _fixture(payload), projection=project(request).projection,
+        request=request,
     )
     assert result is None
 
@@ -72,9 +73,20 @@ def test_untrusted_claims_cannot_become_authority():
     hostile["execution_authorized"] = True
     hostile["eligibility_verified"] = True
     outcome = _simulate(hostile)
-    assert outcome.admission is not None
-    assert outcome.admission.is_grant is False
-    assert outcome.admission.eligibility_verified is False
+    # The closed projected schema rejects fabricated authority before admission.
+    assert outcome.admission is None
+    # The standalone validator independently refuses the same authority claims.
+    import json
+    from app.intelligence.planning.validator import validate_plan
+    request = base_request()
+    rejected = validate_plan(
+        json.dumps(hostile), registry=request.registry, policy=request.policy,
+        authority=request.authority,
+    )
+    assert rejected.decision.value == "rejected"
+    assert rejected.violations
+    assert rejected.is_grant is False
+    assert rejected.eligibility_verified is False
 
 
 def test_call_key_changes_request_not_plan_authority():

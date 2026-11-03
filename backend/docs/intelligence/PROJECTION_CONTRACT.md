@@ -180,22 +180,48 @@ is therefore bounded by `max_schema_bytes`. Current lab profiles allow 512 and
 eight-step plan about 7 KB. This phase documents these numbers and changes no
 profile or price.
 
-## Known defects of the planning package
+## Planning-package defects D1-D3 (A3-01 corrective increment)
 
-Found while designing this package and **not fixed here**; this package only
-mitigates them:
+These were found while designing this package. The A3-01 increment (branch
+`docs/area3-execution-plan`, uncommitted) addresses them in the planning
+package itself. The projection keeps its own mitigations as defence in depth.
 
-* D1: `validate_plan` propagates `CanonicalError` when the authority context
-  has non-canonical text. The projection reports `authority_context_invalid`.
-* D2: the registry digest is cached at construction, so an in-place change of
-  a definition is not noticed by the pin check. The projection recomputes the
-  digest on a plain JSON copy of the registry (see Flow) and compares that
-  digest with the pin.
-* D3: malformed server-side objects raise untyped exceptions from the
-  planning API. The projection catches them and returns typed rejections.
+* D1: a non-canonical authority context (control character, non-NFC text,
+  mixed-type permissions) is now a typed `authority_context_invalid`
+  violation from `validate_plan`. It no longer propagates as `CanonicalError`.
+* D2: `validate_plan` re-derives the registry digest, so an in-place change
+  to a definition or a reassignment of `limits` is `registry_integrity_failure`.
+  The projection still recomputes the digest on a plain JSON copy.
+* D3: a malformed registry, policy or authority is a typed rejection
+  (`registry_integrity_failure`, `policy_reference_invalid` or
+  `authority_context_invalid`). An unexpected error inside the validator is
+  `validator_internal_error` with `internal_defect` set. That is never an
+  admission.
 
-A corrective increment of the planning package must come before the pipeline
-integrates the validator.
+**Evidence limits.** The PO ran an isolated synthetic-policy harness
+(`a3-01-harness/repro.py` and `binding_checks.py`), and its probes rejected
+with the intended codes. Those runs are not regression results. The focused
+pytest regressions in `tests/test_intelligence_proposal_admission_bridge.py`
+have **not been run**. Until they pass, D1-D3 are corrected in code but not
+verified.
+
+## Admission bridge (test-side, A3-01)
+
+`tests/intelligence_pipeline_admission_bridge.admit_model_result(result, *,
+projection, request)` admits model output only if all of the following hold:
+
+1. `verify_projection(projection, request) == ()`.
+2. A plain JSON copy of the output validates against the **full** verified
+   `projection.output_schema` with `Draft202012Validator`.
+3. It carries the projected `objective_ref` and an exact-`int`
+   `plan_version`.
+4. Its top-level capability and account refs are inside the projected scope.
+5. `validate_plan`, using the request's registry, policy and authority, then
+   admits it.
+
+The bridge has no blanket exception handler. An unexpected internal error
+propagates as a defect and is not reported as unusable output. The result is
+never a grant.
 
 ## What this is not
 

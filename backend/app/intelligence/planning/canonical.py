@@ -43,6 +43,17 @@ class InputError(ValueError):
         self.code = code
 
 
+class PlainDataError(ValueError):
+    """Raised by plain_json_copy; never carries the offending value."""
+
+    def __init__(self) -> None:
+        super().__init__("not plain JSON data")
+
+
+# A server-side schema is shallow; anything deeper (or a cycle) is refused.
+PLAIN_COPY_MAX_DEPTH: Final[int] = 64
+
+
 # ----------------------------------------------------------------------
 # strict parsing
 # ----------------------------------------------------------------------
@@ -194,6 +205,51 @@ def scan_value(
             )
 
     return sorted(violations), max_depth
+
+
+def _plain_copy(value: Any, depth: int) -> Any:
+    if depth > PLAIN_COPY_MAX_DEPTH:
+        raise PlainDataError()
+
+    kind = type(value)
+
+    if kind is bool or kind is int or kind is str:
+        return value
+
+    if kind is list:
+        return [_plain_copy(item, depth + 1) for item in value]
+
+    if kind is dict:
+        copied: dict[str, Any] = {}
+
+        for key, item in value.items():
+            if type(key) is not str:
+                raise PlainDataError()
+
+            copied[key] = _plain_copy(item, depth + 1)
+
+        return copied
+
+    raise PlainDataError()
+
+
+def plain_json_copy(value: Any) -> Any:
+    """
+    A copy of server-side data made only of EXACT dict, list, str, int
+    and bool, or PlainDataError. Types are checked before anything is
+    read, so no method of a foreign object runs: subclasses (whatever
+    they override), tuples, sets, floats, None and non-text keys are
+    refused, never coerced. The copy also obeys the strict value rules
+    (no control characters, NFC, integer range) and shares no container
+    with the original, so later changes to the original cannot reach it.
+    """
+    copied = _plain_copy(value, 1)
+    violations, _ = scan_value(copied)
+
+    if violations:
+        raise PlainDataError()
+
+    return copied
 
 
 # ----------------------------------------------------------------------

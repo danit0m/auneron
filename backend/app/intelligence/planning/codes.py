@@ -19,6 +19,10 @@ class Stage(IntEnum):
     DATA = 9
     AUTHORITY = 10
     POLICY = 11
+    # Not an ordered pipeline stage: an unexpected failure of the
+    # validator itself, from any stage, reported alone. It is a DEFECT,
+    # never an ordinary rejection of the input.
+    INTERNAL = 12
 
 
 class RejectionCode(str, Enum):
@@ -88,8 +92,11 @@ class RejectionCode(str, Enum):
     # 11 -- policy reconciliation
     POLICY_REFERENCE_MISSING = "policy_reference_missing"
     POLICY_REFERENCE_MISMATCH = "policy_reference_mismatch"
+    POLICY_REFERENCE_INVALID = "policy_reference_invalid"
     # seal verification (outside the stage pipeline)
     DIGEST_MISMATCH = "digest_mismatch"
+    # internal defect of the validator (outside the stage pipeline)
+    VALIDATOR_INTERNAL_ERROR = "validator_internal_error"
 
 
 STAGE_OF: dict[RejectionCode, Stage] = {
@@ -143,10 +150,18 @@ STAGE_OF: dict[RejectionCode, Stage] = {
     RejectionCode.AUTHORITY_SCOPE_INACCESSIBLE: Stage.AUTHORITY,
     RejectionCode.POLICY_REFERENCE_MISSING: Stage.POLICY,
     RejectionCode.POLICY_REFERENCE_MISMATCH: Stage.POLICY,
+    RejectionCode.POLICY_REFERENCE_INVALID: Stage.POLICY,
     # DIGEST_MISMATCH belongs to verify_seal, not to the pipeline; it is
     # mapped to the last stage only so every code has a stage.
     RejectionCode.DIGEST_MISMATCH: Stage.POLICY,
+    RejectionCode.VALIDATOR_INTERNAL_ERROR: Stage.INTERNAL,
 }
+
+# Codes that report a defect of the implementation, not a property of
+# the input. Any of them must fail a gate; none is an ordinary rejection.
+DEFECT_CODES: frozenset[str] = frozenset(
+    {RejectionCode.VALIDATOR_INTERNAL_ERROR.value}
+)
 
 
 @dataclass(frozen=True, order=True)
