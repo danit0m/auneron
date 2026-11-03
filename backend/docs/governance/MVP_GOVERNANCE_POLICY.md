@@ -2,7 +2,7 @@
 
 ## Current governance review — 2026-11-03
 
-Status: TECHNICAL_EVIDENCE_VERIFIED / PENDING_NAMED_HUMAN_ACCEPTANCE.
+Status: TECHNICAL_EVIDENCE_VERIFIED / CONDITIONAL_ACCEPTANCE_WITH_D4_D5_AMENDMENTS.
 Area 2 is not yet administratively closed.
 
 This section supersedes the implementation-status claims in the historical
@@ -28,15 +28,15 @@ and six dedicated native v2 tests passing. Recovery, 48 CHECK-equivalence
 probes, authenticated E2E and final database cleanup passed.
 These are CI/disposable-environment claims, not production deployment claims.
 
-### D1-D5 — consolidated policy submitted for Daniel Tomaz's acceptance
+### D1-D5 — conditional acceptance and amended product direction
 
 | Decision | Rule |
 |---|---|
 | D1 — identity | Internal identity stays accounts.id. Origin + reference is unique in the immutable side table. Different references permit legitimate equal financial tuples. An unreferenced tuple collision blocks for review; no invented references or altered financial fields to bypass it. |
-| D2 — human separation | Approver is a named human distinct from requester and executor. Requester may execute. Different user IDs alone do not prove different humans; pilot enrollment must map users to people. No shared credentials or impersonation/reset bypass. |
+| D2 — human separation | The human approval corridor retains independent approval. The L3 target uses explicit predelegated policy authority and an honest system actor; it does not fabricate human approval for each transaction. Grant approval/revocation and access rules must be defined for each activated corridor. No shared credentials or impersonation/reset bypass. |
 | D3 — data entry | Manual and legacy CSV writes remain RBAC-gated outside GAM V1, with transactional append-only data-entry audit. Import keeps its receipt/audit contract. This does not authorize financial status changes through data entry. |
-| D4 — autonomy | MVP remains L2, supervised, for the two assessed actions. No L3 activation or new grant. LLM work in area 3 is synthetic shadow with no financial writes or real bank data. |
-| D5 — payment | Current mark_paid is a human declaration, not bank proof. Assisted reconciliation belongs to area 4 and requires its own versioned, atomic contract. No automatic reconciliation or automatic treatment of exception cases. |
+| D4 — autonomy | Daniel's approved product direction is governed L3 in the MVP: eligible routine actions execute under preapproved policy, without per-item human approval; humans handle exceptions and supervise policy. This supersedes an L2-only MVP ceiling. The existing overdue pilot is evidence only for its tested corridor, not generalized activation. LLM output alone grants no authority. |
+| D5 — payment | Daniel's approved product direction is automated reconciliation and payment posting for eligible, unambiguous cases, with humans handling exceptions. Current mark_paid remains a declaration until a distinct evidence-bound reconciliation corridor is implemented and validated. Area 4 must support this automated normal path; assisted-only processing is no longer the target. |
 
 TI1 uses the existing side table, a shared identity lock, database uniqueness,
 a RESTRICT FK and append-only protection. Manual assignment and its audit
@@ -61,7 +61,7 @@ acceptance below is recorded; no production import activation is implied.
 
 - Area 3: synthetic LLM shadow only; model output never creates authority.
 - Area 4: manual-create idempotency/create-with-reference, v2 UI as needed by
-  the journey, and assisted reconciliation. No claim that these are delivered.
+  the journey, and automated evidence-bound reconciliation with exception handling. No claim that these are delivered.
 - Area 5: named retention/access/backup/erasure procedures for references and
   audit data before real data; references currently cannot be erased through
   the product. Unkeyed personal-data digests are pseudonymous, not anonymous.
@@ -77,26 +77,93 @@ acceptance below is recorded; no production import activation is implied.
 - H2 remains the previously documented authorship exception; this review is
   PO-authored documentation only, not a new schema or runtime implementation.
 
-### Named acceptance and H1 gate
+### Daniel Tomaz's conditional authorization — 2026-11-03
 
-Daniel's 2026-11-03 instruction to prepare governance closure authorizes this
-documentary work. It is not recorded as informed acceptance of all D1-D5 or as
-a factual acknowledgement of H1.
+Daniel authorized governance closure with explicit reservations: D4 should
+include active L3 to reduce human work, and D5 should automate payment
+verification rather than require routine manual statement checking.
+This is conditional acceptance with changed scope, not acceptance of the
+previous L2-only/assisted-only wording. D1-D3 retain their safeguards; D2's
+per-action human corridor is distinguished from predelegated L3 authority.
 
-H1 remains OPEN: the historical proposal records a mutable execution on
-auneron_test on 2026-10-28 without prior verifiable consent. This review
-carries that recorded incident forward; it does not independently reconstruct
-it, erase it, grant retroactive authorization or claim production impact.
-Before final administrative closure, Daniel must acknowledge that recorded
-incident in his own dated statement. The PO must then append the acceptance
-and closure record, preserving the original evidence.
+The PO records the requested activation outcome. No grant was created and
+no runtime activation occurred during this documentary amendment.
+The target environment, eligible action set, limits and evidence sources
+have not yet been bound to an operational activation plan. The approval is
+not expanded into an unspecified production or deployment-wide grant.
 
-Final gate: record Daniel's explicit acceptance of the consolidated D1-D5
-and boundaries, his factual H1 acknowledgement (not retroactive permission),
-and a PO closure entry. Until then: area 2 technical evidence verified,
-administrative closure pending. No deploy, database operation, grant,
-credential change, real-data activation or start of another area is authorized
-by this document.
+### D4 implementation and activation gates
+
+Existing evidence:
+[POLICY_AUTONOMOUS_WORKER_L3_PILOT_EVIDENCE.md](../operations/POLICY_AUTONOMOUS_WORKER_L3_PILOT_EVIDENCE.md)
+proves controlled account.mark_overdue autonomy for one company, using a
+predelegated grant, denial without authority and restart without duplicate
+effect. The pilot grant was revoked; this is historical evidence, not a
+current live-grant assertion. Payment autonomy and multiple simultaneous
+episodes were explicitly not proven. Persistent effect verification in that
+pilot was manual after the autonomous window.
+
+Prepare the next activation contract against the current code: exact
+environment/company, permitted actions, eligibility, policy version, grant
+owner, revocation/stop behavior, supported workload and observable outcome
+verification. Prove denial, concurrency, replay, restart and recovery for
+the intended workload before activating that scope. Do not weaken the
+existing human corridor or infer that an overdue grant covers payment.
+Document available grant granularity; if it cannot enforce required limits,
+implement the missing boundary before activation.
+
+L3 means executing approved policy automatically, not unconstrained model
+decisions. LLM shadow validation may remain a development stage, but must
+not be confused with delivering the requested operational L3 outcome.
+
+### D5 automated-reconciliation contract to implement in area 4
+
+The normal path must acquire financial movement evidence, deterministically
+match it to a stable title and execute an eligible payment posting under
+predelegated authority without requiring a human to inspect each statement
+or approve every matched item.
+
+Distinguish acquisition from matching/posting: an uploaded CSV can support
+automatic processing after upload but is not unattended bank acquisition.
+Select the source and integration contract separately; bank/API/ERP access
+and credentials are not assumed available. An imported file remains
+documentary evidence, not authenticated bank confirmation or balance proof.
+
+Proposed initial eligibility: a uniquely identified title and movement,
+exact amount/currency, valid account/company and settlement state, permitted
+policy scope, and no prior consumption or conflicting evidence.
+A confidence score, client name, amount/date coincidence or LLM assertion
+alone is insufficient authority/evidence. These rules are a design proposal
+for the new corridor, not claims about current runtime.
+
+Payment status, movement consumption/link, authority consumption, audit and
+receipt must commit atomically. Enforce one use of each title/movement with
+database constraints and locking. Replay, parallel writers, rollback,
+restart and recovery need native PostgreSQL evidence. Preserve the existing
+declared-payment corridor and distinguish evidence source in reports.
+
+Ambiguous, partial, grouped, fee, FX, reversal/refund or inconsistent cases
+go to an exception queue until their own rules are implemented and proven.
+Failure to fetch or validate evidence leaves financial state unchanged.
+
+### Closure status and H1
+
+Area 2's integrated audit, title identity and import-v2 technical evidence
+remains verified. The amended governance contract is not yet administratively
+closed. Do not claim L3 or automatic reconciliation is delivered by this
+document. Track D4 activation and D5 implementation explicitly in the next
+execution contracts, rather than silently carrying an L2-only product.
+
+H1 remains OPEN independently: the historical proposal records a mutable
+execution on auneron_test on 2026-10-28 without prior verifiable consent.
+Daniel's conditional authorization addressed D4/D5 and is not recorded as
+factual acknowledgement of H1. Do not grant retroactive authorization,
+rewrite the historical incident or infer its acknowledgement. Technical
+planning and reversible corrections can continue while this record remains
+open; no repeated approval is needed for that authorized work.
+
+This amendment is PO-authored documentation. No migration, database write,
+grant, credential change, deploy or live activation was performed.
 
 ---
 
