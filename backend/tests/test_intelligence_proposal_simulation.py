@@ -45,9 +45,8 @@ def test_unexpected_server_fields_never_grant_execution():
     hostile["approved"] = True
     hostile["execution_authorized"] = True
     outcome = run(fixture(hostile))
-    assert outcome.admission is not None
-    assert outcome.admission.is_grant is False
-    assert outcome.admission.eligibility_verified is False
+    # The verified closed schema refuses fabricated authority before admission.
+    assert outcome.admission is None
 
 
 def test_model_result_is_deterministic_and_does_not_mutate_fixture():
@@ -69,9 +68,8 @@ def test_rejected_plan_remains_blocked_across_retries():
     hostile["steps"] = "not-an-array"
     for _ in range(3):
         outcome = run(fixture(hostile))
-        assert outcome.admission is not None
-        assert outcome.admission.is_grant is False
-        assert outcome.admission.eligibility_verified is False
+        # Invalid step structure remains blocked on every attempt.
+        assert outcome.admission is None
 
 
 def test_projection_failure_prevents_admission():

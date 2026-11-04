@@ -33,7 +33,7 @@ def simulate_proposal(
     if prepared.model_request is None:
         return SimulatedPipelineResult(prepared, None)
     admission = admit_model_result(
-        fixture, registry=request.registry,
-        policy=request.policy, authority=request.authority,
+        fixture, projection=prepared.projection_result.projection,
+        request=request,
     )
     return SimulatedPipelineResult(prepared, admission)

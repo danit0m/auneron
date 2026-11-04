@@ -611,6 +611,8 @@ def test_every_pipeline_code_is_exercised_by_these_tests():
         RejectionCode.DAG_FAN_OUT_EXCEEDED,
         RejectionCode.LIMIT_JSON_DEPTH,
         RejectionCode.DIGEST_MISMATCH,
+        RejectionCode.POLICY_REFERENCE_INVALID,
+        RejectionCode.VALIDATOR_INTERNAL_ERROR,
     }
 
     assert exercised == set(RejectionCode)
@@ -1037,3 +1039,23 @@ def test_an_integer_never_stands_in_for_the_boolean_precondition(policy):
     ]
 
     assert codes_of(validate(plan, policy)) == ["predicate_invalid"]
+
+
+def test_malformed_policy_has_dedicated_rejection_code():
+    malformed = PolicyReference(None, None, None, None)
+    admission = validate(read_only_plan(), malformed)
+    assert codes_of(admission) == [RejectionCode.POLICY_REFERENCE_INVALID]
+    assert admission.internal_defect is False
+    assert admission.is_grant is False
+
+
+def test_internal_validator_failure_is_distinct_from_input_rejection(policy, monkeypatch):
+    def injected_failure(*args, **kwargs):
+        raise RuntimeError("canary_internal_detail_never_exposed")
+
+    monkeypatch.setattr(validator_module, "strict_parse", injected_failure)
+    admission = validate(read_only_plan(), policy)
+    assert codes_of(admission) == [RejectionCode.VALIDATOR_INTERNAL_ERROR]
+    assert admission.internal_defect is True
+    assert admission.is_grant is False
+    assert "canary_internal_detail_never_exposed" not in repr(admission)

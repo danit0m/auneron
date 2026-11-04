@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Any
 from typing import Final
 
+from app.intelligence.planning.codes import DEFECT_CODES
 from app.intelligence.planning.codes import Violation
 
 
@@ -40,7 +41,9 @@ class PlanAdmission:
 
     decision: AdmissionDecision
     violations: tuple[Violation, ...]
-    registry_digest: str
+    # Digest RECOMPUTED from a snapshot of the registry. None only when
+    # no snapshot could be built (malformed registry, internal defect).
+    registry_digest: str | None
     context_digest: str | None
     execution_digest: str | None
     presentation_digest: str | None
@@ -73,6 +76,8 @@ class PlanAdmission:
                 raise ValueError("A rejected plan carries no digest.")
         elif self.violations:
             raise ValueError("An admitted plan has no violations.")
+        elif self.registry_digest is None:
+            raise ValueError("An admitted plan is bound to a registry.")
 
     def __bool__(self) -> bool:
         raise TypeError(
@@ -82,6 +87,12 @@ class PlanAdmission:
     @property
     def admitted(self) -> bool:
         return self.decision is not AdmissionDecision.REJECTED
+
+    @property
+    def internal_defect(self) -> bool:
+        """True when the validator itself failed: a gate must treat it as
+        a defect to fix, never as an ordinary rejection of the input."""
+        return any(v.code in DEFECT_CODES for v in self.violations)
 
     def audit_view(self) -> dict[str, Any]:
         """Content-free summary (codes, counts, digests) safe to log."""

@@ -96,8 +96,28 @@ a JSON path and a fixed-vocabulary detail; they never echo input values.
 | 8 | effects | `effect_mutating_limit`, `effect_dataflow_forbidden`, `effect_eligibility_dependency_missing`, `effect_eligibility_precondition_missing` |
 | 9 | data policy | `data_real_data_refused`, `data_token_like_value` |
 | 10 | authority | `authority_context_invalid`, `authority_permission_missing`, `authority_scope_inaccessible` |
-| 11 | policy | `policy_reference_missing`, `policy_reference_mismatch` (`digest_mismatch` is raised by `verify_seal`) |
-| 12 | admission | seal, idempotency key, approval descriptions |
+| 11 | policy | `policy_reference_missing`, `policy_reference_mismatch`, `policy_reference_invalid` (`digest_mismatch` is raised by `verify_seal`) |
+| 12 | internal | `validator_internal_error` (sets `internal_defect`; never an admission) |
+| - | admission | seal, idempotency key, approval descriptions (not a rejection stage) |
+
+D1-D3 (A3-01) are handled as follows:
+
+- **D1.** Non-canonical authority text, or permissions of mixed types, give
+  `authority_context_invalid`. A `CanonicalError` is no longer raised.
+- **D2.** The registry digest is re-derived on each call. An in-place change
+  to a definition, or a reassigned `limits`, gives
+  `registry_integrity_failure`.
+- **D3.** Malformed server objects get typed codes:
+  - a registry gives `registry_integrity_failure`;
+  - a policy gives `policy_reference_invalid`;
+  - an authority gives `authority_context_invalid`.
+
+  Any other unexpected exception gives `validator_internal_error`.
+
+The code names match `planning/codes.py`. The stage numbers come from the
+A3-01 diff; stage 12 has not been re-read against the `Stage` enum. The
+regressions have **not been run** yet, so D1-D3 are corrected in code but
+not verified.
 
 Only the `llm` proposer exists in this phase; any other value raises.
 
