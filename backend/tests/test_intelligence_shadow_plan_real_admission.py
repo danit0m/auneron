@@ -38,11 +38,13 @@ from intelligence_shadow_plan_adapter import ACCOUNT_REF_MAP
 from intelligence_shadow_plan_adapter import adapt_plan_v1
 from test_intelligence_plan_validator import ALL_PERMISSIONS
 from test_intelligence_plan_validator import build_real_policy_reference
+from test_intelligence_shadow_plan_adapter import episode
 from test_intelligence_shadow_plan_adapter import long_mutating_plan
 from test_intelligence_shadow_plan_adapter import mutating_plan
 from test_intelligence_shadow_plan_adapter import plan
 from test_intelligence_shadow_plan_adapter import read_only_plan
 from test_intelligence_shadow_plan_adapter import reads
+from test_intelligence_shadow_plan_adapter import step
 
 pytestmark = pytest.mark.contract
 
@@ -208,3 +210,84 @@ def test_nine_step_plan_is_rejected_by_the_real_registry_limit(real_policy) -> N
     assert len(raw["steps"]) == REGISTRY_V1.limits.max_steps + 1
     assert adapt_plan_v1("s01", raw).status == "refused"
     assert real_label(admission) == "rejected" != SCRIPTED_PLAN_LABEL
+
+
+# ----------------------------------------------------------------------
+# A3 pending item 5: boundary regressions, real registry and real policy
+# ----------------------------------------------------------------------
+
+READ_PARAMS = {
+    "account.get_context": lambda base: {"account_ref": base["account_ref"]},
+    "action_space.evaluate": lambda base: dict(base),
+    "nba.evaluate": lambda base: dict(base),
+    "memory.recall": lambda base: {
+        "account_ref": base["account_ref"], "query": "historico", "limit": 3,
+    },
+}
+
+
+def _single_read_plan(capability_id):
+    base = {"account_ref": ACCOUNT_REF_MAP["ACC-01"], "due_date": "2026-10-01"}
+
+    return plan("s01", [step("only", capability_id, READ_PARAMS[capability_id](base))])
+
+
+def test_capability_map_covers_exactly_the_enabled_proposable_capabilities() -> None:
+    """Drift guard: a new proposable registry id must be mapped on purpose."""
+    from intelligence_shadow_plan_adapter import CAPABILITY_MAP
+
+    proposable = {
+        d.capability_id
+        for d in REGISTRY_V1.definitions
+        if d.enabled and d.llm_proposable
+    }
+
+    assert proposable == set(CAPABILITY_MAP)
+
+
+@pytest.mark.parametrize("capability_id", sorted(READ_PARAMS))
+def test_each_read_capability_is_admitted_read_only_by_the_real_policy(
+    capability_id, real_policy
+) -> None:
+    raw = _single_read_plan(capability_id)
+    admission = real_admission(SCENARIOS["s01"], raw, real_policy)
+
+    assert admission.violations == ()
+    assert admission.decision is READ_ONLY
+
+
+@pytest.mark.parametrize("capability_id", ["account.mark_paid", "work.escalate_to_human"])
+def test_adapter_and_real_policy_both_refuse_non_proposable_capabilities(
+    capability_id, real_policy
+) -> None:
+    raw = plan(
+        "s01",
+        [step("only", capability_id, episode("ACC-01", "s01"))],
+    )
+    admission = real_admission(SCENARIOS["s01"], raw, real_policy)
+
+    assert adapt_plan_v1("s01", raw).status == "refused"
+    assert real_label(admission) == "rejected"
+
+
+def test_memory_recall_needs_the_real_memory_read_permission(real_policy) -> None:
+    scenario = SCENARIOS["s01"]
+    without_memory = SyntheticAuthorityContext(
+        initiator_ref="user:42",
+        role="manager",
+        permissions=ALL_PERMISSIONS - {"memory:read"},
+        accounts={
+            ACCOUNT_REF_MAP["ACC-01"]: AccountAccess(readable=True, manageable=True)
+        },
+    )
+    memory = real_admission(
+        scenario, _single_read_plan("memory.recall"), real_policy,
+        authority=without_memory,
+    )
+    other_read = real_admission(
+        scenario, _single_read_plan("nba.evaluate"), real_policy,
+        authority=without_memory,
+    )
+
+    assert real_label(memory) == "rejected"
+    assert real_label(other_read) == "admitted"
