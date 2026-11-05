@@ -15,7 +15,7 @@ def _fixture(parsed, *, ok=True):
     return ModelCallResult(
         ok=ok, parsed=parsed, error_code=None if ok else "provider_failure",
         call_ids=(), final_state="settled", attempts=1,
-        actual_micro=0, actual_tokens=0,
+        actual_micro=0, actual_tokens=0, profiles_used=("lab-fast",),
     )
 
 
@@ -23,7 +23,7 @@ def _simulate(parsed, *, call_key="synthetic-11a"):
     return simulate_proposal(
         base_request(), call_key=call_key,
         input_text="Synthetic-only plan.", max_output_tokens=128,
-        fixture=_fixture(parsed),
+        fixture=_fixture(parsed), deployment_budget_id=1,
     )
 
 
@@ -62,6 +62,7 @@ def test_rejected_projection_never_admits_even_valid_fixture():
         base_request(account_refs=("missing_account",)),
         call_key="synthetic-11a", input_text="Synthetic-only plan.",
         max_output_tokens=128, fixture=_fixture(good_plan()),
+        deployment_budget_id=1,
     )
     assert outcome.prepared.model_request is None
     assert outcome.admission is None
