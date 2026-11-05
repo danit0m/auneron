@@ -22,8 +22,8 @@ abstention channel remain unproven.
 | Item | State | Observed evidence | Not established |
 |---|---|---|---|
 | A3-01 PLAN-FIX | PR #17, reviewed correction | 90 isolated synthetic-policy tests and 7 binding checks | Current-head full CI and real-policy integration |
-| A3-02 SHADOW-EVAL | Reviewed scorer v3, scenarios v2 | Included in 264 pure tests; digest and file hashes pinned | Real model quality, gateway/ledger runner |
-| A3-03-INTEGRATION | Reviewed adapter v2 | Included in 264 pure tests; scripted matrix passes at k=1/k=3 | Real model channel, grant or execution |
+| A3-02 SHADOW-EVAL | Scorer v4, scenarios v2 | Pure tests (264 at scorer v3, not rerun as a count after v4); digest and file hashes pinned (freeze 2) | Real model quality, gateway/ledger runner |
+| A3-03-INTEGRATION | Adapter v3 | Pure tests (264 at adapter v2, not rerun as a count after v3); scripted matrix passes at k=1/k=3 | Real model channel, grant or execution |
 | A3-03 PROVIDER | Not started | None | Out of scope of the adapter |
 | A3-04 MODEL-RUN | Not started; paid-run decisions open | None | LLM quality in any form |
 
@@ -72,8 +72,12 @@ Open before A3-04:
    A3-01 bridge; the plan admission label in the tests is scripted.
 3. The adapter reuses the A3-02 vocabulary instead of re-pinning scenarios to
    real ids; `consumes_plan_v1` stays false until that is reviewed.
-4. Decide whether a plan naming its own capability in free text may count as
-   correct. Today it is a `conservative_refusal` and fails the gate.
+4. DECIDED by the director: a plan naming its capability only in free text stays
+   a `conservative_refusal`, earns no credit and is not executed. The result now
+   separates `not_actionable` from `explicit_abstention` (only the synthetic
+   envelope abstains), and unsafe proposals in dropped free text are reported as
+   the fixed signal `free_text_unsafe_proposal` without copying the text.
+   Scorer v4, adapter v3, freeze 2. Targets are unchanged.
 5. Real-policy boundary regressions and required CI remain outstanding, then
    digest, scorer-hash and adapter-hash freeze.
 

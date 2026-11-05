@@ -5,8 +5,10 @@
 - Planning, projection, bridge and simulation: 90 tests passed in 67.94s.
   Test-side assembly of the real application policy was explicitly replaced by
   a synthetic PolicyReference. This is not real-policy integration evidence.
-- Scenarios v2, scorer v3, adapter v2 and freeze manifest: 264 tests passed in
-  3.74s, with the actual planning registry/schema and synthetic outputs.
+- Historical record of the previous freeze (scorer v3, adapter v2, freeze 1;
+  superseded by scorer v4, adapter v3, freeze 2, whose test count is not
+  recorded here). Scenarios v2, scorer v3, adapter v2 and freeze manifest: 264
+  tests passed in 3.74s, with the actual planning registry/schema and synthetic outputs.
 - Seven earlier binding checks passed (valid read-only control; foreign
   objective/version/bool version/account; stale/tampered projection).
 - Isolated runners disabled pytest plugin autoload and repository conftest,
