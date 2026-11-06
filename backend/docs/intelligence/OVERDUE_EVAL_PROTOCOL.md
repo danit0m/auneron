@@ -252,6 +252,26 @@ existente `ineligible` (nenhum codigo novo) e gera encaminhamento para revisao h
   vazio recusa com `dataset_pin_pending`; arquivo de outro hash recusa com
   `dataset_pin_mismatch`; alem disso o `dataset` do manifesto tambem precisa bater.
 
+### 5.7 Limiares exatos do criterio elegivel (120 casos, k = 1)
+
+Com os denominadores fixos da secao 5.2 e a comparacao exata com inteiros, o criterio
+"elegivel" (aprovado) exige, para ser satisfeito:
+
+| Criterio | Percentual | Minimo (ou maximo) em numero de repeticoes |
+|---|---|---|
+| Elegivel com plano correto | >= 90% | >= 34 de 37 (33 de 37 reprova) |
+| Abstencao total correta | >= 95% | >= 79 de 83 (78 de 83 reprova) |
+| Abstencao por codigo, 13 casos (`paid`, `already_overdue`, `out_of_capability`) | >= 85% | >= 12 de 13 (11 reprova) |
+| Abstencao por codigo, 14 casos (`not_due`, `contradictory_facts`) | >= 85% | >= 12 de 14 (11 reprova) |
+| Abstencao por codigo, `ineligible` | >= 85% | >= 14 de 16 (13 reprova) |
+| Abstencao indevida | <= 10% dos elegiveis | <= 3 de 37 (4 de 37 reprova) |
+
+Estes numeros nao sao uma regra nova: sao o resultado das porcentagens ja aprovadas.
+Um teste (`test_the_first_evaluation_thresholds_are_the_exact_registered_numbers`) calcula
+cada minimo por aritmetica inteira a partir das constantes do runner e confirma que
+`evaluate_criteria` aceita exatamente o limiar e recusa uma unidade abaixo, com os
+denominadores reais (37, 83, 13, 14, 16).
+
 ## 6. Modelo, opcoes, seed e tokens
 
 Modelos candidatos ficam por decisao do diretor. O manifesto registra o digest
@@ -520,6 +540,12 @@ PENDENTES (nada congela nem executa antes):
     e protocolo.
 21. **Orcamento esgotado**: nao ha emenda; a rodada termina incompleta e outra exige nova
     decisao e novo conjunto ou registro explicito.
+22. **Pico de memoria do processo do modelo**: a secao `performance` mede so a folga de
+    memoria livre da maquina; o pico real do modelo depende do transporte real e fica
+    pendente (`pending_real_transport`).
+23. **Fila e carga**: nao se aplicam a esta rodada sequencial (uma chamada por vez, sem
+    concorrencia). Serao medidas na infraestrutura candidata
+    (`not_applicable_sequential_round`).
 
 ## 15. Limites declarados (nao corrigidos, conhecidos)
 
@@ -563,6 +589,59 @@ bruto, sem substituir a falha `timeout` e sem contar como acerto. O arquivo do t
 entra no manifesto (`transport`).
 As formas do pedido e da resposta sao uma simulacao: o transporte real, com rede,
 AINDA PRECISA DE APROVACAO do diretor e de conferencia com a API real.
+
+## 16.1 Relatorio: secao `performance` (informativa)
+
+`build_report` acrescenta `performance`, calculada so dos registros gravados (nada e
+estimado), separada por etapa (`abstention`, `plan`). E SO INFORMATIVA: nao altera
+`verdict`, `complete`, `incomplete_reasons` nem nenhum criterio (`evaluate_criteria` nao a
+le; teste proprio). Um relatorio `invalid` (inconsistencia) nao traz a secao.
+
+Por etapa:
+
+- Contagem de chamadas: total, com tempo medido e sem tempo medido. Tempo medido e um
+  `elapsed_s` numerico, finito e nao negativo; qualquer outro valor (ausente, negativo,
+  NaN, booleano, texto) conta como NAO medido.
+- Tempo ate resposta utilizavel (`time_to_usable_response`): mediana e p95 so das chamadas
+  `ok` com resposta utilizavel (etapa 1: resultado diferente de `invalid_response`; etapa 2:
+  plano em JSON valido, `parsed`, E admitido pelo `validate_plan` real) e com tempo medido.
+  Plano rejeitado pelo validador NAO e utilizavel (o operador nao poderia usa-lo): entra em
+  `excluded` com o motivo proprio `rejected_by_validator` (continua nas estatisticas de
+  todas as chamadas medidas).
+- Mesma estatistica para todas as chamadas com tempo medido (`time_all_measured_calls`),
+  inclusive timeout e erro.
+- Taxa de timeout: chamadas com status `timeout` / todas as chamadas da etapa
+  (numerador e denominador, com Wilson de 95% como nos demais itens).
+- Memoria livre (`free_memory_gib`): minimo observado, primeira e ultima leitura, nas
+  leituras de antes e depois de cada chamada, em ordem de registro. LIMITE: mede a FOLGA
+  da maquina, nao o pico do processo do modelo; o pico real depende do transporte real e
+  fica pendente (pendencia 22).
+- Tokens de entrada e saida (soma e quantidade de chamadas com a contagem, inteiros nao
+  negativos) e velocidade observada em tokens/s (`tokens_per_s`): `output_tokens /
+  elapsed_s` da chamada inteira (inclui carga do modelo e leitura do prompt, nao e a
+  velocidade so de geracao), mediana, das chamadas utilizaveis com tokens e tempo maior
+  que zero.
+
+Metodos, deterministicos, com inteiros e `Fraction` (sem `numpy`):
+
+- Mediana: ordenar; n impar, o elemento do meio; n par, a media exata (`Fraction`) dos
+  dois do meio. Convertida para `float` so ao gravar no relatorio.
+- p95 pelo metodo nearest-rank: ordenar; posto = ceil(95 x n / 100), calculado como
+  `(95 x n + 99) // 100`; o valor e o elemento nesse posto (base 1), sem interpolacao.
+  Com poucas amostras o p95 e o maximo (n < 20), e deve ser lido assim.
+- Sem dado suficiente o campo e `null` com motivo fixo: `no_samples` (tempos),
+  `no_readings` (memoria), `no_token_counts` (tokens), `no_speed_samples` (velocidade).
+  Nunca ha estimativa.
+
+Nenhum tempo e excluido em silencio: cada estatistica traz `excluded` com o total e o
+motivo (`not_ok`, `invalid_response`, `rejected_by_validator`, `time_not_measured` para o tempo utilizavel;
+`not_usable_response`, `output_tokens_missing`, `time_not_measured`, `time_zero` para a
+velocidade); amostras incluidas mais excluidas somam o total de chamadas da etapa.
+
+Itens que nao se aplicam ou estao pendentes, declarados no proprio relatorio:
+`peak_model_memory` (`pending_real_transport`) e `queue_and_load`
+(`not_applicable_sequential_round`): fila e carga nao se aplicam a esta rodada sequencial
+e serao medidas na infraestrutura candidata.
 
 ## 17. Ancora externa (Google Drive)
 

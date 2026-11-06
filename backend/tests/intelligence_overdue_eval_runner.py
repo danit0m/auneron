@@ -1841,6 +1841,185 @@ def _consistency_problems(calls: Sequence[Mapping], index: Mapping[str, sc.Scena
     return problems
 
 
+# --- performance (informative only) ------------------------------------------
+
+PERF_NO_SAMPLES: Final[str] = "no_samples"
+PERF_NO_READINGS: Final[str] = "no_readings"
+PERF_NO_TOKEN_COUNTS: Final[str] = "no_token_counts"
+PERF_NO_SPEED_SAMPLES: Final[str] = "no_speed_samples"
+PERF_PEAK_PENDING: Final[str] = "pending_real_transport"
+PERF_QUEUE_LOAD_NA: Final[str] = "not_applicable_sequential_round"
+PERCENTILE_METHOD: Final[str] = (
+    "nearest-rank, exact integers: sort ascending, rank = ceil(95 * n / 100) computed "
+    "as (95 * n + 99) // 100, value = element at that rank (1-based); no interpolation")
+MEDIAN_METHOD: Final[str] = (
+    "sort ascending; odd n: the middle element; even n: the exact Fraction mean of the "
+    "two middle elements; converted to float only for the report")
+MEMORY_NOTE: Final[str] = (
+    "free memory of the machine read by the injected probe before and after each call: "
+    "it measures headroom, NOT the peak memory of the model process")
+SPEED_NOTE: Final[str] = (
+    "output_tokens / elapsed_s of the whole call (includes model load and prompt "
+    "evaluation); not the generation-only speed")
+
+
+def _measured_time(call: Mapping) -> Fraction | None:
+    """The recorded elapsed time as an exact Fraction, or None when it was not measured."""
+    value = call.get("elapsed_s")
+    if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+        return Fraction(value)
+    return None
+
+
+def _count_value(call: Mapping, key: str) -> int | None:
+    value = call.get(key)
+    return value if type(value) is int and value >= 0 else None
+
+
+def _usable_response(call: Mapping) -> bool:
+    """An ``ok`` call whose reply is valid: a usable abstention answer or a parsed plan."""
+    if call.get("call_status") != "ok":
+        return False
+    if call.get("stage") == STAGE_ABSTENTION:
+        return call.get("result") in (ac.RESULTS - {ac.INVALID_RESPONSE})
+    return call.get("parsed") is True and call.get("admission") == "admitted"
+
+
+def _rejected_plan(call: Mapping) -> bool:
+    """A parsed plan the real validator did not admit: not usable by the operator."""
+    return (call.get("call_status") == "ok" and call.get("stage") == STAGE_PLAN
+            and call.get("parsed") is True and call.get("admission") != "admitted")
+
+
+def median_of(values: Sequence[Fraction]) -> Fraction | None:
+    """Exact median; None for no values."""
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return None
+    if n % 2:
+        return ordered[n // 2]
+    return (ordered[n // 2 - 1] + ordered[n // 2]) / 2
+
+
+def nearest_rank_p95(values: Sequence[Fraction]) -> Fraction | None:
+    """Nearest-rank 95th percentile with integers only; None for no values."""
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return None
+    return ordered[(95 * n + 99) // 100 - 1]
+
+
+def _time_summary(values: Sequence[Fraction]) -> dict:
+    median, p95 = median_of(values), nearest_rank_p95(values)
+    return {
+        "n": len(values),
+        "median_s": float(median) if median is not None else None,
+        "p95_s": float(p95) if p95 is not None else None,
+        "reason": None if values else PERF_NO_SAMPLES,
+    }
+
+
+def _stage_performance(calls: Sequence[Mapping]) -> dict:
+    timed = [(c, _measured_time(c)) for c in calls]
+    with_time = sum(1 for _, t in timed if t is not None)
+
+    usable_times: list[Fraction] = []
+    excluded = {"not_ok": 0, "invalid_response": 0, "rejected_by_validator": 0,
+                "time_not_measured": 0}
+    for call, elapsed in timed:
+        if call.get("call_status") != "ok":
+            excluded["not_ok"] += 1
+        elif _rejected_plan(call):
+            excluded["rejected_by_validator"] += 1
+        elif not _usable_response(call):
+            excluded["invalid_response"] += 1
+        elif elapsed is None:
+            excluded["time_not_measured"] += 1
+        else:
+            usable_times.append(elapsed)
+
+    readings: list[float] = []
+    calls_with_reading = 0
+    for call in calls:
+        values = [v for v in (_number(call.get("free_memory_gib_before")),
+                              _number(call.get("free_memory_gib_after"))) if v is not None]
+        calls_with_reading += bool(values)
+        readings.extend(values)
+
+    tokens_in = [v for v in (_count_value(c, "input_tokens") for c in calls) if v is not None]
+    tokens_out = [v for v in (_count_value(c, "output_tokens") for c in calls) if v is not None]
+
+    speeds: list[Fraction] = []
+    speed_excluded = {"not_usable_response": 0, "output_tokens_missing": 0,
+                      "time_not_measured": 0, "time_zero": 0}
+    for call, elapsed in timed:
+        out = _count_value(call, "output_tokens")
+        if not _usable_response(call):
+            speed_excluded["not_usable_response"] += 1
+        elif out is None:
+            speed_excluded["output_tokens_missing"] += 1
+        elif elapsed is None:
+            speed_excluded["time_not_measured"] += 1
+        elif elapsed == 0:
+            speed_excluded["time_zero"] += 1
+        else:
+            speeds.append(Fraction(out) / elapsed)
+    speed_median = median_of(speeds)
+
+    return {
+        "calls": {"total": len(calls), "with_measured_time": with_time,
+                  "without_measured_time": len(calls) - with_time},
+        "time_to_usable_response": {
+            **_time_summary(usable_times),
+            "excluded": {**excluded, "total": sum(excluded.values())},
+        },
+        "time_all_measured_calls": {
+            **_time_summary([t for _, t in timed if t is not None]),
+            "excluded": {"time_not_measured": len(calls) - with_time,
+                         "total": len(calls) - with_time},
+        },
+        "timeout_rate": _stat(sum(1 for c in calls if c.get("call_status") == "timeout"),
+                              len(calls)),
+        "free_memory_gib": {
+            "readings": len(readings), "calls_with_reading": calls_with_reading,
+            "calls_without_reading": len(calls) - calls_with_reading,
+            "min": min(readings) if readings else None,
+            "first": readings[0] if readings else None,
+            "last": readings[-1] if readings else None,
+            "reason": None if readings else PERF_NO_READINGS,
+        },
+        "tokens": {
+            "calls_with_input_tokens": len(tokens_in), "calls_with_output_tokens": len(tokens_out),
+            "input_total": sum(tokens_in) if tokens_in else None,
+            "output_total": sum(tokens_out) if tokens_out else None,
+            "reason": None if (tokens_in or tokens_out) else PERF_NO_TOKEN_COUNTS,
+        },
+        "tokens_per_s": {
+            "n": len(speeds),
+            "median": float(speed_median) if speed_median is not None else None,
+            "reason": None if speeds else PERF_NO_SPEED_SAMPLES,
+            "excluded": {**speed_excluded, "total": sum(speed_excluded.values())},
+        },
+    }
+
+
+def _performance(calls: Sequence[Mapping]) -> dict:
+    """Informative only, from the stored records only. It feeds no verdict and no criterion."""
+    return {
+        "informational_only": True,
+        "percentile_method": PERCENTILE_METHOD,
+        "median_method": MEDIAN_METHOD,
+        "memory_note": MEMORY_NOTE,
+        "tokens_per_s_note": SPEED_NOTE,
+        "peak_model_memory": {"value": None, "reason": PERF_PEAK_PENDING},
+        "queue_and_load": {"value": None, "reason": PERF_QUEUE_LOAD_NA},
+        "stages": {stage: _stage_performance([c for c in calls if c.get("stage") == stage])
+                   for stage in (STAGE_ABSTENTION, STAGE_PLAN)},
+    }
+
+
 def build_report(records: Sequence[Mapping], scenarios: Sequence[sc.Scenario],
                  manifest: Mapping, *, integrity_ok: bool = True,
                  dataset_sha256: str | None = None) -> dict:
@@ -2034,6 +2213,7 @@ def build_report(records: Sequence[Mapping], scenarios: Sequence[sc.Scenario],
         "resumes_that_reset_the_count": sum(1 for e in events if e.get("event") == "resume"),
     }
     report["seconds_used"] = used_seconds(records)
+    report["performance"] = _performance(calls)  # informative: no verdict reads it
     report["integrity_ok"] = integrity_ok
     report["complete"] = not reasons
     report["incomplete_reasons"] = reasons
