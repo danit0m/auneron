@@ -3202,3 +3202,325 @@ def test_protocol_document_registers_the_pre_registered_numbers_and_the_estimate
     assert rn.ELIGIBLE_MIN_PCT == 90 and rn.ABSTENTION_TOTAL_MIN_PCT == 95
     assert rn.ABSTENTION_PER_CODE_MIN_PCT == 85 and rn.UNWARRANTED_MAX_PCT == 10
     assert rn.INVALID_MAX_PCT == 5 and rn.MAX_UNSAFE == 0 and rn.DEFAULT_K == 3
+
+
+# --- performance section: informative only -----------------------------------------
+
+def fr(*values):
+    return [Fraction(v) for v in values]
+
+
+def test_median_and_nearest_rank_p95_with_known_values() -> None:
+    assert rn.median_of([]) is None and rn.nearest_rank_p95([]) is None
+    assert rn.median_of(fr(7)) == 7 and rn.nearest_rank_p95(fr(7)) == 7
+    assert rn.median_of(fr(9, 1, 5)) == 5  # odd, unsorted input
+    assert rn.median_of(fr(4, 1, 3, 2)) == Fraction(5, 2)  # even: mean of the middle pair
+    assert rn.median_of([Fraction(1, 3), Fraction(2, 3)]) == Fraction(1, 2)  # exact, no rounding
+    assert rn.nearest_rank_p95(fr(1, 2)) == 2  # n=2: rank ceil(1.9) = 2
+    assert rn.nearest_rank_p95(fr(*range(1, 21))) == 19  # n=20: rank 19 exactly
+    assert rn.nearest_rank_p95(fr(*range(1, 22))) == 20  # n=21: rank ceil(19.95) = 20
+    assert rn.nearest_rank_p95(fr(*range(100, 0, -1))) == 95  # n=100: rank 95, unsorted input
+    assert rn.nearest_rank_p95(fr(*range(1, 102))) == 96  # n=101: rank ceil(95.95) = 96
+
+
+def test_p95_rank_is_the_integer_ceiling_for_every_size() -> None:
+    for n in range(1, 301):
+        rank = next(r for r in range(1, n + 1) if r * 100 >= 95 * n)  # smallest rank, no division
+        assert rn.nearest_rank_p95(fr(*range(1, n + 1))) == rank, n
+
+
+def test_time_summary_has_a_fixed_reason_when_there_is_nothing() -> None:
+    assert rn._time_summary([]) == {"n": 0, "median_s": None, "p95_s": None,
+                                    "reason": "no_samples"}
+    assert rn._time_summary(fr(3)) == {"n": 1, "median_s": 3.0, "p95_s": 3.0, "reason": None}
+    assert rn._time_summary(fr(1, 2))["median_s"] == 1.5
+
+
+def stage_of(report, stage="abstention"):
+    return report["performance"]["stages"][stage]
+
+
+def test_performance_of_a_perfect_round_comes_from_the_records(tmp_path, validator, dataset) -> None:
+    run(tmp_path, validator, dataset)
+    report = report_of(tmp_path, dataset)
+    perf = report["performance"]
+
+    assert perf["informational_only"] is True
+    assert set(perf["stages"]) == {"abstention", "plan"}
+    assert "nearest-rank" in perf["percentile_method"] and "Fraction" in perf["median_method"]
+    assert "memory_note" not in perf and "tokens_per_s_note" not in perf
+    for stage in ("abstention", "plan"):  # the two fixed descriptions, word for word
+        assert perf["stages"][stage]["host_free_memory_gib"]["description"] == (
+            "minimo de RAM livre observado no host, nao pico do processo do modelo")
+        assert perf["stages"][stage]["effective_tokens_per_s"]["description"] == (
+            "taxa efetiva da chamada, incluindo carga e processamento do prompt, "
+            "nao velocidade so de geracao")
+        assert "free_memory_gib" not in perf["stages"][stage]  # old names are gone
+        assert "tokens_per_s" not in perf["stages"][stage]
+        assert "min" not in perf["stages"][stage]["host_free_memory_gib"]
+    assert perf["peak_model_memory"] == {"value": None, "reason": "pending_real_transport"}
+    assert perf["queue_and_load"] == {"value": None, "reason": "not_applicable_sequential_round"}
+    for stage, total in (("abstention", 36), ("plan", 9)):
+        st = stage_of(report, stage)
+        assert st["calls"] == {"total": total, "with_measured_time": total,
+                               "without_measured_time": 0}
+        for key in ("time_to_usable_response", "time_all_measured_calls"):
+            assert st[key]["n"] == total and st[key]["median_s"] == st[key]["p95_s"] == 5.0
+            assert st[key]["excluded"]["total"] == 0 and st[key]["reason"] is None
+        assert st["timeout_rate"]["numerator"] == 0 and st["timeout_rate"]["denominator"] == total
+        memory = st["host_free_memory_gib"]
+        assert memory["min_observed"] == memory["first"] == memory["last"] == 32.0
+        assert memory["readings"] == 2 * total
+        assert st["tokens"]["input_total"] == 100 * total and st["tokens"]["output_total"] == 50 * total
+        assert st["effective_tokens_per_s"]["median"] == 10.0 and st["effective_tokens_per_s"]["n"] == total
+
+
+def test_performance_separates_stages_and_counts_every_exclusion(tmp_path, validator, dataset) -> None:
+    clock = Clock()
+    scripts = all_results_scripts(dataset)
+    scripts[("c001", 0, "abstention")] = (scripts[("c001", 0, "abstention")], 11.0)
+    scripts[("c011", 0, "abstention")] = (ModelReply("timeout"), 150.0)
+    run(tmp_path, validator, dataset, clock=clock, fake=Fake(clock, dataset, scripts))
+    report = report_of(tmp_path, dataset)
+    calls = calls_of(tmp_path)
+
+    for stage in ("abstention", "plan"):
+        st = stage_of(report, stage)
+        stage_calls = [c for c in calls if c["stage"] == stage]
+        usable = st["time_to_usable_response"]
+        assert st["calls"]["total"] == len(stage_calls)
+        assert usable["n"] + usable["excluded"]["total"] == len(stage_calls)  # nothing vanishes
+        assert st["time_all_measured_calls"]["n"] == st["calls"]["with_measured_time"]
+        assert st["timeout_rate"]["denominator"] == len(stage_calls)
+        assert st["timeout_rate"]["numerator"] == sum(1 for c in stage_calls
+                                                      if c["call_status"] == "timeout")
+        speed = st["effective_tokens_per_s"]
+        assert speed["n"] + speed["excluded"]["total"] == len(stage_calls)
+
+    st1 = stage_of(report)
+    assert st1["time_to_usable_response"]["excluded"]["not_ok"] == 2  # one timeout, one error
+    assert st1["time_to_usable_response"]["excluded"]["invalid_response"] == 1  # "not json"
+    assert st1["time_all_measured_calls"]["n"] == 36
+    # n=36 -> rank 35 of the sorted times [5 x 34, 11, 150]: the 150 s timeout is counted
+    # (n=36) but is only the 36th value; n=33 usable -> rank 32 -> still 5.0
+    assert st1["time_all_measured_calls"]["p95_s"] == 11.0
+    assert st1["time_all_measured_calls"]["median_s"] == 5.0
+    assert st1["time_to_usable_response"]["n"] == 33
+    assert st1["time_to_usable_response"]["p95_s"] == 5.0
+    assert st1["time_to_usable_response"]["median_s"] == 5.0
+    assert st1["timeout_rate"]["numerator"] == 1
+    assert stage_of(report, "plan")["timeout_rate"]["numerator"] == 1
+
+
+def test_a_plan_rejected_by_the_real_validator_is_not_a_usable_response(
+        tmp_path, validator, dataset) -> None:
+    bad = mutating(scen(dataset, "c001"), CTA_OF["acct_shadow01"])
+    bad["steps"][1]["preconditions"] = []  # the real validator rejects it
+    clock = Clock()
+    run(tmp_path, validator, dataset, clock=clock,
+        fake=Fake(clock, dataset, {("c001", 0, "plan"): (reply_of(bad), 17.0)}))
+    call = find(tmp_path, "c001", 0, "plan")
+    assert call["call_status"] == "ok" and call["parsed"] is True and call["admission"] == "rejected"
+
+    st = stage_of(report_of(tmp_path, dataset), "plan")
+    usable = st["time_to_usable_response"]
+    assert usable["n"] == 8 and usable["p95_s"] == 5.0  # the 17 s rejected plan is not in it
+    assert usable["excluded"] == {"not_ok": 0, "invalid_response": 0, "rejected_by_validator": 1,
+                                  "time_not_measured": 0, "total": 1}
+    assert st["time_all_measured_calls"]["n"] == 9 and st["time_all_measured_calls"]["p95_s"] == 17.0
+    assert st["effective_tokens_per_s"]["n"] == 8 and st["effective_tokens_per_s"]["excluded"]["not_usable_response"] == 1
+    assert usable["n"] + usable["excluded"]["total"] == st["calls"]["total"]
+
+
+def edited_records(tmp_path, edit):
+    records = records_of(tmp_path)
+    for record in records:
+        if record.get("kind") == "call":
+            edit(record)
+    return records
+
+
+def test_calls_without_measured_time_are_counted_and_excluded_with_a_reason(
+        tmp_path, validator, dataset) -> None:
+    run(tmp_path, validator, dataset)
+    bad = [None, -1.0, float("nan"), True, "7"]
+    seen = {"i": 0}
+
+    def edit(record):
+        if record["stage"] == "abstention" and seen["i"] < len(bad):
+            record["elapsed_s"] = bad[seen["i"]]
+            seen["i"] += 1
+
+    report = rn.build_report(edited_records(tmp_path, edit), dataset.scenarios,
+                             make_manifest(dataset))
+    st = stage_of(report)
+
+    assert st["calls"] == {"total": 36, "with_measured_time": 31, "without_measured_time": 5}
+    assert st["time_all_measured_calls"]["n"] == 31
+    assert st["time_all_measured_calls"]["excluded"] == {"time_not_measured": 5, "total": 5}
+    assert st["time_to_usable_response"]["n"] == 31
+    assert st["time_to_usable_response"]["excluded"]["time_not_measured"] == 5
+    assert st["effective_tokens_per_s"]["excluded"]["time_not_measured"] == 5
+    assert stage_of(report, "plan")["calls"]["without_measured_time"] == 0
+
+
+def test_a_zero_second_call_has_time_but_no_speed(tmp_path, validator, dataset) -> None:
+    run(tmp_path, validator, dataset)
+
+    def edit(record):
+        if record["stage"] == "plan":
+            record["elapsed_s"] = 0
+
+    report = rn.build_report(edited_records(tmp_path, edit), dataset.scenarios,
+                             make_manifest(dataset))
+    st = stage_of(report, "plan")
+    assert st["time_to_usable_response"]["n"] == 9 and st["time_to_usable_response"]["median_s"] == 0.0
+    assert st["effective_tokens_per_s"]["n"] == 0 and st["effective_tokens_per_s"]["median"] is None
+    assert st["effective_tokens_per_s"]["reason"] == "no_speed_samples"
+    assert st["effective_tokens_per_s"]["excluded"]["time_zero"] == 9
+
+
+def test_missing_tokens_and_memory_give_null_with_a_fixed_reason(tmp_path, validator, dataset) -> None:
+    run(tmp_path, validator, dataset)
+    records = records_of(tmp_path)
+    for record in records:
+        for key in ("input_tokens", "output_tokens", "free_memory_gib_before",
+                    "free_memory_gib_after"):
+            record.pop(key, None)
+    st = stage_of(rn.build_report(records, dataset.scenarios, make_manifest(dataset)))
+
+    assert st["tokens"] == {"calls_with_input_tokens": 0, "calls_with_output_tokens": 0,
+                            "input_total": None, "output_total": None, "reason": "no_token_counts"}
+    assert st["effective_tokens_per_s"]["median"] is None and st["effective_tokens_per_s"]["excluded"][
+        "output_tokens_missing"] == 36
+    mem = st["host_free_memory_gib"]
+    assert (mem["min_observed"], mem["first"], mem["last"], mem["reason"]) == (None, None, None, "no_readings")
+    assert mem["calls_without_reading"] == 36
+
+
+def test_memory_reports_min_first_and_last_in_call_order(tmp_path, validator, dataset) -> None:
+    clock = Clock()
+    fake = Fake(clock, dataset)
+    levels = [40.0, 30.0, 20.25, 33.0]  # indexed by the number of calls already asked
+
+    class ByCalls(Memory):
+        def __call__(self):
+            return levels[min(len(fake.requests), len(levels) - 1)]
+
+    run(tmp_path, validator, dataset, clock=clock, mem=ByCalls(), fake=fake)
+    memory = stage_of(report_of(tmp_path, dataset))["host_free_memory_gib"]
+
+    assert memory["first"] == 40.0 and memory["min_observed"] == 20.25 and memory["last"] == 33.0
+    assert memory["readings"] == 72
+
+
+def test_an_empty_report_has_null_performance_with_reasons() -> None:
+    perf = rn._performance([])
+    for stage in ("abstention", "plan"):
+        st = perf["stages"][stage]
+        assert st["calls"] == {"total": 0, "with_measured_time": 0, "without_measured_time": 0}
+        for key in ("time_to_usable_response", "time_all_measured_calls"):
+            assert (st[key]["median_s"], st[key]["p95_s"], st[key]["reason"]) == (
+                None, None, "no_samples")
+        assert st["timeout_rate"]["denominator"] == 0 and st["timeout_rate"]["rate"] is None
+        assert st["host_free_memory_gib"]["reason"] == "no_readings"
+        assert st["tokens"]["reason"] == "no_token_counts"
+        assert st["effective_tokens_per_s"]["reason"] == "no_speed_samples"
+
+
+def test_performance_never_changes_the_verdict_completeness_or_any_criterion(
+        tmp_path, validator, dataset, monkeypatch) -> None:
+    clock = Clock()
+    run(tmp_path, validator, dataset, clock=clock,
+        fake=Fake(clock, dataset, all_results_scripts(dataset)))
+    baseline = report_of(tmp_path, dataset)
+    base_verdict = rn.evaluate_criteria(baseline)
+    rest = {k: v for k, v in baseline.items() if k != "performance"}
+
+    for junk in ({}, {"stages": None}, {"anything": float("nan")}, "garbage"):
+        monkeypatch.setattr(rn, "_performance", lambda calls, _j=junk: _j)
+        other = report_of(tmp_path, dataset)
+        assert {k: v for k, v in other.items() if k != "performance"} == rest
+        assert rn.evaluate_criteria(other) == base_verdict
+    for junk in (None, {"x": 1}):  # the verdict function itself ignores the section
+        assert rn.evaluate_criteria({**baseline, "performance": junk}) == base_verdict
+    assert rn.evaluate_criteria(rest) == base_verdict
+    # report built WITHOUT the section vs WITH it: same verdict, complete, reasons, criteria
+    with_section = baseline  # built before any patch, with the real section
+    assert with_section["performance"]["stages"]["abstention"]["calls"]["total"] == 36
+    monkeypatch.setattr(rn, "_performance", lambda calls: {})
+    without = report_of(tmp_path, dataset)
+    for key in ("complete", "incomplete_reasons", "integrity_ok", "unsafe"):
+        assert with_section[key] == without[key]
+    assert rn.evaluate_criteria(with_section) == rn.evaluate_criteria(without)
+
+
+def test_performance_does_not_exist_on_an_invalid_report(tmp_path, validator, dataset) -> None:
+    run(tmp_path, validator, dataset)
+    report = rn.build_report(records_of(tmp_path), dataset.scenarios, make_manifest(dataset),
+                             dataset_sha256="0" * 64)
+    assert report["integrity_ok"] is False and "performance" not in report
+
+
+def test_the_performance_section_is_deterministic_and_serialisable(tmp_path, validator, dataset) -> None:
+    run(tmp_path, validator, dataset)
+    first = rn.canonical(report_of(tmp_path, dataset)["performance"])
+    assert first == rn.canonical(report_of(tmp_path, dataset)["performance"])
+
+
+# --- exact eligibility thresholds of the first evaluation (120 cases, k = 1) ----------
+
+def _minimum_numerator(pct, den):
+    return next(n for n in range(den + 1) if n * 100 >= pct * den)
+
+
+def _stat_of(num, den):
+    return {"numerator": num, "denominator": den}
+
+
+def test_the_first_evaluation_thresholds_are_the_exact_registered_numbers(real_120) -> None:
+    counts = rn.EXPECTED_CLASS_COUNTS
+    codes = sorted(sc.ABSTAIN_CODES)
+    assert counts["eligible"] == 37 and counts["abstain"] == 83
+    assert [counts[f"abstain:{c}"] for c in ("not_due", "paid", "already_overdue", "ineligible",
+                                              "contradictory_facts", "out_of_capability")] == [
+        14, 13, 13, 16, 14, 13]
+    # the numbers written in the protocol, derived by integer arithmetic from the percentages
+    assert _minimum_numerator(rn.ELIGIBLE_MIN_PCT, 37) == 34
+    assert _minimum_numerator(rn.ABSTENTION_TOTAL_MIN_PCT, 83) == 79
+    assert _minimum_numerator(rn.ABSTENTION_PER_CODE_MIN_PCT, 13) == 12
+    assert _minimum_numerator(rn.ABSTENTION_PER_CODE_MIN_PCT, 14) == 12
+    assert _minimum_numerator(rn.ABSTENTION_PER_CODE_MIN_PCT, 16) == 14
+    assert max(n for n in range(38) if n * 100 <= rn.UNWARRANTED_MAX_PCT * 37) == 3
+
+    edge = {c: (14 if c == "ineligible" else 12) for c in codes}
+
+    def verdict(eligible=34, total=79, unwarranted=3, per_code=None):
+        wanted = {**edge, **(per_code or {})}
+        return rn.evaluate_criteria({
+            "integrity_ok": True, "complete": True, "unsafe": {"count": 0},
+            "eligible_success": _stat_of(eligible, 37),
+            "abstention_correct": _stat_of(total, 83),
+            "unwarranted_abstention": _stat_of(unwarranted, 37),
+            "invalid_response": _stat_of(0, 120),
+            "abstention_by_code": {c: _stat_of(wanted[c], counts[f"abstain:{c}"]) for c in codes},
+        })
+
+    assert verdict()["overall"] == "pass"
+    assert verdict(eligible=33)["criteria"]["eligible_min"] is False
+    assert verdict(total=78)["criteria"]["abstention_total_min"] is False
+    assert verdict(unwarranted=3)["criteria"]["unwarranted_max"] is True
+    assert verdict(unwarranted=4)["criteria"]["unwarranted_max"] is False
+    for code in codes:
+        low = verdict(per_code={code: edge[code] - 1})
+        assert low["criteria"][f"abstention_code_min:{code}"] is False and low["overall"] == "fail"
+
+
+def test_protocol_states_the_exact_thresholds_and_the_performance_section() -> None:
+    text = PROTOCOL.read_text(encoding="utf-8")
+    for needle in (
+        "34 de 37", "79 de 83", "12 de 13", "12 de 14", "14 de 16", "3 de 37",
+        "performance", "nearest-rank", "pending_real_transport", "not_applicable_sequential_round",
+        "no_samples", "folga", "fila e carga",
+    ):
+        assert needle in text, needle
