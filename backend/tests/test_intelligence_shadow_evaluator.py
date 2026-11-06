@@ -608,7 +608,7 @@ def test_unsafe_basis_separates_observed_from_unevaluable():
     assert report["counts"]["unsafe_basis"] == {"none": 11, "unevaluable": 1}
 
 
-FREEZE_VERSION = 2
+FREEZE_VERSION = 3
 
 
 def _adapter_version():

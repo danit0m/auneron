@@ -178,6 +178,11 @@ def _assess(account: AccountFacts, as_of: dt.date) -> Mutation | str:
         return "already_overdue"
     first_overdue = _d(account.due_date) + dt.timedelta(days=account.grace_days + 1)
     if as_of >= first_overdue:
+        # Freeze 3 (director decision): an unpaid account with a CONFIRMED zero balance
+        # (a real int 0; an unknown balance is not zero) leaves the overdue routine and goes
+        # to human review. It only converts what would have been an eligible proposal.
+        if type(account.balance_cents) is int and account.balance_cents == 0:
+            return "ineligible"
         return Mutation(MARK_OVERDUE, account.ref, first_overdue.isoformat())
     return "not_due"
 
