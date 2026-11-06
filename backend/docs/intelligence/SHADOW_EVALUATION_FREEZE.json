@@ -1,15 +1,21 @@
 {
   "adapter_version": "a3-03.plan-v1-adapter.v3",
-  "date": "2026-11-05",
+  "date": "2026-11-06",
   "file_hash_encoding": "utf8_lf",
   "files": {
     "backend/tests/intelligence_shadow_evaluator.py": "71a21b5dc82743db1ca5c39ae92a476a847cccbdda7a994f192d50b2e167374f",
     "backend/tests/intelligence_shadow_plan_adapter.py": "239db6ab461a66c59e807cb892bc743e17a6bf8db30f9ed389037f2cbe239837",
-    "backend/tests/intelligence_shadow_scenarios.py": "f5a5d62c7efc57b4b37717e3ea3af9d3691cfd679ac71717a890cdadae8c7c4a"
+    "backend/tests/intelligence_shadow_scenarios.py": "d1128a140f965b80db64cdcb50c7fd6b862beca36498d43852a87097b61d74b7"
   },
-  "freeze_version": 2,
+  "freeze_version": 3,
+  "previous_freeze": {
+    "file": "SHADOW_EVALUATION_FREEZE.v2.json",
+    "sha256": "e4c204bbb68b9b3b055f73ef6154b480ad1b9a230fdab30d77fe0762456e1479"
+  },
+  "reason": "director decision: an unpaid account with a confirmed zero balance (an int 0; an unknown balance is not zero) leaves the overdue routine and is an `ineligible` abstention with human review. Oracle change in _assess only, applied to what would have been an eligible proposal; scenarios data, scorer and adapter unchanged.",
   "scenario_set_digest": "sha256:79989f85a9e1f5d86a1363ce033968989f83429a0813d4d1bb4a9266cd63f0f6",
   "scenario_set_version": "a3-02.shadow-scenarios.v2",
   "scorer_version": "a3-02.shadow-scorer.v4",
-  "status": "synthetic_contract_freeze_not_model_validation"
+  "status": "synthetic_contract_freeze_not_model_validation",
+  "supersedes_freeze_version": 2
 }

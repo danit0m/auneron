@@ -29,6 +29,13 @@ hashes: the scenario file hash and the scenario-set digest are unchanged, and
 no threshold or matrix target moved (k=3 still needs 9/9 eligible and at least
 26/27 abstention).
 
+Freeze 3 (2026-11-06, director decision): an unpaid account with a confirmed zero balance
+(an int 0; an unknown balance is not zero) is an `ineligible` abstention with human
+review. Only `_assess` in the scenarios file changed, and only for what would have been an
+eligible proposal; the scenario data, the scorer and the adapter are unchanged, so only the
+scenarios file hash moved (`f5a5d62c...` to `d1128a14...`) and the scenario-set digest is the
+same. The freeze 2 manifest is kept intact in `SHADOW_EVALUATION_FREEZE.v2.json`.
+
 Version history:
 
 - Scenarios v1 → v2: s06 was `propose account.escalate_collection ACC-06`, a
