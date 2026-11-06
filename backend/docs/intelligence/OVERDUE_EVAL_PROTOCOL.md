@@ -612,15 +612,36 @@ Por etapa:
   inclusive timeout e erro.
 - Taxa de timeout: chamadas com status `timeout` / todas as chamadas da etapa
   (numerador e denominador, com Wilson de 95% como nos demais itens).
-- Memoria livre (`free_memory_gib`): minimo observado, primeira e ultima leitura, nas
+- Memoria livre do host (`host_free_memory_gib`): minimo observado (`min_observed`), primeira e ultima leitura, nas
   leituras de antes e depois de cada chamada, em ordem de registro. LIMITE: mede a FOLGA
   da maquina, nao o pico do processo do modelo; o pico real depende do transporte real e
   fica pendente (pendencia 22).
 - Tokens de entrada e saida (soma e quantidade de chamadas com a contagem, inteiros nao
-  negativos) e velocidade observada em tokens/s (`tokens_per_s`): `output_tokens /
+  negativos) e taxa efetiva em tokens/s (`effective_tokens_per_s`): `output_tokens /
   elapsed_s` da chamada inteira (inclui carga do modelo e leitura do prompt, nao e a
   velocidade so de geracao), mediana, das chamadas utilizaveis com tokens e tempo maior
   que zero.
+
+Descricoes fixas, gravadas no proprio relatorio (campo `description`):
+
+- `host_free_memory_gib`: "minimo de RAM livre observado no host, nao pico do processo do
+  modelo".
+- `effective_tokens_per_s`: "taxa efetiva da chamada, incluindo carga e processamento do
+  prompt, nao velocidade so de geracao".
+
+Correspondencia de nomes (antigo para novo), so na secao `performance` do relatorio:
+
+| Nome antigo | Nome novo |
+|---|---|
+| `free_memory_gib` | `host_free_memory_gib` |
+| `free_memory_gib.min` | `host_free_memory_gib.min_observed` |
+| `tokens_per_s` | `effective_tokens_per_s` |
+| `memory_note` e `tokens_per_s_note` (nivel `performance`) | removidos; substituidos pelo campo `description` de cada item |
+
+Relatorios e evidencias anteriores (inclusive as pastas `performance` ja gravadas) usam os
+nomes antigos e nao foram alterados. Os campos por chamada dos registros
+(`free_memory_gib_before`, `free_memory_gib_after`) e o parametro `free_memory_gib` do
+pre-voo nao mudaram.
 
 Metodos, deterministicos, com inteiros e `Fraction` (sem `numpy`):
 

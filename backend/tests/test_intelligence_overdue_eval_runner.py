@@ -3248,7 +3248,16 @@ def test_performance_of_a_perfect_round_comes_from_the_records(tmp_path, validat
     assert perf["informational_only"] is True
     assert set(perf["stages"]) == {"abstention", "plan"}
     assert "nearest-rank" in perf["percentile_method"] and "Fraction" in perf["median_method"]
-    assert "NOT the peak" in perf["memory_note"]
+    assert "memory_note" not in perf and "tokens_per_s_note" not in perf
+    for stage in ("abstention", "plan"):  # the two fixed descriptions, word for word
+        assert perf["stages"][stage]["host_free_memory_gib"]["description"] == (
+            "minimo de RAM livre observado no host, nao pico do processo do modelo")
+        assert perf["stages"][stage]["effective_tokens_per_s"]["description"] == (
+            "taxa efetiva da chamada, incluindo carga e processamento do prompt, "
+            "nao velocidade so de geracao")
+        assert "free_memory_gib" not in perf["stages"][stage]  # old names are gone
+        assert "tokens_per_s" not in perf["stages"][stage]
+        assert "min" not in perf["stages"][stage]["host_free_memory_gib"]
     assert perf["peak_model_memory"] == {"value": None, "reason": "pending_real_transport"}
     assert perf["queue_and_load"] == {"value": None, "reason": "not_applicable_sequential_round"}
     for stage, total in (("abstention", 36), ("plan", 9)):
@@ -3259,11 +3268,11 @@ def test_performance_of_a_perfect_round_comes_from_the_records(tmp_path, validat
             assert st[key]["n"] == total and st[key]["median_s"] == st[key]["p95_s"] == 5.0
             assert st[key]["excluded"]["total"] == 0 and st[key]["reason"] is None
         assert st["timeout_rate"]["numerator"] == 0 and st["timeout_rate"]["denominator"] == total
-        memory = st["free_memory_gib"]
-        assert memory["min"] == memory["first"] == memory["last"] == 32.0
+        memory = st["host_free_memory_gib"]
+        assert memory["min_observed"] == memory["first"] == memory["last"] == 32.0
         assert memory["readings"] == 2 * total
         assert st["tokens"]["input_total"] == 100 * total and st["tokens"]["output_total"] == 50 * total
-        assert st["tokens_per_s"]["median"] == 10.0 and st["tokens_per_s"]["n"] == total
+        assert st["effective_tokens_per_s"]["median"] == 10.0 and st["effective_tokens_per_s"]["n"] == total
 
 
 def test_performance_separates_stages_and_counts_every_exclusion(tmp_path, validator, dataset) -> None:
@@ -3285,7 +3294,7 @@ def test_performance_separates_stages_and_counts_every_exclusion(tmp_path, valid
         assert st["timeout_rate"]["denominator"] == len(stage_calls)
         assert st["timeout_rate"]["numerator"] == sum(1 for c in stage_calls
                                                       if c["call_status"] == "timeout")
-        speed = st["tokens_per_s"]
+        speed = st["effective_tokens_per_s"]
         assert speed["n"] + speed["excluded"]["total"] == len(stage_calls)
 
     st1 = stage_of(report)
@@ -3319,7 +3328,7 @@ def test_a_plan_rejected_by_the_real_validator_is_not_a_usable_response(
     assert usable["excluded"] == {"not_ok": 0, "invalid_response": 0, "rejected_by_validator": 1,
                                   "time_not_measured": 0, "total": 1}
     assert st["time_all_measured_calls"]["n"] == 9 and st["time_all_measured_calls"]["p95_s"] == 17.0
-    assert st["tokens_per_s"]["n"] == 8 and st["tokens_per_s"]["excluded"]["not_usable_response"] == 1
+    assert st["effective_tokens_per_s"]["n"] == 8 and st["effective_tokens_per_s"]["excluded"]["not_usable_response"] == 1
     assert usable["n"] + usable["excluded"]["total"] == st["calls"]["total"]
 
 
@@ -3351,7 +3360,7 @@ def test_calls_without_measured_time_are_counted_and_excluded_with_a_reason(
     assert st["time_all_measured_calls"]["excluded"] == {"time_not_measured": 5, "total": 5}
     assert st["time_to_usable_response"]["n"] == 31
     assert st["time_to_usable_response"]["excluded"]["time_not_measured"] == 5
-    assert st["tokens_per_s"]["excluded"]["time_not_measured"] == 5
+    assert st["effective_tokens_per_s"]["excluded"]["time_not_measured"] == 5
     assert stage_of(report, "plan")["calls"]["without_measured_time"] == 0
 
 
@@ -3366,9 +3375,9 @@ def test_a_zero_second_call_has_time_but_no_speed(tmp_path, validator, dataset) 
                              make_manifest(dataset))
     st = stage_of(report, "plan")
     assert st["time_to_usable_response"]["n"] == 9 and st["time_to_usable_response"]["median_s"] == 0.0
-    assert st["tokens_per_s"]["n"] == 0 and st["tokens_per_s"]["median"] is None
-    assert st["tokens_per_s"]["reason"] == "no_speed_samples"
-    assert st["tokens_per_s"]["excluded"]["time_zero"] == 9
+    assert st["effective_tokens_per_s"]["n"] == 0 and st["effective_tokens_per_s"]["median"] is None
+    assert st["effective_tokens_per_s"]["reason"] == "no_speed_samples"
+    assert st["effective_tokens_per_s"]["excluded"]["time_zero"] == 9
 
 
 def test_missing_tokens_and_memory_give_null_with_a_fixed_reason(tmp_path, validator, dataset) -> None:
@@ -3382,10 +3391,10 @@ def test_missing_tokens_and_memory_give_null_with_a_fixed_reason(tmp_path, valid
 
     assert st["tokens"] == {"calls_with_input_tokens": 0, "calls_with_output_tokens": 0,
                             "input_total": None, "output_total": None, "reason": "no_token_counts"}
-    assert st["tokens_per_s"]["median"] is None and st["tokens_per_s"]["excluded"][
+    assert st["effective_tokens_per_s"]["median"] is None and st["effective_tokens_per_s"]["excluded"][
         "output_tokens_missing"] == 36
-    mem = st["free_memory_gib"]
-    assert (mem["min"], mem["first"], mem["last"], mem["reason"]) == (None, None, None, "no_readings")
+    mem = st["host_free_memory_gib"]
+    assert (mem["min_observed"], mem["first"], mem["last"], mem["reason"]) == (None, None, None, "no_readings")
     assert mem["calls_without_reading"] == 36
 
 
@@ -3399,9 +3408,9 @@ def test_memory_reports_min_first_and_last_in_call_order(tmp_path, validator, da
             return levels[min(len(fake.requests), len(levels) - 1)]
 
     run(tmp_path, validator, dataset, clock=clock, mem=ByCalls(), fake=fake)
-    memory = stage_of(report_of(tmp_path, dataset))["free_memory_gib"]
+    memory = stage_of(report_of(tmp_path, dataset))["host_free_memory_gib"]
 
-    assert memory["first"] == 40.0 and memory["min"] == 20.25 and memory["last"] == 33.0
+    assert memory["first"] == 40.0 and memory["min_observed"] == 20.25 and memory["last"] == 33.0
     assert memory["readings"] == 72
 
 
@@ -3414,9 +3423,9 @@ def test_an_empty_report_has_null_performance_with_reasons() -> None:
             assert (st[key]["median_s"], st[key]["p95_s"], st[key]["reason"]) == (
                 None, None, "no_samples")
         assert st["timeout_rate"]["denominator"] == 0 and st["timeout_rate"]["rate"] is None
-        assert st["free_memory_gib"]["reason"] == "no_readings"
+        assert st["host_free_memory_gib"]["reason"] == "no_readings"
         assert st["tokens"]["reason"] == "no_token_counts"
-        assert st["tokens_per_s"]["reason"] == "no_speed_samples"
+        assert st["effective_tokens_per_s"]["reason"] == "no_speed_samples"
 
 
 def test_performance_never_changes_the_verdict_completeness_or_any_criterion(
@@ -3436,6 +3445,14 @@ def test_performance_never_changes_the_verdict_completeness_or_any_criterion(
     for junk in (None, {"x": 1}):  # the verdict function itself ignores the section
         assert rn.evaluate_criteria({**baseline, "performance": junk}) == base_verdict
     assert rn.evaluate_criteria(rest) == base_verdict
+    # report built WITHOUT the section vs WITH it: same verdict, complete, reasons, criteria
+    with_section = baseline  # built before any patch, with the real section
+    assert with_section["performance"]["stages"]["abstention"]["calls"]["total"] == 36
+    monkeypatch.setattr(rn, "_performance", lambda calls: {})
+    without = report_of(tmp_path, dataset)
+    for key in ("complete", "incomplete_reasons", "integrity_ok", "unsafe"):
+        assert with_section[key] == without[key]
+    assert rn.evaluate_criteria(with_section) == rn.evaluate_criteria(without)
 
 
 def test_performance_does_not_exist_on_an_invalid_report(tmp_path, validator, dataset) -> None:

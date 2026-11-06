@@ -1855,12 +1855,11 @@ PERCENTILE_METHOD: Final[str] = (
 MEDIAN_METHOD: Final[str] = (
     "sort ascending; odd n: the middle element; even n: the exact Fraction mean of the "
     "two middle elements; converted to float only for the report")
-MEMORY_NOTE: Final[str] = (
-    "free memory of the machine read by the injected probe before and after each call: "
-    "it measures headroom, NOT the peak memory of the model process")
-SPEED_NOTE: Final[str] = (
-    "output_tokens / elapsed_s of the whole call (includes model load and prompt "
-    "evaluation); not the generation-only speed")
+HOST_MEMORY_DESCRIPTION: Final[str] = (
+    "minimo de RAM livre observado no host, nao pico do processo do modelo")
+EFFECTIVE_SPEED_DESCRIPTION: Final[str] = (
+    "taxa efetiva da chamada, incluindo carga e processamento do prompt, "
+    "nao velocidade so de geracao")
 
 
 def _measured_time(call: Mapping) -> Fraction | None:
@@ -1982,10 +1981,11 @@ def _stage_performance(calls: Sequence[Mapping]) -> dict:
         },
         "timeout_rate": _stat(sum(1 for c in calls if c.get("call_status") == "timeout"),
                               len(calls)),
-        "free_memory_gib": {
+        "host_free_memory_gib": {
+            "description": HOST_MEMORY_DESCRIPTION,
             "readings": len(readings), "calls_with_reading": calls_with_reading,
             "calls_without_reading": len(calls) - calls_with_reading,
-            "min": min(readings) if readings else None,
+            "min_observed": min(readings) if readings else None,
             "first": readings[0] if readings else None,
             "last": readings[-1] if readings else None,
             "reason": None if readings else PERF_NO_READINGS,
@@ -1996,7 +1996,8 @@ def _stage_performance(calls: Sequence[Mapping]) -> dict:
             "output_total": sum(tokens_out) if tokens_out else None,
             "reason": None if (tokens_in or tokens_out) else PERF_NO_TOKEN_COUNTS,
         },
-        "tokens_per_s": {
+        "effective_tokens_per_s": {
+            "description": EFFECTIVE_SPEED_DESCRIPTION,
             "n": len(speeds),
             "median": float(speed_median) if speed_median is not None else None,
             "reason": None if speeds else PERF_NO_SPEED_SAMPLES,
@@ -2011,8 +2012,6 @@ def _performance(calls: Sequence[Mapping]) -> dict:
         "informational_only": True,
         "percentile_method": PERCENTILE_METHOD,
         "median_method": MEDIAN_METHOD,
-        "memory_note": MEMORY_NOTE,
-        "tokens_per_s_note": SPEED_NOTE,
         "peak_model_memory": {"value": None, "reason": PERF_PEAK_PENDING},
         "queue_and_load": {"value": None, "reason": PERF_QUEUE_LOAD_NA},
         "stages": {stage: _stage_performance([c for c in calls if c.get("stage") == stage])
