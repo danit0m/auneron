@@ -4490,3 +4490,14 @@ def test_the_protocol_states_the_round_04_rules() -> None:
                    "trailing_bytes", "fora do prazo absoluto", "codigo de saida 4", "anchor_error",
                    "somente digitos decimais", "chunk_line_too_long"):
         assert needle in text, needle
+
+
+def test_the_protocol_lists_the_capture_stop_in_section_8_and_the_capture_reason_in_section_11() -> None:
+    text = PROTOCOL.read_text(encoding="utf-8")
+    section_8 = text[text.index("## 8. "):text.index("## 9. ")]
+    section_11 = text[text.index("## 11. "):text.index("## 12. ")]
+    row = next(line for line in section_8.splitlines() if line.startswith("| `capture_failed` |"))
+
+    assert "sim" in row.split("|")[-2] and "retomavel" in row  # a resumable stop
+    assert "wire_capture_failed" in section_11
+    assert "identity_chain_absent" in section_11 and "identity_unconfirmed" in section_11

@@ -1678,7 +1678,10 @@ def test_connect_and_send_use_the_time_left_of_the_deadline(monkeypatch, tmp_pat
     reply = client.ask_model(req(timeout_s=0.3, dataset_=dataset))
 
     assert reply.status == "timeout"
-    assert 0 < seen["connect_timeout"] <= 0.4 and 0 < seen["send_timeout"] <= 0.4  # not a fixed 10 s
+    # What is left of a deadline of 0.3 + 0.1 s. `(start + 0.4) - start` can come out a hair above 0.4
+    # in floating point (and a monotonic clock that does not advance gives exactly that), hence the margin.
+    margin = 1e-6
+    assert 0 < seen["connect_timeout"] <= 0.4 + margin and 0 < seen["send_timeout"] <= 0.4 + margin
     assert seen["host"] == "127.0.0.1"
 
 
@@ -1992,10 +1995,28 @@ def test_trailing_bytes_are_capped_and_a_body_with_none_has_none(monkeypatch) ->
     assert bytes(parser.trailing) == b"y" * 10 and bytes(clean.trailing) == b""
 
 
-@pytest.mark.parametrize("value", ["1_0", "+5", "-1", "0x5", "5.0", "5 5", "٥", "", "1e2"])
+@pytest.mark.parametrize("value", [b"1_0", b"+5", b"-1", b"0x5", b"5.0", b"5 5", b"", b"1e2",
+                                   b"\xb2", b"\xb9", b"\xb3", b"5\xb2"])
 def test_content_length_accepts_decimal_digits_only(value) -> None:
+    # The head is decoded as latin-1, so a non-ASCII byte becomes a character such as U+00B2 (superscript
+    # two), which `str.isdigit()` accepts and `int()` does not. A non-ASCII UTF-8 digit (Arabic-Indic
+    # five, say) reaches the parser as two latin-1 characters, neither a digit.
     parser = hl.ResponseParser()
-    parser.feed(b"HTTP/1.1 200 OK\r\nContent-Length: " + value.encode("utf-8") + b"\r\n\r\nabcde")
+    parser.feed(b"HTTP/1.1 200 OK\r\nContent-Length: " + value + b"\r\n\r\nabcde")
+
+    assert parser.malformed == "bad_content_length"
+
+
+@pytest.mark.parametrize("value", [b"\xb2", b"\xb9", b"\xb3"])
+def test_the_probe_bytes_are_digits_for_isdigit_and_not_for_ascii_patterns(value) -> None:
+    text = value.decode("latin-1")
+
+    assert text.isdigit() and not text.isdecimal() and re.fullmatch(r"[0-9]+", text) is None
+
+
+def test_a_utf8_arabic_indic_digit_in_content_length_is_refused() -> None:
+    parser = hl.ResponseParser()
+    parser.feed("HTTP/1.1 200 OK\r\nContent-Length: ٥\r\n\r\nabcde".encode("utf-8"))
 
     assert parser.malformed == "bad_content_length"
 
@@ -2170,3 +2191,112 @@ def test_bytes_that_arrive_a_moment_after_the_end_of_the_body_are_still_kept(
     reply = ask(server, tmp_path, dataset)
 
     assert reply.error == "trailing_bytes" and reply.raw_text.endswith('{"capability_id": "payment.request"}')
+
+
+# --- round 05: the wait after the body honours the absolute deadline -------------------------------------
+
+def endless_after_the_body(handler, key, data):
+    """A complete body followed by bytes that never stop (every 5 ms, for up to 3 s)."""
+    lines = (json.dumps(piece("done")).encode() + b"\n" + json.dumps(
+        {"model": NAME, "response": "", "done": True, "done_reason": "stop"}).encode() + b"\n")
+    handler.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(lines) + lines)
+    end = time.monotonic() + 3.0
+    while time.monotonic() < end and not handler.peer_closed():
+        handler.wfile.write(b"tail ")
+        time.sleep(0.005)
+
+
+def test_a_server_that_keeps_emitting_after_the_body_cannot_stretch_the_wait(
+        server, tmp_path, dataset, monkeypatch) -> None:
+    spans = measure_exchange(monkeypatch)
+    server.behaviors[("c001", 0, "abstention")] = endless_after_the_body
+    reply = ask(server, tmp_path, dataset, timeout_s=1.0, tolerance_s={"abstention": 0.0, "plan": 0.0})
+
+    assert reply.status == "error" and reply.error == "trailing_bytes" and reply.raw_text.endswith("tail ")
+    assert spans[0] < 0.5  # a window of 50 ms, not the whole deadline (1 s) and not the server's 3 s
+    assert_cut(server, ("c001", 0, "abstention"))
+
+
+def test_the_wait_after_the_body_never_goes_past_what_is_left_of_the_deadline(
+        server, tmp_path, dataset, monkeypatch) -> None:
+    monkeypatch.setattr(hl, "DRAIN_S", 0.6)  # a window much longer than what the deadline leaves
+    spans = measure_exchange(monkeypatch)
+
+    def late_body_then_endless(handler, key, data):
+        time.sleep(0.4)
+        endless_after_the_body(handler, key, data)
+
+    server.behaviors[("c001", 0, "abstention")] = late_body_then_endless
+    reply = ask(server, tmp_path, dataset, timeout_s=0.5, tolerance_s={"abstention": 0.0, "plan": 0.0})
+
+    assert reply.error == "trailing_bytes"
+    assert spans[0] < 0.75  # the deadline is 0.5 s; without the cap it would be 0.4 + 0.6 s
+
+
+def test_a_server_that_closes_after_the_body_is_not_delayed_by_the_wait(server, tmp_path, dataset, monkeypatch) -> None:
+    spans = measure_exchange(monkeypatch)
+    reply = ask(server, tmp_path, dataset)
+
+    assert reply.status == "ok" and spans[0] < 0.045 + 0.5  # no wait for a closed connection
+
+
+# --- round 05: the wait after the body, deterministically (a fake socket that never goes quiet) ------------
+
+class TickingClock:
+    """A clock that only moves when the fake socket is read: 10 ms per `recv`."""
+
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+class SaturatedSocket:
+    """The body in the first read, then bytes without a single gap: no `recv` ever times out."""
+
+    def __init__(self, clock, first):
+        self.clock, self.first, self.calls = clock, first, 0
+
+    def settimeout(self, value):
+        pass
+
+    def getpeername(self):
+        return ("127.0.0.1", 1)
+
+    def recv(self, size):
+        self.calls += 1
+        self.clock.now += 0.01
+        return self.first if self.calls == 1 else b"x" * 10
+
+
+def test_the_wait_after_the_body_ends_on_its_own_window_even_when_the_socket_never_goes_quiet(
+        monkeypatch, tmp_path, dataset) -> None:
+    lines = (json.dumps(piece("body")).encode() + b"\n" + json.dumps(
+        {"model": NAME, "response": "", "done": True, "done_reason": "stop"}).encode() + b"\n")
+    clock = TickingClock()
+    holder = {}
+
+    class Connection:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def connect(self):
+            self.sock = holder["sock"] = SaturatedSocket(
+                clock, b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(lines) + lines)
+
+        def request(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(hl.http.client, "HTTPConnection", Connection)
+    client = hl.LoopbackClient("http://127.0.0.1:5", wire_dir=tmp_path / "w", clock=clock,
+                               tolerance_s={"abstention": 100.0, "plan": 100.0})
+    reply = client.ask_model(req(timeout_s=100.0, dataset_=dataset))
+    extra_reads = holder["sock"].calls - 1  # 10 ms each, a 50 ms window
+
+    assert reply.error == "trailing_bytes" and reply.raw_text.endswith("x")
+    assert 3 <= extra_reads <= 8, extra_reads
+    assert len(reply.raw_text) < 200  # a few dozen bytes, not the 4 MB the cap would allow

@@ -537,6 +537,7 @@ houve inferencia); precisam de calibracao autorizada pelo diretor.
 | `operator_stop` | arquivo `STOP` na pasta da rodada, lido ENTRE chamadas (a chamada em curso termina); nao conta como interrupcao | sim |
 | `model_unconfirmed` | identidade nao confirmada (secao 6.1), antes ou depois de uma chamada | sim, a chamada nao e repetida |
 | `model_not_exclusive` | `/api/ps` lista outro modelo alem do candidato, antes de uma chamada | sim, apos descarregar o outro |
+| `capture_failed` | a evidencia de uma chamada nao pode ser gravada por inteiro (`wire.capture_failed`: pedido nao gravado, falha ao gravar, sincronizar ou fechar `response.bin`); o pedido sem evidencia nem e enviado (secao 6.3) | sim (retomavel, apos o operador consertar o disco; a chamada nao e repetida) |
 | `global_budget` | limite global cumulativo, antes ou depois da chamada | NAO (rodada encerrada incompleta) |
 
 Nome de capacidade proibida em TEXTO (resumo, justificativa, resposta de
@@ -665,8 +666,11 @@ etapa 1; toda resposta `proceed` tem etapa 2; existe o evento `finish`;
 `verify_results` e valido (cadeia, selos e ancora); nenhuma chamada, de qualquer
 status, traz digest diferente do aprovado (derivado das chamadas, nao so do
 evento de parada); nao houve `internal_error`; nenhuma chamada perdeu seus
-detalhes (`details_lost`); o tempo total nao passou do limite global; e toda
-chamada foi classificada.
+detalhes (`details_lost`); o tempo total nao passou do limite global; toda
+chamada foi classificada; nenhuma chamada `ok` ficou sem identidade confirmada
+(`identity_unconfirmed`) nem sem os campos da cadeia (`identity_chain_absent`); e a evidencia de
+nenhuma chamada deixou de ser gravada (`wire_capture_failed`: `wire.capture_failed`
+diferente de zero em qualquer chamada).
 Sem isso o veredito nunca e `pass` (`incomplete`; `invalid` se a cadeia quebrou;
 `fail` se algum criterio falhou, inclusive incompleta).
 

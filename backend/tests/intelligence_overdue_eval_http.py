@@ -472,9 +472,15 @@ class LoopbackClient:
                 # The body ended: a server that closes (Connection: close) answers at once; anything
                 # that still arrives is bytes AFTER the body, kept as evidence and not trusted.
                 if parser.finished and body_total <= tr.MAX_BODY_BYTES:
+                    # One window for the whole wait: the smaller of DRAIN_S and what is left of the
+                    # absolute deadline. A server that keeps emitting cannot stretch it.
+                    drain_end = min(self.clock() + DRAIN_S, deadline)
                     try:
                         while len(parser.trailing) < tr.MAX_BODY_BYTES:
-                            sock.settimeout(max(0.001, min(DRAIN_S, deadline - self.clock())))
+                            left = drain_end - self.clock()
+                            if left <= 0:
+                                break
+                            sock.settimeout(max(0.001, left))
                             data = sock.recv(RECV_BYTES)
                             if not data:
                                 break
