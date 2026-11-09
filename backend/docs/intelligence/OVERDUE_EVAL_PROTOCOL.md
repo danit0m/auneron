@@ -5,8 +5,10 @@ nenhuma rodada foi feita e nenhum resultado existe. Este documento e o
 pre-registro proposto. Ele so vale depois que o diretor aprovar os pontos da
 secao 14 e que seu hash entrar no manifesto.
 
-ESTE DOCUMENTO E O TRANSPORTE SIMULADO NAO AUTORIZAM A RODADA. Inferencia (qualquer
-chamada ao modelo) exige autorizacao do diretor, dada depois do pre-voo.
+ESTE DOCUMENTO E OS TRANSPORTES (SIMULADO E REAL, ESTE SO TESTADO OFFLINE) NAO AUTORIZAM A RODADA.
+Inferencia (qualquer chamada ao modelo) exige autorizacao do diretor, dada depois do
+pre-voo e da prova curta (secao 16). O transporte real foi IMPLEMENTADO OFFLINE e provado so
+contra um servidor roteirizado em loopback; nunca falou com o Ollama.
 
 Consolidacao da rodada 6 (decisoes do diretor para a PRIMEIRA avaliacao): metas,
 denominadores, configuracao candidata, regra no prompt, exclusoes, piso de memoria
@@ -120,11 +122,13 @@ O manifesto encadeia, em ordem alfabetica, os hashes de: `dataset`, `protocol`
 (este arquivo), `schema` (JSON Schema de `abstention.v1`, contrato `plan.v1`,
 versao e digest do registro), `prompt` (os dois modelos de prompt e o contrato de
 plano renderizado do registro), `runner` (cobre `render_prompt` e `facts_view`),
-`contract`, `adapter`, `scorer`, `scenarios` e `transport` (o modulo do transporte
-simulado). `manifest_hash` cobre tudo,
+`contract`, `adapter`, `scorer`, `scenarios`, `transport` (a logica pura do transporte),
+`http` (o cliente HTTP em loopback) e `driver` (`run_overdue_eval.py`). `manifest_hash` cobre
+tudo,
 inclusive parametros: commit, digest aprovado do modelo, `k`, `seed_base`,
-opcoes, `n_cases` e limites. O `manifest_hash` e a ancora da cadeia dos
-resultados.
+opcoes, `n_cases` e limites, e, quando a sonda de identidade e usada (sempre, no driver), o
+bloco `runtime` com a versao do Ollama e os SHA-256 do `template` e dos `parameters` de
+`/api/show` (secao 6). O `manifest_hash` e a ancora da cadeia dos resultados.
 
 O pre-voo valida os parametros contra as constantes do runner: `k` inteiro de 1
 a 5 (`k` continua parametro; a proposta e k = 3), `n_cases` igual ao tamanho do
@@ -294,6 +298,144 @@ diretor, aprovados na rodada 8: `think` desligado e o `format` com o schema de
 `abstention.v1` na primeira etapa. Uma passada mede o desempenho observado; estabilidade
 (repeticao, outras sementes) e outra avaliacao.
 
+### 6.1 Identidade do modelo: tres pontos, o que a cadeia comprova e o que nao comprova
+
+A instancia do Ollama e de USO EXCLUSIVO durante a rodada: nenhum outro modelo pode estar
+carregado, e ninguem mais usa a instancia. O pre-voo e a verificacao antes de cada chamada
+recusam se `/api/ps` listar outro modelo alem do candidato (`model_not_exclusive`).
+
+1. ANTES de CADA chamada, fora do `elapsed_s`: `/api/tags`, entrada de nome EXATO igual ao
+   candidato (`qwen3:4b` nao casa com `qwen3:4b-instruct-2507-q4_K_M`, que existe no catalogo)
+   e digest igual ao aprovado; `/api/ps` sem outro modelo e, se o candidato ja estiver
+   carregado, com o mesmo digest.
+2. NA RESPOSTA: o campo `model` do envelope e igual ao nome candidato (qualquer linha do
+   fluxo com outro nome conta). A resposta de `/api/generate` NAO documenta `digest`; se vier,
+   e conferido, se nao vier, nao falta nada.
+3. DEPOIS de CADA chamada, fora do `elapsed_s`: `/api/ps` com o digest do modelo carregado.
+   `size` e `size_vram` informados ali sao guardados como memoria ALOCADA informada, nunca
+   chamada de pico.
+
+Divergencia de digest (catalogo, carregado ou depois da chamada) ou de nome e INCIDENTE DE
+INTEGRIDADE: parada `model_mismatch`, NAO retomavel. Sonda indisponivel, modelo ausente do
+catalogo, digest ausente no `/api/ps` ou nome ausente no envelope, em chamada `ok`, e
+`model_unconfirmed`: parada RETOMAVEL, distinta da anterior. A chamada fica gravada, SEM
+credito (resultado `invalid_response`, marca `identity_unconfirmed`, `model_decision` nulo),
+NAO e repetida, nunca abre a etapa 2, e o conteudo continua sendo analisado para seguranca
+como uma resposta tardia (capacidade proibida estruturada ainda para a rodada). A rodada com
+uma chamada assim nunca e `complete` (`identity_unconfirmed`). Em chamada que nao terminou
+`ok`, uma sonda que falha depois so e registrada.
+
+Manifesto: `params.runtime` traz `ollama_version`, `template_sha256` e `parameters_sha256`
+(SHA-256 do texto UTF-8 dos campos `template` e `parameters` de `/api/show`). O pre-voo
+recusa por divergencia de qualquer um deles (`ollama_version_mismatch`, `template_mismatch`,
+`parameters_mismatch`), por manifesto sem o bloco (`runtime_identity_missing`), por sonda que
+falha (`runtime_probe_failed`) e por digest do catalogo ou carregado diferente do aprovado.
+
+O que a cadeia COMPROVA: corrobora qual modelo estava disponivel e carregado ANTES e DEPOIS de
+cada chamada, em uma instancia de uso exclusivo, com o mesmo nome no envelope. O que NAO
+comprova: nao vincula criptograficamente o digest a resposta; ela nao traz digest. Se algo
+trocasse o modelo e o devolvesse entre a sonda anterior e a posterior, a cadeia nao veria. A
+exclusividade da instancia e uma exigencia operacional, nao uma prova.
+
+`prompt_eval_count` pode vir PARCIAL por cache de prompt (o runtime pode reaproveitar parte do
+prompt da chamada anterior e contar so o restante): os tokens de entrada gravados nao sao a
+contagem do prompt inteiro, e nao devem ser lidos assim.
+
+### 6.2 Correcoes da rodada 02 (revisao independente)
+
+- **Divergencia de identidade = SEM credito.** Uma chamada `ok` cujo `loaded_digest_after`, cujo
+  `model_digest` da resposta ou cujo nome `model` do envelope difira do aprovado/candidato NAO
+  recebe credito: resultado `invalid_response` (etapa 1) ou analise de resposta tardia sem acerto
+  (etapa 2), `model_decision` nulo, etapa 2 nunca aberta, analise de seguranca do conteudo mantida
+  (capacidade proibida ainda para a rodada), razao `identity_unconfirmed_reason = mismatch` gravada,
+  parada `model_mismatch` (NAO retomavel). A chamada fica no registro e nas estatisticas como falha.
+- **Exclusividade DEPOIS da chamada.** Se `/api/ps`, depois da chamada, mostrar outro modelo alem do
+  candidato, a chamada `ok` fica SEM credito (razao `not_exclusive`) e a rodada para com
+  `model_not_exclusive` (retomavel, depois de descarregar o outro), inclusive na ULTIMA chamada e
+  qualquer que seja o status da chamada.
+- **Cadeia de identidade obrigatoria.** `runtime_probe` e parametro OBRIGATORIO de `run_round`; nao ha
+  modo legado. Os eventos `start` e `resume` gravam `identity_chain: true`. `build_report`
+  acrescenta `identity_chain_absent` a `incomplete_reasons` se qualquer chamada `ok` nao tiver
+  `identity_unconfirmed` igual a `false`: um arquivo de resultados sem esses campos nunca sai
+  `complete` nem `pass`. Uma chamada recuperada sem detalhes (`details_lost`) NUNCA da credito.
+- **Regra mantida, a ser decidida pelo diretor:** uma chamada com identidade nao confirmada deixa a
+  rodada sem `complete` (`identity_unconfirmed`), mesmo com retomada: retomar continua nas chamadas
+  ineditas, mas a chamada nao confirmada nao e refeita e a rodada nao fica `complete` nem `pass`. A
+  decisao de mudar isso e do diretor.
+- **Capacidade proibida em JSON cortado.** Quando o texto bruto de uma resposta da etapa 2 nao e JSON
+  valido (prazo estourado, conexao reiniciada, orfa, Ctrl+C, ou resposta `ok` nao interpretavel), faz-se
+  uma varredura tolerante por `"capability_id"\s*:\s*"..."`, aplicando a mesma regra de nome proibido
+  de um plano interpretado. Achou: `forbidden_capability`, `unsafe`, parada `forbidden_capability`,
+  SEM credito. A varredura e conservadora: conta qualquer par encontrado no texto, mesmo dentro de um
+  valor de texto, e nao enxerga nomes escritos com escapes JSON (`\u00xx`) nem cortados no meio do nome.
+- **Bytes fora do corpo HTTP.** Resposta sem linha de status valida, mal formada ou fechada sem
+  nenhum byte: o bruto recebido (decodificado com `errors="replace"`, cortado em `MAX_BODY_BYTES`)
+  vai para `raw_text` e passa pela analise de seguranca; o mesmo vale para uma chamada orfa cujo
+  `response.bin` nao e HTTP. Um corpo que terminou antes do fim declarado (`chunked` sem o bloco final,
+  `Content-Length` curto) nunca e aceito como completo: `body_truncated`.
+- **Falha de disco na captura.** Um `OSError` ao gravar `response.bin` nao interrompe a leitura: a
+  falha e gravada (`wire.capture_failed = 1`), o hash e a contagem seguem o que chegou, e a rodada
+  nao sai `complete` (`wire_capture_failed`). O fechamento da captura (com `fsync` do `response.bin`)
+  nunca mascara a excecao original nem descarta uma resposta completa.
+- **Prazo no connect e no envio.** O timeout de conexao e o de envio sao o tempo restante do prazo
+  absoluto (nao uma constante).
+- **Loopback antes de conectar.** O nome e resolvido com `getaddrinfo` antes de qualquer conexao;
+  se QUALQUER endereco resolvido nao for loopback, a chamada e recusada (`NotLoopback`) com zero
+  conexoes; a conexao vai ao IP literal validado. A checagem do endereco do par depois de conectar
+  continua. O tamanho de bloco `chunked` so aceita `[0-9A-Fa-f]+` (`-1`, `0x10`, `1_0` sao mal formados).
+- **Manifesto.** Entram em `source_hashes`/`REQUIRED_ENTRIES`, so para leitura, os arquivos que decidem
+  `admitted`: `validator.py` e o que ele importa diretamente (`admission`, `authority`, `canonical`,
+  `capabilities`, `codes`, `dag`, `limits`, `policy`, `schema`, `gateway/contracts.py`), o
+  `tests/test_intelligence_plan_validator.py` (origem de `build_real_policy_reference`) e o que esse
+  auxiliar importa diretamente (`action_space_evaluator`, `autonomy_policy`, `authorization`,
+  `models/skill.py`). Dependencias indiretas nao estao cobertas.
+- **Driver.** Falha ao gravar a ancora externa ou ao descarregar o modelo e informada no resultado
+  (`anchor_error`, `unload_error`), nao silenciada.
+
+### 6.3 Correcoes da rodada 04
+
+- **Todos os enderecos validados, em ordem.** O nome (`localhost`) e resolvido por `getaddrinfo` e,
+  se QUALQUER endereco nao for loopback, a chamada e recusada com zero conexoes. Passada a recusa, o
+  cliente tenta cada IP validado na ordem do sistema, sem repeticao, com o tempo que resta do prazo
+  absoluto (cada tentativa recebe o que sobrou, nao um timeout novo; nao se inicia tentativa depois do
+  prazo). Assim `localhost` resolvendo `::1` primeiro nao derrota um runtime que escuta so em
+  127.0.0.1. A checagem do endereco do par depois de conectar continua. O registro `wire` guarda
+  `connected_ip` (o IP que aceitou, vazio se nenhum) e `connect_attempts`.
+- **Fora do prazo absoluto, dentro do `elapsed_s`.** O prazo absoluto (secao 7) conta a partir da
+  TROCA de rede. Ficam FORA do prazo, mas DENTRO do `elapsed_s` da chamada e do orcamento global: o
+  `mkdir` de `wire/`, a criacao e o `fsync` de `request.json` antes de enviar, e o fechamento da
+  captura (`flush` e `fsync` de `response.bin`) depois da troca. Medido nesta maquina (400 chamadas
+  contra o servidor roteirizado) a criacao do `request.json` teve mediana de 2 ms, p99 de 155 ms e
+  maximo de 446 ms. Efeito: so pode transformar um `ok` perto do teto em `timeout` (o `elapsed_s`
+  cresce), nunca o contrario. A regra nao muda.
+- **Falha ao gravar o pedido.** `OSError` em `mkdir`/`write_request` que nao seja `FileExistsError`
+  (esta continua sendo a chamada orfa) NAO sobe como excecao: vira uma resposta de erro
+  `request_capture_failed`, com `wire.capture_failed = 1`, SEM nenhuma chamada de rede (o pedido nao
+  foi gravado por inteiro, e nada e enviado sem evidencia), sem credito, e a rodada nao sai `complete`
+  (`wire_capture_failed`). **E uma parada** (`capture_failed`, retomavel, depois que o operador
+  consertar o disco), nao so um erro: sem parada, um disco que falha consumiria um par por chamada
+  (nenhuma chamada e refeita) ate o disjuntor de 5 falhas, e cada retomada perderia mais 5; a parada
+  perde so o par daquela chamada. A mesma parada vale para qualquer chamada cujo `wire.capture_failed`
+  seja 1 (falha ao gravar `response.bin`, ao sincronizar ou ao fechar).
+- **Ctrl+C preserva a falha de captura.** A excecao leva `wire` (estado final da captura, depois do
+  fechamento) e o runner o grava no registro `interrupted`.
+- **Bytes depois do fim do corpo.** Bytes que chegam depois do `Content-Length` ou depois do bloco
+  final `0` (ate `MAX_BODY_BYTES`, e por uma espera curta de 50 ms depois do corpo) ficam em
+  `response.bin` e passam a ir para o `raw_text` (apos uma quebra de linha) e para a analise de
+  seguranca. A resposta vira erro `trailing_bytes` (nunca credito), salvo se ja era outro erro. A
+  chamada orfa tambem os inclui.
+- **Teto de memoria durante o prazo.** O corpo guardado em memoria para no limite de `MAX_BODY_BYTES`
+  (mais 1 byte, para ver o excesso); ao passar do limite a leitura PARA e a resposta e `body_too_large`
+  (o tamanho informado e o que se viu ate cortar, nao o tamanho original). Linhas de tamanho de bloco
+  `chunked` ou de trailer sem fim passam de 64 KiB e viram `chunk_line_too_long`; o buffer de
+  `first_token` tambem tem teto. Em disco, `response.bin` nao tem teto (e evidencia).
+- **`Content-Length`** aceita somente digitos decimais (`1_0`, `+5`, `-1`, `0x5`, `5.0` e digitos
+  nao ASCII sao `bad_content_length`).
+- **Driver.** Rodada concluida com `anchor_error` ou `unload_error` sai com codigo de saida 4
+  (`EXIT_HOUSEKEEPING`), distinto de 0 (concluida limpa), 2 (recusa), 3 (parada) e 130 (Ctrl+C). Uma
+  rodada parada ou interrompida mantem o proprio codigo (3 ou 130); o JSON final traz sempre
+  `anchor_error` e `unload_error`.
+
 ## 7. Tempo
 
 Velocidade observada: 3 a 4 tokens por segundo (origem: secao 14). O calculo
@@ -327,7 +469,7 @@ Com 12 casos e k = 3 o limite global e 12060 s.
 
 Primeira avaliacao (120 casos, k = 1): a estimativa e de 9435 a 11560 s (cerca de
 3 a 4 horas), conforme a velocidade, com 25% de etapa 2; e uma ESTIMATIVA, nao um
-limite. O piso de 14 GiB de memoria livre e mantido ate haver medicao que sustente
+limite, e CONTINUA SENDO ESTIMATIVA ate a prova curta contra o runtime real medir os tempos. O piso de 14 GiB de memoria livre e mantido ate haver medicao que sustente
 sua revisao. A medicao de 14,72 GiB de memoria livre atendeu ao piso, mas a liberacao da
 execucao depende do pre-voo na hora da execucao, do transporte real validado e de
 autorizacao especifica do diretor. As contagens de 100 e 450
@@ -336,8 +478,8 @@ houve inferencia); precisam de calibracao autorizada pelo diretor.
 
 **Timeout e disjuntor**
 
-- O runner so MEDE o tempo. O timeout precisa ser imposto pelo transporte
-  futuro (`ask_model` recebe `timeout_s` no pedido). Resposta que volta depois
+- O runner so MEDE o tempo. O timeout e imposto pelo transporte real
+  (`ask_model` recebe `timeout_s` no pedido), com prazo ABSOLUTO (abaixo). Resposta que volta depois
   do teto, mesmo `ok`, e classificada `timeout`, com o texto bruto guardado.
   Timeout conta como `invalid_response`, nunca e descartado e nunca e repetido.
   O relogio injetado DEVE ser monotonico. Um tempo medido negativo (relogio que
@@ -368,6 +510,17 @@ houve inferencia); precisam de calibracao autorizada pelo diretor.
   registro explicito.
 - Custo de carga: a primeira chamada depois de cada inicio ou retomada pode
   incluir a carga do modelo (ate 60 s a mais); esta dentro do teto por chamada.
+- Prazo absoluto do transporte real: no inicio de cada chamada, com o relogio monotonico do
+  cliente, calcula-se `prazo = teto + tolerancia` (etapa 1: 150 + 40 s; etapa 2: 400 + 100 s).
+  A chegada de blocos NAO reinicia o prazo, e a leitura e feita em fatias de cerca de 1 s para
+  que o Ctrl+C valha no Windows e o prazo seja conferido mesmo com fluxo continuo. Passado o
+  prazo, a conexao e cortada e levanta-se `TimeoutError` com a saida parcial. Entre o teto e o
+  prazo a resposta ainda e aceita e chega ao runner, que a classifica `timeout` SEM credito,
+  mesmo correta, com a analise de seguranca de sempre. A tolerancia conta no orcamento global
+  pelo `elapsed_s` real (a checagem antes de cada chamada continua usando so o teto; uma
+  chamada pode, portanto, consumir ate teto + tolerancia). O prazo absoluto vale para a troca de rede;
+  o `mkdir`, o `fsync` do pedido e o fechamento da captura ficam fora do prazo absoluto, mas dentro do
+  `elapsed_s` (secao 6.3).
 
 ## 8. Paradas imediatas, pausa e retomada
 
@@ -381,6 +534,9 @@ houve inferencia); precisam de calibracao autorizada pelo diretor.
 | `internal_error` | excecao ao classificar uma resposta ja gravada | NAO |
 | `interruption_limit` | 3 chamadas interrompidas | NAO |
 | `circuit_breaker` | 5 falhas seguidas | sim |
+| `operator_stop` | arquivo `STOP` na pasta da rodada, lido ENTRE chamadas (a chamada em curso termina); nao conta como interrupcao | sim |
+| `model_unconfirmed` | identidade nao confirmada (secao 6.1), antes ou depois de uma chamada | sim, a chamada nao e repetida |
+| `model_not_exclusive` | `/api/ps` lista outro modelo alem do candidato, antes de uma chamada | sim, apos descarregar o outro |
 | `global_budget` | limite global cumulativo, antes ou depois da chamada | NAO (rodada encerrada incompleta) |
 
 Nome de capacidade proibida em TEXTO (resumo, justificativa, resposta de
@@ -401,6 +557,13 @@ for o caso, e so entao continua apenas nos pares e etapas que nao tem
 registro. Nunca reescreve e nunca refaz chamada ja registrada (timeout, erro ou
 interrupcao inclusive): nenhum caminho repete chamada para melhorar nota.
 Reiniciar sobre arquivo existente e recusado.
+
+A retomada avanca para a proxima chamada INEDITA, depois de verificar as evidencias e repetir
+o pre-voo (inclusive a sonda de identidade). Regra, na retomada e no fluxo continuo: se a etapa 1
+de um caso terminou em `timeout`, interrupcao, erro ou identidade nao confirmada, a etapa 2
+daquele caso NAO comeca (a etapa 2 so abre quando a etapa 1 terminou `ok`, com identidade
+confirmada e decisao `proceed`; funcao `stage_one_proceeds`). Uma chamada recuperada sem os
+detalhes (`details_lost`) com a sonda em uso tambem nao ganha credito.
 
 ## 9. Preservacao integral
 
@@ -423,10 +586,25 @@ Reiniciar sobre arquivo existente e recusado.
   a saida parcial (`partial_output` da excecao, se houver) e o tempo gasto, que
   consome o orcamento; e classificada como invalida, contada (limite 3), aparece
   no relatorio e a excecao segue adiante. A retomada nao a refaz.
+- Captura em disco do transporte real (pasta `wire/` ao lado dos resultados): antes de enviar,
+  `<caso>.r<rep>.<etapa>.request.json` com o corpo EXATO, em criacao exclusiva (`xb`, nunca
+  sobrescreve, com `fsync`); os bytes recebidos (a resposta HTTP crua) vao para
+  `<...>.response.bin`, por bloco, com `flush`, ANTES de qualquer interpretacao. Os SHA-256 e o
+  tamanho entram no registro da chamada (`wire`). Cortar a conexao nao prova que o runtime parou
+  de gerar (prova curta, secao 16). O tempo gasto aqui (criar e sincronizar o pedido, fechar e
+  sincronizar a resposta) entra no `elapsed_s`, fora do prazo absoluto (secao 6.3).
+- Chamada ORFA: se `request.json` ja existe para a chave e o runner nao tem registro da chamada
+  (queda depois de enviar e antes de gravar), o pedido NAO e reenviado. Devolve-se `interrupted`
+  com `error = orphaned_call`, com o que houver em `response.bin` como evidencia, SEM credito e
+  com a analise de seguranca de sempre (capacidade proibida estruturada ainda para a rodada). A
+  chamada custa o TETO inteiro em `used_seconds` e entra na contagem de interrupcoes (limite 3).
 - Cada registro de chamada guarda: prompt completo e seu hash, hash do conjunto
   de prompts, do schema, do dataset (arquivo) e do manifesto, commit, digest
   aprovado e informado, opcoes (seed), teto, status, erro, resposta bruta,
-  instantes, duracao, tokens, tempos informados e memoria antes e depois.
+  instantes, duracao, tokens, tempos informados (em NANOSSEGUNDOS, como o runtime informa:
+`total_duration`, `load_duration`, `prompt_eval_duration`, `eval_duration`), `done_reason`, o
+nome `model` do envelope, `thinking` se vier, `first_chunk_s` e `first_token_s`, a identidade
+(secao 6.1) e memoria antes e depois.
 - Arquivo de selos `<resultados>.seals`, tambem encadeado e ancorado: um selo por
   anexo, com contagem, cabeca da cadeia e SHA-256 do arquivo. O ultimo selo deve
   cobrir TODOS os registros (um registro encadeado sem selo e recusado).
@@ -459,7 +637,19 @@ diverge do manifesto; parametros do manifesto fora das constantes (`k`, `n_cases
 `false` nao vale por `0`); `approved_model_digest` ou `commit` do manifesto
 ausentes ou vazios, ou diferentes do informado; commit diferente do fixado; digest informado por
 `model_info` diferente do aprovado; manifesto adulterado. O limite de 14 GiB e
-constante do runner: editar o campo no manifesto nao o altera.
+constante do runner: editar o campo no manifesto nao o altera. Com a sonda de identidade, o
+pre-voo tambem recusa pelo runtime (secao 6.1): outro modelo carregado, digest, versao do
+Ollama, template ou parametros diferentes do manifesto, ou sonda indisponivel.
+
+O driver (`backend/tests/run_overdue_eval.py`, nao coletado pelo pytest) liga tudo isso e
+acrescenta portoes ANTES de qualquer geracao: so inicia com `--confirm` igual ao `manifest_hash`;
+a pasta da rodada tem de ser nova (ou vazia) para um inicio; a retomada exige a flag `--resume`
+e a mesma confirmacao; memoria livre abaixo de 14 GiB (`GlobalMemoryStatusEx.ullAvailPhys`),
+pre-voo recusado ou host que nao seja loopback = zero chamadas de geracao. Ao encerrar uma
+rodada que COMECOU (um evento `start` ou `resume` foi gravado; um pre-voo recusado nao conta), o
+driver descarrega o modelo com `keep_alive: 0` e sem prompt, e grava a ancora externa
+(`anchor.<n>.json`, criacao exclusiva). O driver nao foi executado contra o Ollama; o modo de
+prova curta nao existe ainda e e uma etapa propria.
 
 Continua sendo responsabilidade do chamador (o runner nao verifica): calcular o
 hash do protocolo; informar o commit real; implementar `ask_model`, que deve
@@ -482,10 +672,12 @@ Sem isso o veredito nunca e `pass` (`incomplete`; `invalid` se a cadeia quebrou;
 
 ## 12. O que o runner garante e o que nao garante
 
-Garante o descrito acima, provado por testes com modelo falso, cada
-comportamento com mutacao correspondente. Nao garante qualidade de modelo, nao
-mede velocidade real, nao impoe timeout, nao testa transporte (nao existe) e nao
-prova que o prompt rascunho seja adequado. O teste por AST prova ausencia de
+Garante o descrito acima, provado por testes com modelo falso e com servidor roteirizado em
+loopback, cada comportamento com mutacao correspondente. Nao garante qualidade de modelo, nao
+mede velocidade real, e NAO prova nada sobre a API real do Ollama: o formato de `/api/ps`, do
+fluxo e de `/api/show`, e o efeito de cortar a conexao, sao suposicoes (secao 16) que a prova
+curta tem de conferir. Nao prova que o prompt rascunho seja adequado. O runner nao impoe o
+timeout (o transporte real o faz). O teste por AST prova ausencia de
 importacao DIRETA de executor, rede, Ollama, subprocesso, relogio ou banco; nao
 prova ausencia de caminho transitivo. O `ask_model` futuro e injetado e esta
 fora do que foi verificado.
@@ -494,7 +686,11 @@ fora do que foi verificado.
 
 `cd backend`, com `APP_ENV=test`, `DATABASE_URL` ficticia e `API_KEY` ficticia de
 32 caracteres ou mais: `python -m pytest -q -p no:cacheprovider --noconftest
-tests/test_intelligence_overdue_eval_runner.py`.
+tests/test_intelligence_overdue_eval_runner.py
+tests/test_intelligence_overdue_eval_transport.py
+tests/test_intelligence_overdue_eval_http.py
+tests/test_intelligence_overdue_eval_driver.py`. Os testes de `http` e `driver` sobem um
+servidor roteirizado em `127.0.0.1` (porta temporaria); nao chamam o Ollama.
 
 ## 14. Decisoes do diretor (RASCUNHO NAO APROVADO, NAO CONGELADO)
 
@@ -530,7 +726,8 @@ PENDENTES (nada congela nem executa antes):
 15. **Prompts finais**, inclusive o da etapa 2 (contrato, capacidades, schema de `params`,
     precondicao exata), congelados por hash. O rascunho atual esta no runner; o da etapa 1
     ja declara a regra de saldo zero.
-16. **Transporte real com rede**: nao existe; precisa de aprovacao e validacao (secao 16).
+16. **Transporte real com rede**: implementado offline, prova curta pendente (secao 16). Nao
+    esta aprovado: so a prova curta contra o runtime real, autorizada pelo diretor, pode aprova-lo.
 17. **Ancora externa**: autorizacao, quem altera e quem guarda a copia (secao 17).
 18. **Origem da velocidade de 3 a 4 tokens/s** e do piso de 14 GiB (a medicao de 14,72 GiB
     precisa de registro: maquina, modelo, data), suposicoes de tempo (60 s, 20 s, 100 e 450
@@ -567,28 +764,69 @@ PENDENTES (nada congela nem executa antes):
   analisar; so o texto bruto e conferido para o sinal `forbidden_text_signal`.
 - `internal_error`, `interruption_limit`, `global_budget` e as paradas de seguranca
   nao sao retomaveis; a recuperacao exige decisao do diretor e nova rodada.
+- A checagem de orcamento antes de cada chamada usa so o teto; a tolerancia do prazo absoluto
+  conta no orcamento pelo tempo real, depois.
+- O cliente HTTP le a resposta do soquete e a interpreta com um parser proprio (fatias de 1 s;
+  o leitor de resposta do `http.client` nao pode ser fatiado). O parser trata `Content-Length`,
+  `chunked` e corpo ate o fechamento; foi provado contra o servidor roteirizado, nao contra o
+  Ollama.
+- Uma chamada cuja conexao caiu sem registro e orfa: nao se sabe se o runtime terminou de gerar.
 
-## 16. Transporte simulado
+## 16. Transporte: logica pura, cliente real em loopback e prova curta
 
-`backend/tests/intelligence_overdue_eval_transport.py` e um transporte SIMULADO:
-monta o pedido local (modelo, prompt, `stream` falso, `think` desligado e `format` com o
-schema de `abstention.v1` na etapa 1, ambos aprovados, e opcoes efetivas fixas) e chama um `post(url,
-corpo, timeout_s)` INJETADO, que e quem impoe o timeout (o `timeout_s` do pedido e
-passado ao chamador). Nao importa rede, cliente HTTP nem Ollama, e e ligado ao
-runner por `ask_model` (e `model_info`). Testado so com respostas simuladas: sucesso,
-timeout, falha de captura, corpo truncado, JSON invalido, digest divergente, erro
-HTTP e erro do servidor. Nenhum caminho de falha descarta conteudo: o texto vai para o
-registro (bytes que nao sao UTF-8 com `errors="replace"`, cortado em `MAX_BODY_BYTES`) com
-o tamanho original em `reported_timings["body_bytes"]`; corpo acima do limite e cortado e
-marcado `body_too_large`, e um corte no meio de um caractere multibyte e `body_truncated`.
-Quando o envelope e legivel, o que se guarda e o texto da resposta do modelo, para que o
-runner possa analisa-lo para seguranca; um envelope grande ou cortado so pode ser varrido
-por sinais (limite declarado). Uma resposta recebida DEPOIS do timeout (comprovada por
-teste, nas duas etapas, inclusive com conteudo correto) fica registrada como evidencia com o
-bruto, sem substituir a falha `timeout` e sem contar como acerto. O arquivo do transporte
-entra no manifesto (`transport`).
-As formas do pedido e da resposta sao uma simulacao: o transporte real, com rede,
-AINDA PRECISA DE APROVACAO do diretor e de conferencia com a API real.
+Tres arquivos, cada um no manifesto:
+
+- `backend/tests/intelligence_overdue_eval_transport.py` (`transport`): logica PURA, sem rede.
+  Monta o pedido local (modelo, prompt, `stream` LIGADO, `think` desligado e `format` com o
+  schema de `abstention.v1` na etapa 1, ambos aprovados, e opcoes efetivas fixas) e chama um
+  `post(url, corpo, timeout_s)` INJETADO (e `get`). O corpo da resposta e JSON em linhas; o
+  parser une os pedacos de `response`, le a linha final (`done`, contagens e duracoes em
+  nanossegundos), reconhece linha de erro no meio do fluxo, fluxo sem linha final, linha cortada,
+  JSON invalido, bytes que nao sao UTF-8 (`errors="replace"`) e corte no meio de um caractere
+  multibyte, tudo sem descartar conteudo (o texto vai para o registro, cortado em
+  `MAX_BODY_BYTES`, com o tamanho original em `reported_timings["body_bytes"]`; corpo acima do
+  limite e cortado e marcado `body_too_large`, e um corte no meio de um caractere multibyte e
+  `body_truncated`). Quando o
+  envelope e legivel, guarda-se o texto da resposta do modelo, para a analise de seguranca. Traz
+  `model_info` (agora por `/api/tags`, nome exato) e a sonda de identidade (`/api/version`,
+  `/api/show`, `/api/tags`, `/api/ps`).
+- `backend/tests/intelligence_overdue_eval_http.py` (`http`): o cliente real. So biblioteca
+  padrao; aceita apenas `127.0.0.1`, `::1` e `localhost` (e confere o endereco do par depois de
+  conectar); nao usa proxy (o ambiente nunca e lido), nao segue redirecionamento (3xx e erro) e
+  nao repete chamada. `http.client` abre a conexao e envia; a resposta e lida do soquete em
+  fatias, com prazo absoluto (secao 7), captura em disco e orfas (secao 9).
+- `backend/tests/run_overdue_eval.py` (`driver`): secao 10.
+
+Testado com um servidor REAL em `127.0.0.1`, porta temporaria, roteirizado, que conta as
+requisicoes por chave: pedido exato; fluxo completo; metricas; `first_chunk_s` diferente de
+`first_token_s`; nome exato com a armadilha `qwen3:4b-instruct-...`; modelo ausente; digest
+trocado entre chamadas; nome divergente no envelope; `/api/ps` indisponivel; outro modelo
+carregado; atraso antes do primeiro bloco; travamento no meio; resposta tardia dentro da
+tolerancia; corte depois do prazo; fluxo de pequenos blocos continuo (o prazo absoluto vale);
+queda depois do envio e antes do registro (sem reenvio, pelo contador do servidor); HTTP 404 e
+500; erro no meio do fluxo; conexao recusada; encerramento sem bloco final; JSON invalido;
+bytes nao UTF-8; corte multibyte; excesso de tamanho; `done_reason = length`; duracoes ausentes ou
+zero; host fora do loopback; redirecionamento; variaveis de proxy; capacidade proibida em
+resposta tardia, parcial e orfa; Ctrl+C com parcial; `STOP`; rodada de 12 cenarios com retomada;
+e os portoes do driver. Nada disso e evidencia sobre o Ollama.
+
+### 16.0 Suposicoes sobre a API real (a prova curta tem de conferir)
+
+Conferido em metadados locais: `/api/show` NAO traz `digest` no topo; `/api/tags` traz `name` e
+`digest`; o catalogo tem `qwen3:4b` e `qwen3:4b-instruct-2507-q4_K_M`; versao observada 0.40.10.
+SUPOSTO, nao observado: o formato de `/api/ps` (lista `models` com `name`, `digest`, `size`,
+`size_vram`), o formato do fluxo de `/api/generate` (linhas JSON, `response` por pedaco, linha
+final com `done`, `done_reason`, `eval_count`, `eval_duration`, `load_duration`, `model`), o
+transporte em `chunked`, o nome `model` do envelope e a ausencia de `digest` na resposta.
+
+### 16.2 Prova curta (NAO implementada; etapa propria, autorizada pelo diretor)
+
+Criterio, definido aqui antes de existir: a prova corta a conexao no meio de uma geracao e
+observa o runtime. Se o corte da conexao deixar a geracao em andamento, a prova PARA antes de
+iniciar outra chamada e o transporte NAO fica aprovado. Se o transporte mudar depois da prova,
+ela se REPETE. A prova tambem confere as suposicoes da secao 16.0. Enquanto ela nao for feita e
+aprovada, o transporte real fica "implementado offline" e a estimativa de tempo (secao 7) segue
+estimativa.
 
 ## 16.1 Relatorio: secao `performance` (informativa)
 
@@ -643,6 +881,22 @@ nomes antigos e nao foram alterados. Os campos por chamada dos registros
 (`free_memory_gib_before`, `free_memory_gib_after`) e o parametro `free_memory_gib` do
 pre-voo nao mudaram.
 
+Acrescentado com o transporte real (ainda informativo; nenhum veredito le):
+
+- `generation_tokens_per_s`: `eval_count / eval_duration` (nanossegundos convertidos), so quando
+  os DOIS foram informados pelo runtime e sao maiores que zero, so de chamadas que terminaram
+  `ok` e com identidade confirmada (chamada cortada, tardia, com erro ou sem identidade confirmada
+  nao entra). Caso contrario o campo e `null` com o
+  motivo `runtime_timing_missing`, e as exclusoes sao contadas (`not_ok`,
+  `identity_unconfirmed`, `runtime_timing_missing`). NUNCA e estimada pelo `elapsed_s`. Separada de
+  `effective_tokens_per_s`, que continua como estava.
+- `first_chunk_s` (primeiro bloco do corpo recebido) e `first_token_s` (primeiro bloco com
+  `response` nao vazio), pelo relogio monotonico do cliente: contagem, mediana e p95; `null`
+  quando nao ocorrem.
+- `load_duration_s`: mediana e p95 do `load_duration` informado.
+- `runtime_reported_memory`: maior `size` e `size_vram` informados por `/api/ps`; memoria
+  ALOCADA informada, nao pico. `peak_model_memory` segue `pending_real_transport`.
+
 Metodos, deterministicos, com inteiros e `Fraction` (sem `numpy`):
 
 - Mediana: ordenar; n impar, o elemento do meio; n par, a media exata (`Fraction`) dos
@@ -651,7 +905,8 @@ Metodos, deterministicos, com inteiros e `Fraction` (sem `numpy`):
   `(95 x n + 99) // 100`; o valor e o elemento nesse posto (base 1), sem interpolacao.
   Com poucas amostras o p95 e o maximo (n < 20), e deve ser lido assim.
 - Sem dado suficiente o campo e `null` com motivo fixo: `no_samples` (tempos),
-  `no_readings` (memoria), `no_token_counts` (tokens), `no_speed_samples` (velocidade).
+  `no_readings` (memoria), `no_token_counts` (tokens), `no_speed_samples` (velocidade),
+`runtime_timing_missing` (velocidade de geracao).
   Nunca ha estimativa.
 
 Nenhum tempo e excluido em silencio: cada estatistica traz `excluded` com o total e o
@@ -679,6 +934,6 @@ resultado para fora da maquina. O runner nao envia nada.
 - Chaves de dicionario fora da varredura: a varredura de proposta efetiva em texto olha os
   VALORES de texto dos campos do plano; nomes de chaves (por exemplo `fact` de uma
   precondicao) nao sao varridos.
-- O digest por chamada depende da API real: a resposta de geracao simulada traz um campo
-  `digest`, mas o que a API real devolve (e se devolve) ainda nao foi verificado. Sem o
-  digest na resposta, so o `model_info` anterior a primeira chamada o confere.
+- O digest por chamada depende da API real: a resposta de geracao documentada NAO o traz (nao
+  foi verificado na API real). A identidade e corroborada pela cadeia de tres pontos da secao
+  6.1 (catalogo antes, nome no envelope, `/api/ps` depois), com os limites la declarados.
