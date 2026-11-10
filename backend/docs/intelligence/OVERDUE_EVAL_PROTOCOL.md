@@ -733,8 +733,9 @@ PENDENTES (nada congela nem executa antes):
     `approved_model_digest` e do diretor.
 15. **Prompts finais**, inclusive o da etapa 2 (contrato, capacidades, schema de `params`,
     precondicao exata), congelados por hash. O texto final (opcao A, aprovado em 2026-11-10)
-    esta no runner; o da etapa 1 declara a regra de saldo zero. O CONGELAMENTO (freeze 4) com
-    o hash novo e a ancora externa ainda nao foram feitos (secao 18).
+    esta no runner; o da etapa 1 declara a regra de saldo zero; o da etapa 2 foi ajustado em
+    2026-11-10 para trazer a regra por conta (secao 18.8). O CONGELAMENTO (freeze 4) com o hash
+    novo e a ancora externa ainda nao foram feitos (secao 18).
 16. **Transporte real com rede**: implementado offline, prova curta pendente (secao 16). Nao
     esta aprovado: so a prova curta contra o runtime real, autorizada pelo diretor, pode aprova-lo.
 17. **Ancora externa**: autorizacao, quem altera e quem guarda a copia (secao 17).
@@ -1026,9 +1027,124 @@ validador as aplica; (e) que o limite de 768 tokens do plano basta com a saida f
 congelamento 4, a ancora externa e o pre-voo do dia. O `format` restringe a FORMA do texto; nao
 torna o plano correto nem autorizado.
 
-### 18.6 Segunda prova curta (preparada, NAO executada)
+### 18.6 Segunda prova curta (preparada e EXECUTADA em 2026-11-10; resultado em 18.7)
 
 Roteiro em `overdue-eval-prep/real-transport/smoke-prep-02/` (fora do repositorio), com no maximo 3
 geracoes sinteticas (abstencao, plano, plano com outra semente), pre-voo de 14 GiB, commit esperado
-da branch `review/area3-overdue-plan-format` e confirmacao pelo hash do proprio roteiro. Exige
-autorizacao do diretor para rodar.
+da branch `review/area3-overdue-plan-format` e confirmacao pelo hash do proprio roteiro. Foi
+executada com autorizacao do diretor (`smoke-run-02`); o resultado esta em 18.7.
+
+### 18.7 Segunda prova curta (`smoke-run-02`, 2026-11-10)
+
+- Saida 0; 3 de 3 chamadas passaram.
+- Gramatica do `plan.v1` aceita pelo Ollama.
+- `done_reason=stop` nas tres; tokens de SAIDA / `num_predict`: 104/160, 240/768 e 522/768;
+  tokens de entrada 652, 928 e 1013. Numeros conferidos pelo PO contra `smoke-run-02/summary.json`
+  (SHA-256 `7367d5ab27108c034ea8126033b5689296535074870541e9d3ab82ca57bce3a1`).
+- Tempos: 42,6 s (inclui carga a frio de 31,9 s), 16,7 s e 36,8 s.
+- 14,5 tokens/s na etapa 2 com gramatica (so informativo; os tetos da secao 7 nao mudam).
+- Modelo descarregado ao final.
+- Ollama observado na versao **0.40.16** (atualizado automaticamente de 0.40.15), com o mesmo
+  digest e o mesmo template.
+- Achado: para contas elegiveis o modelo escreveu so leituras, porque o prompt antigo da etapa 2
+  nao trazia a regra de elegibilidade. Isso motivou o ajuste de 18.8.
+
+### 18.8 Ajuste do prompt da etapa 2 (aprovado em 2026-11-10)
+
+**Motivo.** O achado de 18.7. O prompt da etapa 1 NAO mudou; os tetos, limiares, pontuador,
+adaptador, cenarios, `abstention.v1`, `PROMPT_ABSTENTION` e o schema `format` tambem nao.
+
+**Texto** (uma linha da fonte por linha, marcadores `{{PLAN_CONTRACT}}` e `{{FACTS}}`):
+
+1. Write a plan.v1 proposal for the request described in the facts.
+2. Reply with exactly one JSON object that follows the plan contract. Do not write any reasoning,
+   explanation or text outside the JSON object.
+3. `Rule:` an account becomes overdue on due_date + grace_days + 1. An account may be marked
+   overdue only when as_of is on or after that date, paid is false, status is current, hold is
+   false and balance_cents is greater than 0.
+4. If an account may be marked overdue, the plan has one action_space.evaluate step and then one
+   account.mark_overdue step that depends on it, both with that account's account_ref and
+   due_date, and the mark step carries the exact precondition required by the plan contract.
+5. If no account may be marked overdue, write a plan with only read steps.
+6. Use only account_ref values and dates that appear in the facts. Do not add facts that are not
+   in the facts.
+7. Keep summary and rationale short and in plain words, without capability names.
+8. `Plan contract:` / contrato / `Facts:` / fatos.
+
+Hashes: `prompt_sha256()` = `064f79e221d10c7cbacf03ac6d92facce16734ccf529b1925b8d8e85c34e4dd3`;
+sha256 de `PROMPT_PLAN` = `c23e9c3c440e980734255f9ba2773336c9efec392b9c436ad0467d5ee2f7a8c0`.
+
+**Equivalencia com o oraculo, por conta.** As cinco condicoes da linha da regra (data de corte
+`due_date + grace_days + 1` alcancada, nao pago, `status` corrente, sem retencao, saldo maior que
+0) sao iguais a "`_assess` do pontuador devolve uma mutacao", numa grade exaustiva sintetica
+(`test_intelligence_overdue_eval_plan_prompt.py`). Os codigos por conta (`paid`, `already_overdue`,
+`out_of_capability` por 30 dias ou mais, `ineligible`, `not_due` e a contradicao da propria conta)
+ficam todos fora dessas cinco condicoes. Ficam so na etapa 1 as regras de CASO INTEIRO: pedido de
+pagamento, contradicao em outra conta do caso e codigo unico de abstencao. A etapa 2 so roda depois
+de `proceed`. Saldo NEGATIVO: o pontuador sozinho ainda daria mutacao, mas a conta esta fora do
+dominio (`negative_balance` e combinacao excluida, secao 5.4, e o loader recusa `balance_cents`
+abaixo de 0); por isso, em toda conta que pode chegar ao modelo, a linha da regra e exata. Um
+teste fixa os dois fatos.
+
+**Armadilha do texto livre.** O nome de uma capacidade (`account.mark_overdue`, `mark_overdue`)
+em `summary` ou `rationale` e evidencia de mutacao em texto livre e o adaptador recusa o plano
+(`free_text_evidence`). Por isso a linha 7 pede textos curtos sem nome de capacidade; "Mark the
+account overdue." passa.
+
+**Teto de 768 tokens mantido.** Estimativa de cerca de 320 a 420 tokens para o plano da receita
+(dois passos). Nao medido com o prompt novo.
+
+**Limite.** `max_mutating_steps` e 1: um caso que espere mais de uma marcacao nao pode ser
+acertado por um plano valido. Contagem cega de 2026-11-10 (roteiro escrito pelo PO sem ler o
+conjunto, executado por agente separado, saida so com agregados; evidencia em
+`overdue-eval-prep/blind-count-20261110/`, `result.json` SHA-256
+`73b4c978b7d5563bc4ad5d1ac3aab0387f10a0d001ce3d9074f6041b6916db83`): no conjunto v2, 83 casos
+esperam 0 mutacoes, 34 esperam 1 e **3 esperam 2**. Com o limiar de 5.7 (>= 34 de 37), o maximo
+possivel e exatamente 34 de 37, sem margem: um unico erro em outro caso elegivel reprova o
+criterio. PENDENTE de decisao do diretor antes do freeze 4 (excluir os 3 casos com registro e
+recalcular denominadores, manter com margem zero registrada, ou conjunto v3). A identificacao dos
+3 casos cabe a quem tem acesso ao conjunto, nunca a quem escreve os prompts.
+
+**Versao do Ollama no freeze 4.** O pre-voo ja recusa divergencia de versao
+(`ollama_version_mismatch`). A atualizacao automatica do Ollama (0.40.15 para 0.40.16) e ato do
+diretor; a versao a fixar e decisao dele.
+
+### 18.9 Condicoes e limitacoes registradas (consultor, 2026-11-10)
+
+Registradas por instrucao do diretor ("registre as condicoes e limitacoes apontadas pelo
+consultor"). O consultor opina; as decisoes continuam do diretor.
+
+1. **O que se mede.** A avaliacao mede o modelo COM a regra e a receita do plano explicitas no
+   prompt (etapa 1 e etapa 2). O resultado nao vale para um prompt sem a regra.
+2. **Recusas por nome de capacidade no texto livre** (`free_text_evidence`) sao contabilizadas
+   SEPARADAMENTE no relatorio. PENDENTE de implementacao: o relatorio atual nao separa os codigos
+   de recusa do adaptador; a mudanca exige autorizacao propria e entra antes do freeze 4.
+3. **Terceira prova curta** deve confirmar: validacao (validador real, estagios estruturais),
+   normalizacao (`normalize_plan` mapeado com a mutacao esperada), termino sem truncamento
+   (`done_reason=stop`, abaixo de 768 tokens) e plano so de leitura para conta bloqueada.
+4. **Fixado antes da rodada**: versao do Ollama, prompts, esquema e limites, no freeze 4 e na
+   ancora externa.
+
+**Casos acima do limite de uma mutacao por plano (18.8).** Recomendacao do consultor, PENDENTE
+de decisao do diretor: manter os 120 casos e os criterios originais (5.1, 5.2, 5.7), e o
+relatorio apresenta (a) o resultado completo com os 120 casos e os criterios originais; (b) um
+resultado complementar so nos casos compativeis com uma mutacao por plano; (c) os 3 casos como
+limitacao de capacidade do contrato (`max_mutating_steps` = 1), sem atribuir a falha so ao
+modelo. A impossibilidade de acertar esses 3 casos fica registrada AQUI, antes da rodada. Ela nao
+torna o criterio elegivel impossivel, mas deixa margem zero (maximo 34 de 37 = limiar); se o
+diretor considerar isso inviavel, decide explicitamente entre avaliar a configuracao atual ou
+ampliar a capacidade. Os itens (b) e (c) exigem implementacao no relatorio (identificacao cega dos
+casos pela contagem de mutacoes esperadas, sem expor o conjunto a quem escreve prompts) e
+autorizacao propria.
+
+## 19. Separacao entre a regra da avaliacao e a politica financeira do runtime
+
+A regra desta avaliacao e a do freeze 3, `a3-02.shadow-scenarios.v2`, com o hash do arquivo de
+cenarios no manifesto. Ela e independente da politica financeira compartilhada em preparo para o
+runtime (branch `refactor/shared-business-rules`). Qualquer mudanca exige versao, freeze, conjunto
+e rodada proprios, e uma tabela de equivalencia antes de integrar. O teste de fronteira
+(`test_intelligence_overdue_eval_plan_prompt.py`) analisa os imports de `app.*` do runner, dos
+cenarios, do contrato de abstencao, do formato do plano, do adaptador e do pontuador congelados e
+falha com qualquer import novo, em
+especial `app.core.governed_financial_action_eligibility`, `app.core.receivable_lifecycle` e
+`app.services.overdue_detection_service`.
