@@ -99,7 +99,7 @@
   background: rgb(255 255 255 / 65%);
 }
 
-[data-theme="dark"]
+:is([data-theme="dark"], [data-theme="neon"])
   .ui-showcase-hero-meta > div {
   background: rgb(17 27 45 / 72%);
 }
@@ -130,7 +130,7 @@
   color: var(--color-warning-700);
 }
 
-[data-theme="dark"]
+:is([data-theme="dark"], [data-theme="neon"])
   .ui-showcase-security-notice {
   background: rgb(245 158 11 / 10%);
 }

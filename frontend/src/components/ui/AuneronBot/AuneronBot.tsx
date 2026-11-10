@@ -153,7 +153,7 @@ export function AuneronBot({
         </g>
         <Extras mood={mood} />
       </svg>
-      {message ? <p className="ui-bot-message">{message}</p> : null}
+      <p className="ui-bot-message">{message ?? text}</p>
     </div>
   );
 }

@@ -57,7 +57,7 @@
   box-shadow: var(--shadow-sm);
 }
 
-[data-theme="dark"]
+:is([data-theme="dark"], [data-theme="neon"])
   .elevated-access-icon {
   background: rgb(245 158 11 / 14%);
 }
@@ -124,7 +124,7 @@
   color: var(--color-success-700);
 }
 
-[data-theme="dark"]
+:is([data-theme="dark"], [data-theme="neon"])
   .elevated-access-security-note {
   background: rgb(16 185 129 / 10%);
 }
@@ -135,7 +135,7 @@
   color: var(--color-warning-700);
 }
 
-[data-theme="dark"]
+:is([data-theme="dark"], [data-theme="neon"])
   .elevated-access-development {
   background: rgb(245 158 11 / 10%);
 }

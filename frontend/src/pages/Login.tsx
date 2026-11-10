@@ -210,6 +210,14 @@ export default function Login() {
             >
               Escuro
             </button>
+            <button
+              type="button"
+              className={resolvedTheme === "neon" ? "active" : undefined}
+              aria-pressed={resolvedTheme === "neon"}
+              onClick={() => setTheme("neon")}
+            >
+              Neon
+            </button>
           </div>
         </div>
 

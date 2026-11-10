@@ -15,7 +15,8 @@ export function moodFromInvoice(s: InvoiceSituation): BotMood {
   if (s.status === "processando") return "pensando";
   if (s.status === "sem_pendencias") return "dormindo";
   if (s.status === "paga") return s.pagaAgora ? "celebrando" : "feliz";
-  const dias = s.diasParaVencer ?? 0;
+  const dias = s.diasParaVencer;
+  if (dias === undefined || !Number.isFinite(dias)) return "pensando";
   if (dias < -30) return "critico";
   if (dias < 0) return "preocupado";
   if (dias <= 3) return "atento";

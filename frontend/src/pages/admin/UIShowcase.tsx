@@ -256,9 +256,7 @@ export default function UIShowcase() {
           <div>
             <span>Tema atual</span>
             <strong>
-              {resolvedTheme === "dark"
-                ? "Escuro"
-                : "Claro"}
+              {{ light: "Claro", dark: "Escuro", neon: "Neon" }[resolvedTheme]}
             </strong>
           </div>
         </div>
@@ -934,7 +932,7 @@ export default function UIShowcase() {
         </span>
 
         <Badge variant={isDark ? "brand" : "info"}>
-          {isDark ? "Dark Mode" : "Light Mode"}
+          {{ light: "Light Mode", dark: "Dark Mode", neon: "Neon Mode" }[resolvedTheme]}
         </Badge>
       </footer>
     </div>
