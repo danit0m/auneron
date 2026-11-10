@@ -69,7 +69,7 @@ def test_the_request_is_built_locally_with_fixed_effective_parameters() -> None:
     body = tr.build_body(request(seed=1002), "qwen3:4b")
 
     assert body["model"] == "qwen3:4b" and body["prompt"] == "PROMPT"
-    assert body["stream"] is False and body["think"] is False and body["keep_alive"] == "30m"
+    assert body["stream"] is True and body["think"] is False and body["keep_alive"] == "30m"
     assert body["options"] == {"top_k": 1, "top_p": 1.0, "repeat_penalty": 1.0, "num_ctx": 8192,
                                "temperature": 0.0, "seed": 1002, "num_predict": 160}
     assert body["format"] == ac.ABSTENTION_SCHEMA  # stage 1 only
@@ -99,8 +99,12 @@ def test_success_maps_text_tokens_digest_and_timings() -> None:
 
     assert reply.status == "ok" and reply.raw_text == "hello" and reply.error is None
     assert (reply.input_tokens, reply.output_tokens, reply.model_digest) == (120, 60, DIGEST)
-    assert reply.reported_timings == {"body_bytes": len(enc(ok_body("hello"))), "total_ms": 3000,
-                                      "load_ms": 1000, "prompt_eval_ms": 500, "eval_ms": 1500}
+    # durations stay in nanoseconds, as the runtime informs them
+    assert reply.reported_timings == {
+        "body_bytes": len(enc(ok_body("hello"))), "total_duration": 3_000_000_000,
+        "load_duration": 1_000_000_000, "prompt_eval_duration": 500_000_000,
+        "eval_duration": 1_500_000_000}
+    assert (reply.model_name, reply.done_reason) == ("qwen3:4b", "stop")
 
 
 def test_a_length_cut_is_noted_but_kept() -> None:
@@ -324,26 +328,43 @@ def test_the_runner_record_keeps_the_text_and_the_size_of_a_failed_http_call(
 
 # --- model_info ----------------------------------------------------------------
 
-def test_model_info_reads_the_digest_and_asks_for_the_candidate_model() -> None:
-    post = Post((200, enc({"digest": DIGEST})))
-    info = tr.make_model_info(post, base_url=BASE, timeout_s=20)()
+class Get:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
 
-    assert info == {"digest": DIGEST}
-    assert post.calls[0][0] == BASE + "/api/show" and post.calls[0][2] == 20
-    assert json.loads(post.calls[0][1]) == {"model": "qwen3:4b"}
+    def __call__(self, url, timeout_s):
+        self.calls.append((url, timeout_s))
+        if isinstance(self.result, BaseException):
+            raise self.result
+        return self.result
+
+
+def tags_body(*entries):
+    return enc({"models": [{"name": n, "model": n, "digest": d} for n, d in entries]})
+
+
+def test_model_info_reads_the_catalog_digest_of_the_EXACT_name() -> None:
+    get = Get((200, tags_body(("qwen3:4b-instruct-2507-q4_K_M", OTHER_DIGEST), ("qwen3:4b", DIGEST))))
+    info = tr.make_model_info(get, base_url=BASE, timeout_s=20)()
+
+    assert info == {"digest": DIGEST}  # not the look-alike that comes first
+    assert get.calls == [(BASE + "/api/tags", 20)]
 
 
 @pytest.mark.parametrize("result, reason", [
     (TimeoutError("t"), "model_info_timeout"),
     ((500, b""), "model_info_http_500"),
-    ((200, enc({})), "model_info_digest_missing"),
-    ((200, enc({"digest": ""})), "model_info_digest_missing"),
+    ((200, enc({})), "model_info_invalid_json"),
+    ((200, tags_body(("qwen3:4b", ""))), "model_info_digest_missing"),
+    ((200, tags_body(("qwen3:4b-instruct-2507-q4_K_M", OTHER_DIGEST))), "model_info_digest_missing"),
+    ((200, tags_body()), "model_info_digest_missing"),
     ((200, b"nope}"), "model_info_invalid_json"),
     ((200, b""), "model_info_capture_failed"),
 ])
 def test_model_info_failures_are_explicit(result, reason) -> None:
     with pytest.raises(RuntimeError, match=reason):
-        tr.make_model_info(Post(result), base_url=BASE)()
+        tr.make_model_info(Get(result), base_url=BASE)()
 
 
 # --- no network, hashed with the manifest ---------------------------------------
@@ -357,7 +378,7 @@ def test_the_transport_imports_no_network_client_ollama_or_clock() -> None:
         elif isinstance(node, ast.Import):
             imported.update(a.name for a in node.names)
 
-    assert imported <= {"__future__", "json", "collections.abc", "typing",
+    assert imported <= {"__future__", "dataclasses", "hashlib", "json", "collections.abc", "typing",
                         "intelligence_abstention_contract", "intelligence_overdue_eval_runner"}
     banned = re.compile(r"socket|http|urllib|request|ollama|subprocess|asyncio|\btime\b|\bssl\b|aiohttp")
     assert not [m for m in imported if banned.search(m)]
@@ -382,10 +403,12 @@ def scripted_post(clock, dataset_, overrides=None, latency=5.0, digest=DIGEST):
     seen = []
 
     def post(url, body, timeout_s):
-        data = json.loads(body)
+        data = json.loads(body) if body else None
         seen.append((url, data, timeout_s))
         if url.endswith(tr.SHOW_PATH):
             return 200, enc({"digest": digest})
+        if url.endswith(tr.TAGS_PATH):
+            return 200, tags_body(("qwen3:4b", digest))
         prompt = data["prompt"]
         sid = json.loads(prompt.split("Facts:\n", 1)[1])["scenario_id"]
         stage = rn.STAGE_ABSTENTION if prompt.startswith("You assess") else rn.STAGE_PLAN
@@ -407,7 +430,7 @@ def scripted_post(clock, dataset_, overrides=None, latency=5.0, digest=DIGEST):
 
 def via_transport(tmp_path, validator, dataset_, post, clock, **kw):
     ask_model = tr.make_ask_model(post, base_url=BASE)
-    info = tr.make_model_info(post, base_url=BASE)
+    info = tr.make_model_info(lambda url, timeout_s: post(url, None, timeout_s), base_url=BASE)
     return run(tmp_path, validator, dataset_, clock=clock, fake=ask_model, info=info, **kw)
 
 
@@ -427,7 +450,7 @@ def test_a_whole_round_runs_through_the_simulated_transport(tmp_path, validator,
         assert '"family"' not in data["prompt"] and '"expected"' not in data["prompt"]
     report = report_of(tmp_path, dataset)
     assert report["complete"] is True and rn.evaluate_criteria(report)["overall"] == "pass"
-    assert calls_of(tmp_path)[0]["reported_timings"]["total_ms"] == 3000
+    assert calls_of(tmp_path)[0]["reported_timings"]["total_duration"] == 3_000_000_000
 
 
 def test_a_timeout_through_the_transport_is_recorded_and_the_round_goes_on(
@@ -560,3 +583,155 @@ def test_five_failures_in_a_row_through_the_transport_open_the_breaker(
 
     assert outcome.stop_reason == "circuit_breaker"
     assert [c["error"] for c in calls_of(tmp_path)] == ["http_500"] * 5
+
+
+# --- the stream: newline-delimited JSON, parsed without a socket -------------------------
+
+def lines(*items) -> bytes:
+    return b"".join(json.dumps(i).encode() + b"\n" for i in items)
+
+
+def piece(text, **over):
+    return {"model": "qwen3:4b", "response": text, "done": False, **over}
+
+
+def final(**over):
+    body = ok_body("", **over)
+    body.pop("digest", None)
+    return body
+
+
+def test_a_stream_is_assembled_from_its_pieces_and_the_final_line_carries_the_numbers() -> None:
+    data = lines(piece(""), piece('{"deci'), piece('sion": "proceed"}'), final())
+    reply = tr.parse_reply(200, data, {"first_chunk_s": 0.5, "first_token_s": 1.25})
+
+    assert reply.status == "ok" and reply.raw_text == '{"decision": "proceed"}'
+    assert (reply.input_tokens, reply.output_tokens) == (120, 60)
+    assert reply.reported_timings["eval_duration"] == 1_500_000_000  # nanoseconds, as informed
+    assert reply.model_digest is None  # the real generate response carries none (assumption)
+    assert (reply.first_chunk_s, reply.first_token_s) == (0.5, 1.25)
+    assert reply.model_name == "qwen3:4b" and reply.done_reason == "stop"
+
+
+def test_thinking_is_kept_when_it_comes() -> None:
+    reply = tr.parse_reply(200, lines(piece("a", thinking="t1"), final(thinking="t2")))
+
+    assert reply.status == "ok" and reply.thinking == "t1t2"
+
+
+def test_an_error_line_in_the_middle_of_the_stream_is_a_server_error_that_keeps_the_text() -> None:
+    reply = tr.parse_reply(200, lines(piece("half "), {"error": "boom"}))
+
+    assert reply.status == "error" and reply.error == "server_error" and reply.raw_text == "half "
+
+
+def test_a_stream_that_ends_without_the_final_line_is_truncated_and_keeps_the_text() -> None:
+    reply = tr.parse_reply(200, lines(piece("abc"), piece("def")))
+
+    assert reply.status == "error" and reply.error == "body_truncated" and reply.raw_text == "abcdef"
+
+
+def test_a_cut_last_line_is_truncated_and_an_invalid_middle_line_is_invalid_json() -> None:
+    cut = lines(piece("abc")) + b'{"model": "qwen3:4b", "resp'
+    middle = lines(piece("abc")) + b"garbage}\n" + lines(final())
+
+    assert tr.parse_reply(200, cut).error == "body_truncated"
+    assert tr.parse_reply(200, cut).raw_text == "abc"
+    assert tr.parse_reply(200, middle).error == "invalid_json"
+    assert tr.parse_reply(200, middle).raw_text == "abc"
+
+
+def test_the_envelope_name_is_the_first_one_that_is_not_the_candidate() -> None:
+    swapped = lines(piece("a"), piece("b", model="qwen3:4b-instruct-2507-q4_K_M"), final())
+
+    assert tr.parse_reply(200, swapped).model_name == "qwen3:4b-instruct-2507-q4_K_M"
+    assert tr.parse_reply(200, lines(piece("a"), final())).model_name == "qwen3:4b"
+
+
+def test_the_partial_text_is_the_pieces_of_the_complete_lines() -> None:
+    data = lines(piece("one "), piece("two ")) + b'{"model": "x", "response": "thr'
+
+    assert tr.partial_text(data) == "one two "
+    assert tr.partial_text(b"no json here") == "no json here"
+    assert tr.partial_text(b"") is None and tr.partial_text("text") is None
+
+
+def test_the_tracker_tells_the_first_block_from_the_first_generated_content() -> None:
+    tracker = tr.StreamTracker()
+    tracker.feed(b"", 0.1)
+    assert tracker.metrics() == {"first_chunk_s": None, "first_token_s": None}
+    tracker.feed(lines(piece(""))[:10], 0.2)  # a block with no complete line
+    tracker.feed(lines(piece(""))[10:], 0.3)  # completes a line whose response is empty
+    assert tracker.metrics() == {"first_chunk_s": 0.2, "first_token_s": None}
+    tracker.feed(lines(piece("x")), 0.9)
+    tracker.feed(lines(piece("y")), 1.5)
+    assert tracker.metrics() == {"first_chunk_s": 0.2, "first_token_s": 0.9}
+
+
+def test_a_content_line_split_over_blocks_counts_when_it_completes() -> None:
+    tracker = tr.StreamTracker()
+    data = lines(piece("hello"))
+    tracker.feed(data[:20], 0.4)
+    tracker.feed(data[20:], 0.8)
+
+    assert tracker.metrics() == {"first_chunk_s": 0.4, "first_token_s": 0.8}
+
+
+def test_client_metrics_that_are_not_numbers_are_dropped() -> None:
+    reply = tr.parse_reply(200, lines(final()), {"first_chunk_s": "x", "first_token_s": -1})
+
+    assert reply.first_chunk_s is None and reply.first_token_s is None
+
+
+def test_a_runtime_probe_reads_only_metadata_and_hashes_the_template_and_parameters() -> None:
+    seen = []
+
+    def get(url, timeout_s):
+        seen.append(("GET", url))
+        if url.endswith(tr.TAGS_PATH):
+            return 200, tags_body(("qwen3:4b-instruct-2507-q4_K_M", OTHER_DIGEST), ("qwen3:4b", DIGEST))
+        if url.endswith(tr.PS_PATH):
+            return 200, enc({"models": [{"name": "qwen3:4b", "digest": DIGEST, "size": 7, "size_vram": 5}]})
+        return 200, enc({"version": "0.40.10"})
+
+    def post(url, body, timeout_s):
+        seen.append(("POST", url))
+        return 200, enc({"template": "T", "parameters": "P", "details": {}})
+
+    probe = tr.make_runtime_probe(get, post, base_url=BASE)
+    pre = probe("preflight")
+    before = probe("before")
+    after = probe("after")
+
+    assert pre["version"] == "0.40.10" and pre["catalog_digest"] == DIGEST
+    assert pre["template_sha256"] == tr.hashlib.sha256(b"T").hexdigest()
+    assert pre["parameters_sha256"] == tr.hashlib.sha256(b"P").hexdigest()
+    assert pre["loaded"] == [{"name": "qwen3:4b", "digest": DIGEST, "size": 7, "size_vram": 5}]
+    assert set(before) == {"catalog_digest", "loaded"} and set(after) == {"loaded"}
+    assert all(u.startswith(BASE) and not u.endswith(tr.GENERATE_PATH) for _, u in seen)
+
+
+@pytest.mark.parametrize("ps_result, reason", [
+    ((500, b""), "probe_ps_http_500"),
+    ((200, enc({"models": "x"})), "ps_invalid"),
+    ((200, b"nope}"), "probe_ps_invalid_json"),
+])
+def test_a_probe_that_cannot_read_the_runtime_raises(ps_result, reason) -> None:
+    def get(url, timeout_s):
+        return (200, enc({"models": []})) if url.endswith(tr.TAGS_PATH) else ps_result
+
+    with pytest.raises(RuntimeError, match=reason):
+        tr.make_runtime_probe(get, lambda *a: (200, b"{}"), base_url=BASE)("after")
+
+
+def test_a_loaded_model_without_a_usable_digest_keeps_no_digest_and_the_memory_it_reports() -> None:
+    ps = {"models": [{"name": "qwen3:4b", "size": 5}, {"model": "x:1", "digest": ""},
+                     {"name": "y", "digest": 5, "size": "big", "size_vram": 2}]}
+
+    assert tr.loaded_models(ps) == [
+        {"name": "qwen3:4b", "digest": None, "size": 5, "size_vram": None},
+        {"name": "x:1", "digest": None, "size": None, "size_vram": None},
+        {"name": "y", "digest": None, "size": None, "size_vram": 2},
+    ]
+    with pytest.raises(RuntimeError, match="ps_invalid"):
+        tr.loaded_models({"models": [1]})
