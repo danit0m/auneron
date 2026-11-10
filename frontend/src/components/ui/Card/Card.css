@@ -19,3 +19,5 @@
 .ui-card-header+.ui-card-content{margin-top:var(--space-4)}
 .ui-card-footer{display:flex;align-items:center;justify-content:flex-end;gap:var(--space-3);margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--border-subtle)}
 @media(prefers-reduced-motion:reduce){.ui-card{transition:none}}
+[data-theme="neon"] .ui-card{-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+[data-theme="neon"] .ui-card-brand{background:radial-gradient(circle at top right,rgb(168 85 247 / 28%),transparent 55%),var(--surface)}

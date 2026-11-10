@@ -283,6 +283,121 @@
   --z-toast: 2000;
 }
 
+/* ==========================================================
+   NEON — tema futurista: vidro escuro, ciano e violeta
+   Declarado depois do :root base para sobrescrever sombras.
+   ========================================================== */
+
+[data-theme="neon"] {
+  color-scheme: dark;
+
+  --neutral-0: #04050d;
+  --neutral-25: #070a18;
+  --neutral-50: #0a0e20;
+  --neutral-100: #10152c;
+  --neutral-200: #1c2244;
+  --neutral-300: #2c3460;
+  --neutral-400: #6b76a8;
+  --neutral-500: #97a1cc;
+  --neutral-600: #c3caea;
+  --neutral-700: #dde2f7;
+  --neutral-800: #eef1fc;
+  --neutral-900: #f6f8ff;
+  --neutral-950: #ffffff;
+  --color-primary-50: rgb(34 211 238 / 12%);
+  --color-primary-100: rgb(34 211 238 / 18%);
+  --color-primary-200: rgb(34 211 238 / 30%);
+  --color-primary-300: #67e8f9;
+  --color-primary-400: #22d3ee;
+  --color-primary-500: #06b6d4;
+  --color-primary-600: #22d3ee;
+  --color-primary-700: #67e8f9;
+  --color-primary-800: #0e7490;
+  --color-primary-900: #14204a;
+  --color-brand-50: rgb(168 85 247 / 14%);
+  --color-brand-100: rgb(168 85 247 / 22%);
+  --color-brand-200: rgb(168 85 247 / 45%);
+  --color-brand-300: #d8b4fe;
+  --color-brand-400: #c084fc;
+  --color-brand-500: #a855f7;
+  --color-brand-600: #a855f7;
+  --color-brand-700: #d8b4fe;
+  --color-brand-800: #6b21a8;
+  --color-brand-900: #3b0d6b;
+  --color-success-50: rgb(52 211 153 / 12%);
+  --color-success-100: rgb(52 211 153 / 20%);
+  --color-success-300: rgb(52 211 153 / 45%);
+  --color-success-500: #34d399;
+  --color-success-600: #10b981;
+  --color-success-700: #6ee7b7;
+  --color-warning-50: rgb(251 191 36 / 12%);
+  --color-warning-100: rgb(251 191 36 / 20%);
+  --color-warning-300: rgb(251 191 36 / 45%);
+  --color-warning-500: #fbbf24;
+  --color-warning-600: #f59e0b;
+  --color-warning-700: #fcd34d;
+  --color-danger-50: rgb(251 113 133 / 12%);
+  --color-danger-100: rgb(251 113 133 / 20%);
+  --color-danger-300: rgb(251 113 133 / 45%);
+  --color-danger-500: #fb7185;
+  --color-danger-600: #e11d48;
+  --color-danger-700: #fda4af;
+  --color-info-50: rgb(56 189 248 / 12%);
+  --color-info-100: rgb(56 189 248 / 20%);
+  --color-info-300: rgb(56 189 248 / 45%);
+  --color-info-500: #38bdf8;
+  --color-info-600: #0ea5e9;
+  --color-info-700: #7dd3fc;
+  --background: #04050d;
+  --background-subtle: #080b1a;
+  --surface: rgb(20 26 58 / 62%);
+  --surface-subtle: rgb(30 38 80 / 55%);
+  --surface-elevated: rgb(28 34 74 / 78%);
+  --surface-inverse: #f6f8ff;
+  --text-primary: #f6f8ff;
+  --text-secondary: #c3caea;
+  --text-muted: #97a1cc;
+  --text-subtle: #6b76a8;
+  --text-inverse: #04050d;
+  --text-brand: #d8b4fe;
+  --text-link: #67e8f9;
+  --border-subtle: rgb(125 140 255 / 22%);
+  --border-default: rgb(125 140 255 / 34%);
+  --border-strong: rgb(125 140 255 / 50%);
+  --border-focus: #22d3ee;
+  --overlay-background: rgb(2 3 10 / 78%);
+  --focus-ring: rgb(34 211 238 / 35%);
+  --scrollbar-thumb: #2c3460;
+  --scrollbar-thumb-hover: #6b76a8;
+  --card-background: var(--surface);
+  --card-border: var(--border-subtle);
+  --input-background: rgb(8 11 28 / 70%);
+  --input-border: var(--border-default);
+  --header-background: rgb(4 5 13 / 72%);
+  --sidebar-background: #060818;
+  --scrollbar-track: transparent;
+
+  --shadow-xs: 0 0 0 1px rgb(125 140 255 / 8%);
+  --shadow-sm: 0 8px 24px rgb(0 0 0 / 40%);
+  --shadow-md: 0 0 28px rgb(34 211 238 / 18%);
+  --shadow-lg: 0 0 36px rgb(168 85 247 / 22%);
+  --shadow-card: 0 8px 24px rgb(0 0 0 / 40%);
+  --shadow-card-hover: 0 0 28px rgb(34 211 238 / 18%);
+  --shadow-primary: 0 0 24px rgb(34 211 238 / 45%);
+  --shadow-danger: 0 0 24px rgb(225 29 72 / 45%);
+  --shadow-modal: 0 0 60px rgb(168 85 247 / 30%);
+  --shadow-focus: 0 0 0 3px rgb(34 211 238 / 35%);
+}
+
+html[data-theme="neon"] {
+  color-scheme: dark;
+}
+
+[data-theme="neon"] ::selection {
+  background: rgb(34 211 238 / 35%);
+  color: #ffffff;
+}
+
 /* Global base */
 *,
 *::before,

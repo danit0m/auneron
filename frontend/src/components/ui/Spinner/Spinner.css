@@ -7,3 +7,4 @@
 .ui-visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;padding:0;border:0;margin:-1px;clip:rect(0 0 0 0);white-space:nowrap}
 @keyframes ui-spinner-rotate{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.ui-spinner-ring{animation-duration:1400ms}}
+[data-theme="neon"] .ui-spinner-ring{box-shadow:0 0 12px rgb(34 211 238 / 35%)}

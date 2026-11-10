@@ -450,3 +450,40 @@
     flex: 1 1 auto;
   }
 }
+
+.ui-showcase-bot-sim {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.ui-showcase-bot-controls {
+  display: grid;
+  min-width: 14rem;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  font-weight: var(--font-semibold);
+}
+
+.ui-showcase-bot-controls input {
+  accent-color: var(--color-primary-600);
+}
+
+.ui-showcase-bot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.ui-showcase-bot-grid > div {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+}
