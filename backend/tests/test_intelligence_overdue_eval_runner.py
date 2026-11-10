@@ -651,7 +651,7 @@ def test_manifest_edit_is_caught_by_each_layer_alone(dataset) -> None:
 def test_manifest_requires_every_pinned_input() -> None:
     assert set(rn.REQUIRED_ENTRIES) == {"dataset", "protocol", "schema", "prompt", "runner",
                                         "contract", "adapter", "scorer", "scenarios", "transport",
-                                        "http", "driver", *rn.VALIDATOR_FILES}
+                                        "http", "driver", "plan_format", *rn.VALIDATOR_FILES}
     with pytest.raises(ValueError):
         rn.build_manifest({"dataset": "a"}, {})
 
@@ -1795,6 +1795,8 @@ def test_runner_has_no_direct_import_of_executor_network_ollama_clock_or_databas
         "collections.abc", "fractions", "pathlib", "typing",
         "intelligence_abstention_contract", "intelligence_shadow_evaluator",
         "intelligence_shadow_scenarios", "intelligence_shadow_plan_adapter",
+        # added by the plan-format round: a pure module (imports only copy/typing and the plan schema)
+        "intelligence_overdue_eval_plan_format",
         "app.intelligence.gateway.contracts", "app.intelligence.planning.authority",
         "app.intelligence.planning.capabilities", "app.intelligence.planning.schema",
         "app.intelligence.planning.validator",

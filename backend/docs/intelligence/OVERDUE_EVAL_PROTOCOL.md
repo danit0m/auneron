@@ -135,8 +135,10 @@ a 5 (`k` continua parametro; a proposta e k = 3), `n_cases` igual ao tamanho do
 conjunto, opcoes exatamente `temperature 0.0`, `num_predict` 160 e 768, `seed_base`
 inteiro de 0 a 2^31-1 e limites iguais aos calculados da secao 7.
 
-Os prompts em `PROMPT_ABSTENTION` e `PROMPT_PLAN` sao RASCUNHO. O texto final e
-decisao do diretor. O que vale e o hash gravado no manifesto.
+Os prompts em `PROMPT_ABSTENTION` e `PROMPT_PLAN` sao a proposta final aprovada pelo
+diretor em 2026-11-10 (opcao A); vale o hash congelado (o congelamento 4 e passo separado,
+ainda nao feito). O manifesto cobre tambem o `format` da etapa de plano (conteudo em
+`schema`, modulo em `plan_format`; secao 18).
 
 ## 5. Pre-registro dos criterios
 
@@ -693,7 +695,9 @@ fora do que foi verificado.
 tests/test_intelligence_overdue_eval_runner.py
 tests/test_intelligence_overdue_eval_transport.py
 tests/test_intelligence_overdue_eval_http.py
-tests/test_intelligence_overdue_eval_driver.py`. Os testes de `http` e `driver` sobem um
+tests/test_intelligence_overdue_eval_driver.py
+tests/test_intelligence_overdue_eval_plan_format.py` (o ultimo: formato da etapa de plano, secao
+18). Os testes de `http` e `driver` sobem um
 servidor roteirizado em `127.0.0.1` (porta temporaria); nao chamam o Ollama.
 
 ## 14. Decisoes do diretor (RASCUNHO NAO APROVADO, NAO CONGELADO)
@@ -728,8 +732,9 @@ PENDENTES (nada congela nem executa antes):
 14. **Digest aprovado**: o digest candidato esta registrado (secao 6); a aprovacao em
     `approved_model_digest` e do diretor.
 15. **Prompts finais**, inclusive o da etapa 2 (contrato, capacidades, schema de `params`,
-    precondicao exata), congelados por hash. O rascunho atual esta no runner; o da etapa 1
-    ja declara a regra de saldo zero.
+    precondicao exata), congelados por hash. O texto final (opcao A, aprovado em 2026-11-10)
+    esta no runner; o da etapa 1 declara a regra de saldo zero. O CONGELAMENTO (freeze 4) com
+    o hash novo e a ancora externa ainda nao foram feitos (secao 18).
 16. **Transporte real com rede**: implementado offline, prova curta pendente (secao 16). Nao
     esta aprovado: so a prova curta contra o runtime real, autorizada pelo diretor, pode aprova-lo.
 17. **Ancora externa**: autorizacao, quem altera e quem guarda a copia (secao 17).
@@ -782,7 +787,8 @@ Tres arquivos, cada um no manifesto:
 
 - `backend/tests/intelligence_overdue_eval_transport.py` (`transport`): logica PURA, sem rede.
   Monta o pedido local (modelo, prompt, `stream` LIGADO, `think` desligado e `format` com o
-  schema de `abstention.v1` na etapa 1, ambos aprovados, e opcoes efetivas fixas) e chama um
+  schema de `abstention.v1` na etapa 1 e com o schema do `plan.v1` na etapa 2 (secao 18), e
+  opcoes efetivas fixas) e chama um
   `post(url, corpo, timeout_s)` INJETADO (e `get`). O corpo da resposta e JSON em linhas; o
   parser une os pedacos de `response`, le a linha final (`done`, contagens e duracoes em
   nanossegundos), reconhece linha de erro no meio do fluxo, fluxo sem linha final, linha cortada,
@@ -941,3 +947,88 @@ resultado para fora da maquina. O runner nao envia nada.
 - O digest por chamada depende da API real: a resposta de geracao documentada NAO o traz (nao
   foi verificado na API real). A identidade e corroborada pela cadeia de tres pontos da secao
   6.1 (catalogo antes, nome no envelope, `/api/ps` depois), com os limites la declarados.
+
+## 18. Formato da etapa de plano, modelo so-raciocinio e prompts finais (opcao A)
+
+Decisao do diretor em 2026-11-10: opcao A. Mantem o modelo e `think: false`; a etapa 2 passa a
+enviar `format`. Preparacao OFFLINE: nenhum modelo foi chamado nesta rodada de implementacao.
+
+### 18.1 Diagnostico (feito pelo PO na prova curta `smoke-run-01`, aqui so registrado)
+
+- O `qwen3:4b` instalado (digest `359d7dd4...fae7`, Ollama 0.40.15) e o **Qwen3-4B-Thinking-2507**.
+  Evidencias em `/api/show`: `model_info` `general.finetune=Thinking` e `general.version=2507`;
+  `thinking` = `{"values":[true],"default":true}` (o runtime so aceita raciocinio ligado).
+- O template sempre abre a vez do assistente com `<|im_start|>assistant\n<think>\n`.
+- **`think: false` NAO desliga o raciocinio deste modelo.** O raciocinio nao e separado no campo
+  `thinking` (veio nulo) e cai em `response`. Na prova, 40 tokens acabaram ainda dentro do
+  raciocinio (`done_reason=length`).
+- **O que garante o JSON e o `format` nas DUAS etapas.** Com `format`, a gramatica obriga o primeiro
+  token a ser `{` e a saida sai como um objeto JSON limpo (prova P1: valida e correta, 102 tokens).
+  Sem `format` (como a etapa 2 estava), viria prosa antes do JSON e quase toda chamada seria
+  `structure_invalid`, mais falsos sinais nas buscas de texto.
+
+### 18.2 O que mudou
+
+- `build_body` (transporte) envia `format` tambem na etapa de plano: o JSON Schema do `plan.v1`.
+  `think` continua `False`.
+- O schema vem da fonte unica: `build_plan_schema(registro, llm_view=True)`
+  (`app/intelligence/planning/schema.py`), gerado do registro de capacidades verificado (digest
+  fixado). O modulo `backend/tests/intelligence_overdue_eval_plan_format.py` (`plan_format` no
+  manifesto) so o reformata, de forma deterministica: substitui `$ref` a `#/$defs/predicate` pelo
+  conteudo e remove `$schema` e `$defs`. Nenhuma restricao e acrescentada ou retirada. Nada em
+  `app/` mudou.
+- Palavras-chave do schema final (15, exatamente): `type`, `properties`, `required`,
+  `additionalProperties`, `items`, `anyOf`, `const`, `enum`, `pattern`, `minimum`, `maximum`,
+  `minLength`, `maxLength`, `minItems`, `maxItems`. Evitadas de proposito (suporte fraco ou ausente
+  no conversor JSON Schema para gramatica do llama.cpp): `$ref`/`$defs`/`$schema`, `oneOf`,
+  `allOf`, `not`, `if`, `format`, `uniqueItems`, `patternProperties`, `prefixItems`,
+  `exclusiveMinimum`/`Maximum`, `multipleOf`, entre outras (lista em `AVOIDED_KEYWORDS`, conferida
+  por teste).
+- O hash do manifesto cobre: o CONTEUDO do schema do plano (dentro de `schema`, `schema_sha256`) e
+  o arquivo do modulo (`plan_format`, em `REQUIRED_ENTRIES` e `source_hashes`).
+- Prompts: `PROMPT_ABSTENTION` e `PROMPT_PLAN` sao o texto exato da secao 3 de
+  `PROPOSTA_PROMPTS.md` (aprovado), uma linha por linha, marcadores `{{SCHEMA}}`,
+  `{{PLAN_CONTRACT}}` e `{{FACTS}}` inalterados. O hash dos prompts mudou; nenhum teste fixava o
+  hash antigo (agora os testes fixam o texto aprovado e o hash de cada modelo). Os tetos de tempo,
+  limiares, pontuador, adaptador, cenarios e o contrato `abstention.v1` NAO mudaram.
+
+### 18.3 Fatos medidos na prova curta (so informacao)
+
+Ollama 0.40.15; geracao de cerca de 19 a 20 tokens/s; primeira carga (a frio) de cerca de 33 s. Os
+tetos de tempo da secao 7 continuam derivados de 3 tokens/s e NAO mudam (mudar exigiria refazer o
+congelamento).
+
+### 18.4 Risco aceito
+
+O modelo responde SEM raciocinar, fora do modo nativo dele (o `format` o impede de escrever o
+raciocinio no texto). A qualidade medida e a desse modo, nao a do modelo raciocinando. Uma rodada
+com `think: true` (opcao B) seria outra decisao, com regra propria para a seguranca do texto de
+raciocinio.
+
+### 18.5 O que e verificado e o que NAO e
+
+Verificado offline (testes): o corpo do pedido leva `format` correto nas duas etapas e `think`
+falso; o schema do plano e um JSON Schema valido, deterministico e gerado do registro; ele aceita e
+recusa os mesmos planos que os estagios ESTRUTURAIS do validador real (estagios 0 a 6 do enum
+`Stage`: REGISTRY_INTEGRITY, INPUT, CONTRACT, SCHEMA, LIMITS, CAPABILITIES e PARAMETERS; os
+predicados sao conferidos dentro de PARAMETERS) num corpus sintetico (104 casos
+fixos mais 600 mutacoes com semente), e o achatamento nao muda nenhum veredito do schema original;
+o manifesto cobre o schema e o modulo; os prompts renderizados trazem so o texto aprovado e o
+conteudo dos tres marcadores.
+
+NAO verificado: (a) que o Ollama 0.40.15 aceita este schema como gramatica e que a saida respeita a
+gramatica (depende da segunda prova curta); (b) a qualidade das respostas do modelo, nas duas
+etapas; (c) o que o schema nao expressa e o validador continua recusando depois: data de calendario
+inexistente (`2026-02-30`), normalizacao NFC e caracteres de controle em textos, inteiro acima de
+`max_integer` e `1.0` onde se quer inteiro (lacunas declaradas, `DECLARED_GAPS`); (d) as regras dos
+estagios 7 a 11 (DAG, efeitos, dados, autoridade, politica): o schema as ignora de proposito e o
+validador as aplica; (e) que o limite de 768 tokens do plano basta com a saida forcada; (f) o
+congelamento 4, a ancora externa e o pre-voo do dia. O `format` restringe a FORMA do texto; nao
+torna o plano correto nem autorizado.
+
+### 18.6 Segunda prova curta (preparada, NAO executada)
+
+Roteiro em `overdue-eval-prep/real-transport/smoke-prep-02/` (fora do repositorio), com no maximo 3
+geracoes sinteticas (abstencao, plano, plano com outra semente), pre-voo de 14 GiB, commit esperado
+da branch `review/area3-overdue-plan-format` e confirmacao pelo hash do proprio roteiro. Exige
+autorizacao do diretor para rodar.
