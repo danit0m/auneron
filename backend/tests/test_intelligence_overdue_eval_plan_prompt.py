@@ -95,6 +95,18 @@ def test_the_rule_line_is_in_the_prompt_and_states_the_five_conditions() -> None
             "is false and balance_cents is greater than 0.\n") in rn.PROMPT_PLAN
 
 
+def test_the_prompt_makes_the_model_decide_each_account_and_covers_the_single_account_case() -> None:
+    assert ("Apply the rule yourself to each account, using only the facts. Do not leave this decision "
+            "to a later step.\n") in rn.PROMPT_PLAN
+    assert ("This also holds when the facts have only one account: a plan with the action_space.evaluate "
+            "step alone is wrong for an account that may be marked overdue.\n") in rn.PROMPT_PLAN
+
+
+def test_the_read_only_line_names_the_absent_mutating_step() -> None:
+    assert ("If no account may be marked overdue, write a plan with only read steps and no "
+            "account.mark_overdue step.\n") in rn.PROMPT_PLAN
+
+
 # --- b) the recipe plan is accepted ------------------------------------------------------------------------
 
 def synthetic(scenario_id):

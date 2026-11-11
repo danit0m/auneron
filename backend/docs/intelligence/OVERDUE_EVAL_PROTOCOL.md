@@ -734,7 +734,8 @@ PENDENTES (nada congela nem executa antes):
 15. **Prompts finais**, inclusive o da etapa 2 (contrato, capacidades, schema de `params`,
     precondicao exata), congelados por hash. O texto final (opcao A, aprovado em 2026-11-10)
     esta no runner; o da etapa 1 declara a regra de saldo zero; o da etapa 2 foi ajustado em
-    2026-11-10 para trazer a regra por conta (secao 18.8). O CONGELAMENTO (freeze 4) com o hash
+    2026-11-10 para trazer a regra por conta (secao 18.8) e de novo no ajuste 2 de 2026-11-11
+    (secao 18.10; hashes vigentes la). O CONGELAMENTO (freeze 4) com o hash
     novo e a ancora externa ainda nao foram feitos (secao 18).
 16. **Transporte real com rede**: implementado offline, prova curta pendente (secao 16). Nao
     esta aprovado: so a prova curta contra o runtime real, autorizada pelo diretor, pode aprova-lo.
@@ -1071,8 +1072,9 @@ adaptador, cenarios, `abstention.v1`, `PROMPT_ABSTENTION` e o schema `format` ta
 7. Keep summary and rationale short and in plain words, without capability names.
 8. `Plan contract:` / contrato / `Facts:` / fatos.
 
-Hashes: `prompt_sha256()` = `064f79e221d10c7cbacf03ac6d92facce16734ccf529b1925b8d8e85c34e4dd3`;
-sha256 de `PROMPT_PLAN` = `c23e9c3c440e980734255f9ba2773336c9efec392b9c436ad0467d5ee2f7a8c0`.
+Hashes DESTE texto (SUBSTITUIDOS pelo ajuste 2, secao 18.10): `prompt_sha256()` =
+`064f79e221d10c7cbacf03ac6d92facce16734ccf529b1925b8d8e85c34e4dd3`; sha256 de `PROMPT_PLAN` =
+`c23e9c3c440e980734255f9ba2773336c9efec392b9c436ad0467d5ee2f7a8c0`.
 
 **Equivalencia com o oraculo, por conta.** As cinco condicoes da linha da regra (data de corte
 `due_date + grace_days + 1` alcancada, nao pago, `status` corrente, sem retencao, saldo maior que
@@ -1136,6 +1138,42 @@ diretor considerar isso inviavel, decide explicitamente entre avaliar a configur
 ampliar a capacidade. Os itens (b) e (c) exigem implementacao no relatorio (identificacao cega dos
 casos pela contagem de mutacoes esperadas, sem expor o conjunto a quem escreve prompts) e
 autorizacao propria.
+
+### 18.10 Terceira prova curta e ajuste 2 da etapa 2 (2026-11-11)
+
+**Resultado da terceira prova curta** (`smoke-run-03`, Ollama 0.40.16, script `smoke-prep-03`
+SHA-256 `25167a3d...f346`, `summary.json` SHA-256 `913698e0...488b`; todas com
+`done_reason=stop`, sem truncamento, validador sem violacao ate `PARAMETERS`, sem
+`free_text_evidence`):
+
+| Cenario | Tokens saida/teto | Tokens entrada | Resultado |
+| --- | --- | --- | --- |
+| S1 | 104/160 | 652 | etapa 1 `not_due`, correto |
+| S2 (uma conta elegivel) | 269/768 | 1070 | mapeado SEM passo mutante: FALHA |
+| S3 (duas contas) | 473/768 | 1155 | mutacao CTA-990003 2026-09-07 exata |
+| S4 (mesma forma que S2, `hold=true`) | 269/768 | 1070 | so leitura, mas plano IDENTICO ao de S2: `hold` NAO discriminado |
+
+**Diagnostico (PO).** O modelo deixa a decisao de elegibilidade para o passo `action_space.evaluate`
+(com a precondicao posta nele) e nao escreve a marcacao quando ha uma so conta; o `hold` nao foi
+discriminado. A condicao 3 da 18.9 NAO foi cumprida (plano mutante normalizado em conta unica e
+discriminacao do bloqueio).
+
+**Ajuste 2 (texto do PO).** Mudam so tres linhas do `PROMPT_PLAN`; etapa 1, schema `format`, tetos,
+limiares, pontuador, adaptador e cenarios NAO mudam. Linhas novas ou alteradas:
+
+- (nova) `Apply the rule yourself to each account, using only the facts. Do not leave this decision to a later step.`
+- (alterada) a linha de conta elegivel ganhou o final `This also holds when the facts have only one account: a plan with the action_space.evaluate step alone is wrong for an account that may be marked overdue.`
+- (alterada) a linha de plano so de leitura termina em `... only read steps and no account.mark_overdue step.`
+
+Motivo: forcar a decisao por conta no proprio plano e fechar o caso de conta unica. O nome da
+capacidade no PROMPT nao cria a armadilha do texto livre (18.8), que vale para o texto do MODELO.
+
+Hashes vigentes: `prompt_sha256()` = `0173ed91f7ba8bfc26404be0affcfb1802a70a977a08ac553a0241d783b62fc8`;
+sha256 de `PROMPT_PLAN` = `0df264c50215cb950d0d661db582047b7dda20cc34fbf4d153bb8fe773e601e7`.
+
+**O que NAO e.** Nenhuma medicao de qualidade: a prova curta confere o transporte e a forma, nao a
+taxa de acerto. O ajuste 2 NAO foi exercitado contra o modelo. A QUARTA prova curta exige
+aprovacao propria do diretor. O merge do PR 28 aguarda essa prova.
 
 ## 19. Separacao entre a regra da avaliacao e a politica financeira do runtime
 
