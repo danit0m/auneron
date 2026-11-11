@@ -201,6 +201,24 @@ A imagem final é Nginx. Durante o startup, o template substitui
 `AUNERON_API_KEY`. A chave fica na configuração interna do reverse proxy,
 não nos assets JavaScript.
 
+### Tema inicial da homologação local
+
+Defina `VITE_DEFAULT_THEME=neon` no processo do Vite que atende a
+homologação. Em PowerShell, na pasta `frontend`, com o proxy
+da homologação já configurado:
+
+```powershell
+$env:VITE_DEFAULT_THEME = 'neon'
+npm.cmd run dev -- --host 127.0.0.1 --port 5174 --strictPort
+```
+
+A variável é pública e aceita `system`, `light`, `dark` e `neon`.
+A preferência salva em `auneron.theme.preference` tem prioridade.
+Para restaurar o padrão do sistema, remova a variável do processo
+ou defina `system` e reinicie o Vite. Valores inválidos também
+usam `system`. Em builds estáticos, o Vite incorpora o valor no
+bundle durante o build.
+
 ## Rede
 
 O Nginx assume:

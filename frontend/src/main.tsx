@@ -16,6 +16,8 @@ import {
   ThemeProvider,
 } from "./providers/ThemeProvider";
 
+import { isThemePreference } from "./types/theme";
+
 import "./styles/design-tokens.css";
 import "./index.css";
 
@@ -28,9 +30,15 @@ if (!rootElement) {
   );
 }
 
+const configuredTheme: unknown =
+  import.meta.env.VITE_DEFAULT_THEME;
+const defaultTheme = isThemePreference(configuredTheme)
+  ? configuredTheme
+  : "system";
+
 createRoot(rootElement).render(
   <StrictMode>
-    <ThemeProvider>
+    <ThemeProvider defaultTheme={defaultTheme}>
       <AuthProvider>
         <ElevationProvider>
           <App />
