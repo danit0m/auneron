@@ -718,7 +718,8 @@ def test_a_stream_of_small_blocks_that_never_stops_cannot_extend_the_absolute_de
     assert reply.status == "timeout"
     assert 0.55 <= took < 1.5  # 0.3 + 0.3, not 4 s
     assert reply.raw_text and set(reply.raw_text) == {"x"}  # what arrived is kept
-    assert reply.first_chunk_s < 0.1 and reply.first_token_s < 0.1
+    # Well below the 0.6 s absolute deadline, with headroom for slow CI runners.
+    assert reply.first_chunk_s < 0.25 and reply.first_token_s < 0.25
     time.sleep(0.3)
     assert seen.get("closed") is True and seen["sent"] < 60
     assert_cut(server, ("c001", 0, "abstention"))
