@@ -35,6 +35,11 @@ import type {
   WorkItemSummaryResponse,
 } from "../../types/nba";
 import { getActionLabel } from "../../types/nba";
+import { AuneronBot } from "../ui";
+import {
+  botFromPolicy,
+  traduzirRazao,
+} from "./botFromPolicy";
 
 interface RecommendationDecisionCardProps {
   accountId: number;
@@ -51,33 +56,6 @@ const DECISION_TYPE_LABELS: Record<
   action_bundle: "Múltiplas ações recomendadas",
   no_action: "Nenhuma ação recomendada",
 };
-
-/**
- * Traducao das razoes de inelegibilidade ja definidas no backend
- * (IneligibilityReason, app/core/human_escalation_eligibility.py) --
- * vocabulario fechado, nunca texto livre. Codigo desconhecido cai no
- * fallback ja existente ("Sem motivo informado pelo servidor."),
- * nunca quebra se o backend adicionar um codigo novo.
- */
-const INELIGIBILITY_REASON_LABELS: Record<string, string> = {
-  due_date_mismatch:
-    "Data de vencimento não corresponde ao episódio atual.",
-  account_paid: "Esta conta já foi paga.",
-  lifecycle_not_overdue:
-    "Esta conta não está mais em atraso.",
-  active_escalation_exists:
-    "Este episódio já tem um escalonamento em andamento.",
-};
-
-function traduzirRazao(
-  reason: string | null,
-): string | null {
-  if (reason === null) {
-    return null;
-  }
-
-  return INELIGIBILITY_REASON_LABELS[reason] ?? reason;
-}
 
 /**
  * Vocabulario fechado de VALUE-2.2/2.3 (ASSESSMENT_CODES,
@@ -649,8 +627,17 @@ export default function RecommendationDecisionCard({
     "work:assess_escalation",
   );
 
+  // Somente apresentacao: a politica deterministica ja decidiu.
+  const botPolicy = botFromPolicy(nba.action_space);
+
   return (
     <div className="recommendation-card">
+      <AuneronBot
+        size="sm"
+        mood={botPolicy.mood}
+        message={botPolicy.message}
+      />
+
       <div className="recommendation-card-section">
         <h4>Decisão NBA</h4>
         <p className="recommendation-decision-type">
