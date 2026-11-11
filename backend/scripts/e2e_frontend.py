@@ -380,9 +380,9 @@ def main() -> None:
                     exact=True,
                 ).click()
 
-                page.get_by_text(
-                    "Total de clientes",
-                    exact=True,
+                page.get_by_role(
+                    "heading",
+                    name="Precisa da sua atenção",
                 ).wait_for(
                     timeout=15000
                 )
@@ -421,9 +421,9 @@ def main() -> None:
                     wait_until="domcontentloaded"
                 )
 
-                page.get_by_text(
-                    "Total de clientes",
-                    exact=True,
+                page.get_by_role(
+                    "heading",
+                    name="Precisa da sua atenção",
                 ).wait_for(
                     timeout=15000
                 )
