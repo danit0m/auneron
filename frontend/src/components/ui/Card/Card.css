@@ -12,10 +12,12 @@
 .ui-card-success{border-color:var(--color-success-300);background:var(--color-success-50)}
 .ui-card-warning{border-color:var(--color-warning-300);background:var(--color-warning-50)}
 .ui-card-danger{border-color:var(--color-danger-300);background:var(--color-danger-50)}
-[data-theme="dark"] .ui-card-success{background:rgb(16 185 129 / 10%)}
-[data-theme="dark"] .ui-card-warning{background:rgb(245 158 11 / 10%)}
-[data-theme="dark"] .ui-card-danger{background:rgb(239 68 68 / 10%)}
+:is([data-theme="dark"], [data-theme="neon"]) .ui-card-success{background:rgb(16 185 129 / 10%)}
+:is([data-theme="dark"], [data-theme="neon"]) .ui-card-warning{background:rgb(245 158 11 / 10%)}
+:is([data-theme="dark"], [data-theme="neon"]) .ui-card-danger{background:rgb(239 68 68 / 10%)}
 .ui-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4)}
 .ui-card-header+.ui-card-content{margin-top:var(--space-4)}
 .ui-card-footer{display:flex;align-items:center;justify-content:flex-end;gap:var(--space-3);margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--border-subtle)}
 @media(prefers-reduced-motion:reduce){.ui-card{transition:none}}
+[data-theme="neon"] .ui-card{-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+[data-theme="neon"] .ui-card-brand{background:radial-gradient(circle at top right,rgb(168 85 247 / 28%),transparent 55%),var(--surface)}

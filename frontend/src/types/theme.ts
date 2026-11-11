@@ -5,6 +5,7 @@ export const themePreferences = [
   "system",
   "light",
   "dark",
+  "neon",
 ] as const;
 
 export type ThemePreference =

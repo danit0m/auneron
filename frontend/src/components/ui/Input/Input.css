@@ -17,3 +17,4 @@
 .ui-input-field-disabled .ui-input{cursor:not-allowed}
 .ui-input-message{color:var(--text-muted);font-size:var(--font-xs);line-height:var(--line-normal)}
 .ui-input-message-error{color:var(--color-danger-700)}
+[data-theme="neon"] .ui-input-control{-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}

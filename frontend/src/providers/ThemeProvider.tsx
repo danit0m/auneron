@@ -141,12 +141,16 @@ export function ThemeProvider({
     root.dataset.themePreference =
       preference;
 
+    // Neon é um tema escuro: herda color-scheme e a classe "dark".
+    const temaEscuro =
+      resolvedTheme !== "light";
+
     root.style.colorScheme =
-      resolvedTheme;
+      temaEscuro ? "dark" : "light";
 
     root.classList.toggle(
       "dark",
-      resolvedTheme === "dark",
+      temaEscuro,
     );
   }, [
     preference,
@@ -178,9 +182,9 @@ export function ThemeProvider({
   const toggleTheme = useCallback(
     () => {
       setTheme(
-        resolvedTheme === "dark"
-          ? "light"
-          : "dark",
+        resolvedTheme === "light"
+          ? "dark"
+          : "light",
       );
     },
     [
@@ -212,7 +216,7 @@ export function ThemeProvider({
       preference,
       resolvedTheme,
       isDark:
-        resolvedTheme === "dark",
+        resolvedTheme !== "light",
       setTheme,
       toggleTheme,
       resetTheme,

@@ -21,13 +21,17 @@ import {
 } from "react";
 
 import {
+  AuneronBot,
   Badge,
+  type BotMood,
   Button,
   Card,
   CardContent,
   CardFooter,
   CardHeader,
   Input,
+  MOOD_LABEL,
+  moodFromInvoice,
   Spinner,
 } from "../../components/ui";
 import {
@@ -127,6 +131,16 @@ function getCssVariable(
     .trim();
 }
 
+const botMoods: BotMood[] = [
+  "feliz",
+  "celebrando",
+  "atento",
+  "pensando",
+  "preocupado",
+  "critico",
+  "dormindo",
+];
+
 export default function UIShowcase() {
   const {
     preference,
@@ -145,6 +159,25 @@ export default function UIShowcase() {
     loadingExample,
     setLoadingExample,
   ] = useState(false);
+
+  const [botDias, setBotDias] = useState(-12);
+  const [botPaga, setBotPaga] = useState(false);
+
+  const botMood = moodFromInvoice(
+    botPaga
+      ? { status: "paga", pagaAgora: true }
+      : { status: "aberta", diasParaVencer: botDias },
+  );
+
+  const botMensagem = botPaga
+    ? "Pagamento confirmado. Obrigado!"
+    : botDias < -30
+      ? `Atraso crítico de ${-botDias} dias. Requer aprovação para cobrança.`
+      : botDias < 0
+        ? `Fatura ${-botDias} ${botDias === -1 ? "dia" : "dias"} em atraso. Envio um lembrete?`
+        : botDias <= 3
+          ? `Vence em ${botDias} ${botDias === 1 ? "dia" : "dias"}.`
+          : `Em dia: vence em ${botDias} dias.`;
 
   const [
     tokenValues,
@@ -223,9 +256,7 @@ export default function UIShowcase() {
           <div>
             <span>Tema atual</span>
             <strong>
-              {resolvedTheme === "dark"
-                ? "Escuro"
-                : "Claro"}
+              {{ light: "Claro", dark: "Escuro", neon: "Neon" }[resolvedTheme]}
             </strong>
           </div>
         </div>
@@ -290,6 +321,18 @@ export default function UIShowcase() {
             onClick={() => setTheme("dark")}
           >
             Escuro
+          </Button>
+
+          <Button
+            variant={
+              preference === "neon"
+                ? "primary"
+                : "secondary"
+            }
+            startIcon={<Sparkles size={17} />}
+            onClick={() => setTheme("neon")}
+          >
+            Neon
           </Button>
 
           <Button
@@ -697,6 +740,70 @@ export default function UIShowcase() {
         <div className="ui-showcase-section-header">
           <div>
             <span className="ui-showcase-section-eyebrow">
+              Assistente de IA
+            </span>
+
+            <h2>AuneronBot</h2>
+
+            <p>
+              O humor do assistente acompanha a situação
+              da fatura. Arraste os dias para vencer.
+            </p>
+          </div>
+        </div>
+
+        <Card variant="brand">
+          <CardContent>
+            <div className="ui-showcase-bot-sim">
+              <AuneronBot
+                mood={botMood}
+                size="lg"
+                message={botMensagem}
+              />
+
+              <div className="ui-showcase-bot-controls">
+                <label htmlFor="ui-showcase-bot-dias">
+                  Dias para vencer: {botDias}
+                </label>
+                <input
+                  id="ui-showcase-bot-dias"
+                  type="range"
+                  min={-60}
+                  max={15}
+                  value={botDias}
+                  disabled={botPaga}
+                  onChange={(event) =>
+                    setBotDias(Number(event.target.value))
+                  }
+                />
+                <Button
+                  size="sm"
+                  variant={botPaga ? "secondary" : "primary"}
+                  onClick={() => setBotPaga((paga) => !paga)}
+                >
+                  {botPaga
+                    ? "Reabrir fatura"
+                    : "Registrar pagamento"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="ui-showcase-bot-grid">
+              {botMoods.map((mood) => (
+                <div key={mood}>
+                  <AuneronBot mood={mood} size="md" />
+                  <span>{MOOD_LABEL[mood]}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="ui-showcase-section">
+        <div className="ui-showcase-section-header">
+          <div>
+            <span className="ui-showcase-section-eyebrow">
               Design tokens
             </span>
 
@@ -825,7 +932,7 @@ export default function UIShowcase() {
         </span>
 
         <Badge variant={isDark ? "brand" : "info"}>
-          {isDark ? "Dark Mode" : "Light Mode"}
+          {{ light: "Light Mode", dark: "Dark Mode", neon: "Neon Mode" }[resolvedTheme]}
         </Badge>
       </footer>
     </div>

@@ -1,0 +1,72 @@
+.ui-bot{--bot-glow:var(--color-primary-400);--bot-ink:var(--color-primary-300);display:inline-flex;align-items:center;gap:var(--space-4);flex:0 0 auto;max-width:100%}
+.ui-bot-sm .ui-bot-figure{width:48px;height:48px}
+.ui-bot-md .ui-bot-figure{width:88px;height:88px}
+.ui-bot-lg .ui-bot-figure{width:140px;height:140px}
+.ui-bot-figure{flex:0 0 auto;overflow:visible}
+.ui-bot-feliz{--bot-glow:var(--color-success-500);--bot-ink:var(--color-success-300)}
+.ui-bot-celebrando{--bot-glow:var(--color-brand-400);--bot-ink:var(--color-primary-300)}
+.ui-bot-atento{--bot-glow:var(--color-primary-400);--bot-ink:var(--color-primary-300)}
+.ui-bot-pensando{--bot-glow:var(--color-brand-400);--bot-ink:var(--color-brand-300)}
+.ui-bot-preocupado{--bot-glow:var(--color-warning-500);--bot-ink:var(--color-warning-300)}
+.ui-bot-critico{--bot-glow:var(--color-danger-500);--bot-ink:var(--color-danger-300)}
+.ui-bot-dormindo{--bot-glow:var(--neutral-400);--bot-ink:var(--neutral-300)}
+
+.ui-bot-figure *{transform-box:fill-box;transform-origin:center}
+.ui-bot-halo{fill:var(--bot-glow);opacity:.14;filter:blur(8px)}
+.ui-bot-shell-top{stop-color:var(--color-primary-900)}
+.ui-bot-shell-bottom{stop-color:var(--sidebar-background)}
+.ui-bot-shell{stroke:var(--bot-glow);stroke-width:1.5;stroke-opacity:.7}
+.ui-bot-visor{fill:#05060f;stroke:var(--bot-glow);stroke-opacity:.35}
+.ui-bot-ear,.ui-bot-torso{fill:var(--color-primary-900);stroke:var(--bot-glow);stroke-opacity:.5}
+.ui-bot-antenna{stroke:var(--bot-glow);stroke-width:2.5;stroke-linecap:round}
+.ui-bot-antenna-tip,.ui-bot-core{fill:var(--bot-glow);filter:drop-shadow(0 0 4px var(--bot-glow))}
+.ui-bot-stroke{fill:none;stroke:var(--bot-ink);stroke-width:4;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 3px var(--bot-glow))}
+.ui-bot-fill{fill:var(--bot-ink);filter:drop-shadow(0 0 4px var(--bot-glow))}
+.ui-bot-sparkles path{fill:var(--color-primary-300);animation:ui-bot-twinkle 1.2s ease-in-out infinite}
+.ui-bot-sparkles path:nth-child(2){animation-delay:.3s}
+.ui-bot-sparkles path:nth-child(3){animation-delay:.6s}
+.ui-bot-sweat{fill:var(--color-info-300);animation:ui-bot-sweat 2.4s ease-in infinite}
+.ui-bot-pulse{fill:none;stroke:var(--color-danger-500);stroke-width:2;animation:ui-bot-pulse 1.6s ease-out infinite}
+.ui-bot-bang{fill:var(--color-danger-500);font:800 26px var(--font-sans);animation:ui-bot-blink-fast .8s steps(2) infinite}
+.ui-bot-dots circle{fill:var(--color-brand-300);animation:ui-bot-dot 1.4s ease-in-out infinite}
+.ui-bot-dots circle:nth-child(2){animation-delay:.2s}
+.ui-bot-dots circle:nth-child(3){animation-delay:.4s}
+.ui-bot-zzz text{fill:var(--neutral-400);font:700 11px var(--font-sans);animation:ui-bot-zzz 3s ease-in infinite}
+.ui-bot-zzz text:nth-child(2){animation-delay:1s}
+.ui-bot-zzz text:nth-child(3){animation-delay:2s}
+
+/* movimento por humor */
+.ui-bot-feliz .ui-bot-body,.ui-bot-atento .ui-bot-body{animation:ui-bot-float 3s ease-in-out infinite}
+.ui-bot-feliz .ui-bot-head{animation:ui-bot-nod 3s ease-in-out infinite}
+.ui-bot-celebrando .ui-bot-body{animation:ui-bot-jump .9s cubic-bezier(.3,0,.3,1) infinite}
+.ui-bot-celebrando .ui-bot-antenna-tip{animation:ui-bot-twinkle .45s ease-in-out infinite}
+.ui-bot-atento .ui-bot-antenna-tip{animation:ui-bot-ping 2s ease-in-out infinite}
+.ui-bot-pensando .ui-bot-head{animation:ui-bot-tilt 4s ease-in-out infinite}
+.ui-bot-look{animation:ui-bot-look 3s ease-in-out infinite}
+.ui-bot-preocupado .ui-bot-head{animation:ui-bot-wobble 2.4s ease-in-out infinite}
+.ui-bot-critico .ui-bot-body{animation:ui-bot-shake 2s ease-in-out infinite}
+.ui-bot-critico .ui-bot-antenna-tip{animation:ui-bot-blink-fast .5s steps(2) infinite}
+.ui-bot-dormindo .ui-bot-body{animation:ui-bot-breathe 4s ease-in-out infinite;opacity:.8}
+.ui-bot-blink{animation:ui-bot-blink 5s infinite}
+
+.ui-bot-message{position:relative;max-width:22rem;margin:0;padding:var(--space-3) var(--space-4);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);background:var(--surface-elevated);color:var(--text-secondary);font-size:var(--font-sm);line-height:var(--line-normal);box-shadow:var(--shadow-card)}
+.ui-bot-message::before{content:"";position:absolute;left:-6px;top:50%;width:10px;height:10px;margin-top:-5px;border-left:1px solid var(--border-subtle);border-bottom:1px solid var(--border-subtle);background:inherit;transform:rotate(45deg)}
+[data-theme="neon"] .ui-bot-message{-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+
+@keyframes ui-bot-float{50%{transform:translateY(-4px)}}
+@keyframes ui-bot-nod{0%,100%{transform:rotate(0)}50%{transform:rotate(3deg)}}
+@keyframes ui-bot-jump{0%,100%{transform:translateY(0) scale(1,1)}15%{transform:translateY(0) scale(1.06,.92)}45%{transform:translateY(-14px) scale(.96,1.05)}75%{transform:translateY(0) scale(1.04,.95)}}
+@keyframes ui-bot-twinkle{0%,100%{opacity:.25;transform:scale(.7)}50%{opacity:1;transform:scale(1.15)}}
+@keyframes ui-bot-ping{0%,70%,100%{opacity:1}80%{opacity:.3}}
+@keyframes ui-bot-tilt{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
+@keyframes ui-bot-look{0%,100%{transform:translate(-5px,-2px)}45%,55%{transform:translate(5px,-3px)}}
+@keyframes ui-bot-wobble{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg) translateY(1px)}}
+@keyframes ui-bot-sweat{0%{opacity:0;transform:translateY(-4px)}20%{opacity:1}100%{opacity:0;transform:translateY(16px)}}
+@keyframes ui-bot-shake{0%,60%,100%{transform:translateX(0)}64%,72%,80%{transform:translateX(-3px)}68%,76%,84%{transform:translateX(3px)}}
+@keyframes ui-bot-pulse{0%{opacity:.8;transform:scale(.7)}100%{opacity:0;transform:scale(1.15)}}
+@keyframes ui-bot-blink-fast{50%{opacity:.2}}
+@keyframes ui-bot-dot{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+@keyframes ui-bot-zzz{0%{opacity:0;transform:translate(0,6px)}30%{opacity:1}100%{opacity:0;transform:translate(6px,-8px)}}
+@keyframes ui-bot-breathe{50%{transform:scale(1.03)}}
+@keyframes ui-bot-blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
+@media(prefers-reduced-motion:reduce){.ui-bot *{animation:none!important}}
