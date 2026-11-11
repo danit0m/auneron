@@ -735,7 +735,8 @@ PENDENTES (nada congela nem executa antes):
     precondicao exata), congelados por hash. O texto final (opcao A, aprovado em 2026-11-10)
     esta no runner; o da etapa 1 declara a regra de saldo zero; o da etapa 2 foi ajustado em
     2026-11-10 para trazer a regra por conta (secao 18.8) e de novo no ajuste 2 de 2026-11-11
-    (secao 18.10; hashes vigentes la). O CONGELAMENTO (freeze 4) com o hash
+    (secao 18.10; hashes vigentes la). Ajustes encerrados neste candidato apos a quarta prova
+    (secao 18.11). O CONGELAMENTO (freeze 4) com o hash
     novo e a ancora externa ainda nao foram feitos (secao 18).
 16. **Transporte real com rede**: implementado offline, prova curta pendente (secao 16). Nao
     esta aprovado: so a prova curta contra o runtime real, autorizada pelo diretor, pode aprova-lo.
@@ -1173,7 +1174,47 @@ sha256 de `PROMPT_PLAN` = `0df264c50215cb950d0d661db582047b7dda20cc34fbf4d153bb8
 
 **O que NAO e.** Nenhuma medicao de qualidade: a prova curta confere o transporte e a forma, nao a
 taxa de acerto. O ajuste 2 NAO foi exercitado contra o modelo. A QUARTA prova curta exige
-aprovacao propria do diretor. O merge do PR 28 aguarda essa prova.
+aprovacao propria do diretor. O merge do PR 28 aguarda essa prova. (Atualizacao: a quarta prova
+foi executada em 2026-11-11; resultado e encerramento dos ajustes em 18.11.)
+
+### 18.11 Quarta prova curta, revisao offline e encerramento dos ajustes (2026-11-11)
+
+**Resultado da quarta prova curta** (`smoke-run-04`, commit `556c8aa`, Ollama 0.40.16, script
+`smoke-prep-04` SHA-256 `a02deec3...aa03`, `summary.json` SHA-256 `0df2e13d...43ca`; todas com
+`done_reason=stop`, sem truncamento, validador sem violacao ate `PARAMETERS`, sem
+`free_text_evidence`):
+
+| Cenario | Tokens saida/teto | Tokens entrada | Resultado |
+| --- | --- | --- | --- |
+| S1 | 104/160 | 652 | etapa 1 `not_due`, correto |
+| S2 (uma conta elegivel) | 286/768 | 1131 | mapeado SEM passo mutante: FALHA |
+| S3 (duas contas) | 685/768 | 1216 | mutacao CTA-990003 2026-09-07 exata |
+| S4 (`hold=true`) | 283/768 | 1131 | so leitura, mas justificativa afirma "hold is false" |
+
+**Revisao offline das provas 3 e 4 (PO, sem chamada ao modelo).** Evidencia em
+`real-transport/po-review-offline-03-04` (`NOTA_PO.md`, `review.py`, `review.json`, `SHA256.txt`).
+
+1. Comparacao S2/S4 pelos passos estruturados (sem `summary`, sem `rationale`, sem `account_ref`,
+   `step_key` renomeado por posicao): IGUAIS nas duas provas; a `rationale` tambem e identica
+   caractere a caractere. O campo informativo `s2_s4_same_shape=false` da prova 4 refletia so o
+   texto do `summary` e nao vale como discriminacao.
+2. Justificativas contra os fatos: S4 da prova 4 contradiz o bloqueio; S2 reescreve a regra em vez
+   dos valores da conta; o `summary` de S3 calcula para CTA-990004 a data inexistente `2026-11-31`
+   (correta `2026-12-01`), com conclusao certa (nao vencida).
+3. O que o modelo recebeu: template do prompt, schema `format` e opcoes identicos em S2, S3 e S4
+   (so o `seed` muda, sem efeito com `top_k=1` e temperatura 0); muda so o bloco de fatos. S2 e S4
+   diferem em `account_ref`, `balance_cents` e `hold`, e a saida gulosa e a mesma: em conta unica a
+   saida NAO depende do bloqueio. S3 difere por ter duas contas.
+4. Hipotese: nenhuma sustentada. A candidata (o schema poe `capability_id` antes de qualquer
+   calculo) e contrariada pela prova 3, em que S3 marcou certo com justificativa generica, e pelo
+   ajuste 2, que ja pedia a decisao por conta e citava a conta unica sem mudar a estrutura.
+
+**Decisao do diretor (2026-11-11).** Encerrados os ajustes de prompt neste candidato. Registrada a
+falha reproduzida (2 de 2 provas) do `qwen3:4b` (digest `359d7dd4...fae7`), Ollama 0.40.16, schema
+`format` do `plan.v1`, `PROMPT_PLAN` `0df264c5...01e7`, `think=false`, temperatura 0, no caso
+elegivel de conta unica: o plano sai sem a marcacao e nao reage ao bloqueio. A condicao 3 da 18.9
+NAO foi cumprida. Os 120 casos independentes NAO foram e NAO serao usados para ajustar o prompt.
+A proxima configuracao e decisao propria do diretor. O PR 28 permanece aberto como registro.
 
 ## 19. Separacao entre a regra da avaliacao e a politica financeira do runtime
 
