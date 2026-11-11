@@ -107,7 +107,8 @@ class Script:
 def request_key(data):
     prompt = data["prompt"]
     scenario_id = json.loads(prompt.split("Facts:\n", 1)[1])["scenario_id"]
-    stage = rn.STAGE_ABSTENTION if prompt.startswith("You assess") else rn.STAGE_PLAN
+    # the stage is read from the first words of the template (final prompts: "You check whether ...")
+    stage = rn.STAGE_ABSTENTION if prompt.startswith("You check whether") else rn.STAGE_PLAN
     return scenario_id, data["options"]["seed"] - 1000, stage
 
 

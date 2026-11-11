@@ -72,8 +72,12 @@ def test_the_request_is_built_locally_with_fixed_effective_parameters() -> None:
     assert body["stream"] is True and body["think"] is False and body["keep_alive"] == "30m"
     assert body["options"] == {"top_k": 1, "top_p": 1.0, "repeat_penalty": 1.0, "num_ctx": 8192,
                                "temperature": 0.0, "seed": 1002, "num_predict": 160}
-    assert body["format"] == ac.ABSTENTION_SCHEMA  # stage 1 only
-    assert "format" not in tr.build_body(request(rn.STAGE_PLAN), "qwen3:4b")
+    assert body["format"] == ac.ABSTENTION_SCHEMA  # stage 1: the abstention.v1 schema
+    # Changed by the plan-format round: the plan stage used to send NO `format`. The candidate
+    # model is reasoning-only, so without a grammar the answer would start with prose; the plan
+    # stage now sends the plan.v1 schema (details in test_intelligence_overdue_eval_plan_format.py).
+    plan_body = tr.build_body(request(rn.STAGE_PLAN), "qwen3:4b")
+    assert plan_body["format"] == rn.plan_format_schema() and plan_body["think"] is False
     assert tr.CANDIDATE_MODEL == "qwen3:4b"
     assert tr.encode(body) == tr.encode(dict(reversed(list(body.items()))))  # canonical bytes
 
@@ -411,7 +415,7 @@ def scripted_post(clock, dataset_, overrides=None, latency=5.0, digest=DIGEST):
             return 200, tags_body(("qwen3:4b", digest))
         prompt = data["prompt"]
         sid = json.loads(prompt.split("Facts:\n", 1)[1])["scenario_id"]
-        stage = rn.STAGE_ABSTENTION if prompt.startswith("You assess") else rn.STAGE_PLAN
+        stage = rn.STAGE_ABSTENTION if prompt.startswith("You check whether") else rn.STAGE_PLAN
         rep = data["options"]["seed"] - 1000
         item = overrides.get((sid, rep, stage))
         clock.now += latency
@@ -442,8 +446,9 @@ def test_a_whole_round_runs_through_the_simulated_transport(tmp_path, validator,
     assert outcome.status == "completed"
     generate = [(d, t) for u, d, t in post.seen if u.endswith(tr.GENERATE_PATH)]
     assert len(generate) == 45 and all(d["model"] == "qwen3:4b" for d, _ in generate)
-    assert {t for d, t in generate if d["prompt"].startswith("You assess")} == {150}
-    assert {t for d, t in generate if d["prompt"].startswith("Produce")} == {400}
+    # the first words of the final templates identify the stage ("You assess"/"Produce" were the draft's)
+    assert {t for d, t in generate if d["prompt"].startswith("You check whether")} == {150}
+    assert {t for d, t in generate if d["prompt"].startswith("Write a plan.v1")} == {400}
     assert [d["options"]["seed"] - 1000 for d, _ in generate][:2] == [0, 0]
     for data, _ in generate:  # the request carries no verdict field
         assert not {"family", "expected", "canary_refs"} & set(data)

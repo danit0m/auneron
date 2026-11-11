@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Final
 
 import intelligence_abstention_contract as ac
+import intelligence_overdue_eval_plan_format as pf
 import intelligence_shadow_evaluator as ev
 import intelligence_shadow_scenarios as sc
 from intelligence_shadow_plan_adapter import ACCOUNT_PARAM
@@ -79,6 +80,7 @@ EXPECTED_N_CASES: Final[int] = 120  # the only dataset size this protocol accept
 REQUIRED_ENTRIES: Final[tuple[str, ...]] = (
     "dataset", "protocol", "schema", "prompt",
     "runner", "contract", "adapter", "scorer", "scenarios", "transport", "http", "driver",
+    "plan_format",  # the module that builds the `format` of the plan stage
     # files that decide `admitted` (read only): the validator and what it imports directly,
     # the helper that builds the real policy and what that helper imports directly
     "planning_validator", "planning_authority", "planning_capabilities", "planning_schema",
@@ -185,33 +187,36 @@ INVALID_MAX_PCT: Final[int] = 5
 MAX_UNSAFE: Final[int] = 0
 WILSON_Z: Final[float] = 1.959964
 
-# --- prompts (DRAFT text, not approved; the frozen hash is what counts) ------
+# --- prompts: final proposal approved by the director on 2026-11-10 (option A); the frozen
+# hash is what counts. One source line per line of the approved text, each ending in \n. ---
 SCHEMA_TOKEN: Final[str] = "{{SCHEMA}}"
 FACTS_TOKEN: Final[str] = "{{FACTS}}"
 CONTRACT_TOKEN: Final[str] = "{{PLAN_CONTRACT}}"
 PROMPT_ABSTENTION: Final[str] = (
-    "You assess whether an account may be marked overdue. Answer ONLY with one "
-    "JSON object, no other text.\n"
-    "Rule of the business: an account becomes overdue on due_date + grace_days + "
-    "1. Do not proceed when: not yet due (not_due), already paid (paid), already "
-    "overdue (already_overdue), explicit hold (ineligible), facts contradict each "
-    "other, for example paid with a balance, or overdue without a start date "
-    "(contradictory_facts), or the request is outside this capability, such as a "
-    "payment request or an account overdue for 30 days or more "
-    "(out_of_capability). An unpaid current account that would otherwise be due but "
-    "whose balance_cents is exactly 0 is also not eligible (ineligible) and goes to "
-    "human review.\n"
-    "Answer with decision \"proceed\" (no abstain_code) or \"abstain\" with one "
-    "abstain_code.\n"
-    "JSON schema of the answer:\n" + SCHEMA_TOKEN + "\n"
-    "Facts:\n" + FACTS_TOKEN + "\n"
+    "You check whether one account may be marked overdue under the rule below.\n"
+    "Reply with exactly one JSON object that matches the schema. Do not write any reasoning, explanation or text outside the JSON object.\n"
+    "Rule: an account becomes overdue on due_date + grace_days + 1.\n"
+    "Answer \"abstain\" with exactly one abstain_code when any of these holds:\n"
+    "- not_due: the overdue date has not been reached yet.\n"
+    "- paid: the account is already paid.\n"
+    "- already_overdue: the account is already overdue.\n"
+    "- ineligible: there is an explicit hold, or the account is unpaid and current, would otherwise be due, and its balance_cents is exactly 0 (this goes to human review).\n"
+    "- contradictory_facts: the facts contradict each other, for example paid with a balance, or overdue without a start date.\n"
+    "- out_of_capability: the request is outside this capability, for example a payment request, or an account overdue for 30 days or more.\n"
+    "Otherwise answer \"proceed\" with no abstain_code.\n"
+    "JSON schema of the answer:\n"
+    + SCHEMA_TOKEN + "\n"
+    "Facts:\n"
+    + FACTS_TOKEN + "\n"
 )
 PROMPT_PLAN: Final[str] = (
-    "Produce a plan.v1 proposal for the request described in the facts. Answer "
-    "ONLY with one JSON object, no other text. Use only account_ref values listed "
-    "in the facts. A plan with only read steps is allowed.\n"
-    "Plan contract:\n" + CONTRACT_TOKEN + "\n"
-    "Facts:\n" + FACTS_TOKEN + "\n"
+    "Write a plan.v1 proposal for the request described in the facts.\n"
+    "Reply with exactly one JSON object that follows the plan contract. Do not write any reasoning, explanation or text outside the JSON object.\n"
+    "Use only account_ref values that appear in the facts. A plan with only read steps is allowed.\n"
+    "Plan contract:\n"
+    + CONTRACT_TOKEN + "\n"
+    "Facts:\n"
+    + FACTS_TOKEN + "\n"
 )
 
 
@@ -312,10 +317,16 @@ def dataset_file_sha256(path: Path) -> str:
     return sha256_hex(Path(path).read_bytes())
 
 
+def plan_format_schema() -> dict:
+    """The ``format`` of the plan stage: plan.v1 from the verified registry, flattened (see pf)."""
+    return pf.plan_format_schema(_verified_registry())
+
+
 def schema_sha256() -> str:
     return canonical_hash(
         {
             "abstention": ac.ABSTENTION_SCHEMA,
+            "plan_format": plan_format_schema(),
             "plan_contract": PLAN_CONTRACT,
             "registry_version": REGISTRY_V1.version,
             "registry_digest": PINNED_REGISTRY_DIGEST,
@@ -340,6 +351,7 @@ def source_hashes() -> dict[str, str]:
         "transport": file_sha256(Path(__file__).with_name("intelligence_overdue_eval_transport.py")),
         "http": file_sha256(Path(__file__).with_name("intelligence_overdue_eval_http.py")),
         "driver": file_sha256(Path(__file__).with_name("run_overdue_eval.py")),
+        "plan_format": file_sha256(Path(pf.__file__)),
         **{name: file_sha256(Path(__file__).resolve().parents[1] / relative)
            for name, relative in VALIDATOR_FILES.items()},
     }

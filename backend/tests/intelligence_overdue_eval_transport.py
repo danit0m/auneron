@@ -67,8 +67,13 @@ def build_body(request: rn.ModelRequest, model: str) -> dict:
             "num_predict": request.options["num_predict"],
         },
     }
+    # `format` on BOTH stages. The candidate model is a reasoning-only build for which
+    # `think: false` does not switch reasoning off (protocol, section 18); it is the grammar
+    # of `format` that makes the text start with `{` and be one JSON object.
     if request.stage == rn.STAGE_ABSTENTION:
         body["format"] = ac.ABSTENTION_SCHEMA
+    elif request.stage == rn.STAGE_PLAN:
+        body["format"] = rn.plan_format_schema()
     return body
 
 
