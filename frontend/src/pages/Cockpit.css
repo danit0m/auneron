@@ -33,14 +33,6 @@
   gap: var(--space-3);
 }
 
-.cockpit-eyebrow {
-  color: var(--text-brand);
-  font-size: var(--font-xs);
-  font-weight: var(--font-extrabold);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
 .cockpit-hero-title {
   margin: 0;
   color: var(--text-primary);
@@ -67,7 +59,7 @@
 
 .cockpit-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: var(--space-4);
 }
 
@@ -101,7 +93,7 @@
 
 .cockpit-columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 26.25rem), 1fr));
   gap: var(--space-5);
   align-items: start;
 }
@@ -126,17 +118,26 @@
 }
 
 .cockpit-bar {
-  display: flex;
-  height: 2.5rem;
-  gap: 3px;
-  overflow: hidden;
-  border-radius: var(--radius-lg);
-  background: var(--border-subtle);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 12rem;
+  border-bottom: 1px solid var(--border-strong);
+  background: repeating-linear-gradient(
+    to top,
+    transparent 0 calc(25% - 1px),
+    var(--border-subtle) calc(25% - 1px) 25%
+  );
 }
 
-.cockpit-bar > span {
-  flex-basis: 0;
-  min-width: 4px;
+.cockpit-bar-column {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.cockpit-bar-column > span {
+  width: min(45%, 3.5rem);
+  border-radius: 4px 4px 0 0;
 }
 
 .cockpit-bar-recebido {
@@ -243,4 +244,22 @@
 .cockpit-panel-footer {
   display: flex;
   justify-content: flex-end;
+}
+
+[data-theme="neon"] .cockpit {
+  background:
+    radial-gradient(50% 40% at 90% 0%, rgb(168 85 247 / 20%), transparent 70%),
+    radial-gradient(40% 40% at 0% 100%, rgb(34 211 238 / 12%), transparent 70%);
+}
+
+.cockpit-hero .ui-bot-message,
+.cockpit-item .ui-bot-message,
+.cockpit-empty-state .ui-bot-message {
+  display: none;
+}
+
+.cockpit-received-progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--color-primary-500);
 }

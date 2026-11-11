@@ -90,9 +90,15 @@ export function Cockpit() {
     [dados],
   );
 
+  const agora = new Date();
+  const dataAtual = new Intl.DateTimeFormat("pt-BR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(agora);
   const primeiroNome = user?.name?.trim().split(/\s+/)[0];
   const header = (
-    <Header title="Cockpit" subtitle="O que pede sua atenção hoje" />
+    <Header title="Cockpit" subtitle={dataAtual} />
   );
 
   if (carregando) {
@@ -135,25 +141,31 @@ export function Cockpit() {
       {header}
 
       <section className="page-content cockpit">
-        <Card variant="brand" padding="lg">
+        <Card className="cockpit-intro" variant="brand" padding="lg">
           <div className="cockpit-hero">
             <AuneronBot mood={cockpit.mood} size="lg" label={cockpit.titulo} />
             <div className="cockpit-hero-text">
-              <span className="cockpit-eyebrow">
-                {saudacao(new Date())}{primeiroNome ? `, ${primeiroNome}` : ""}
-              </span>
-              <p className="cockpit-hero-title">{cockpit.titulo}</p>
+              <p className="cockpit-hero-title">
+                {saudacao(agora)}{primeiroNome ? `, ${primeiroNome}` : ""}. {cockpit.titulo}
+              </p>
               <p className="cockpit-hero-detail">{cockpit.detalhe}</p>
               <div className="cockpit-actions">
                 <Button size="lg" onClick={() => navigate("/clientes")}>
-                  {temAtraso ? "Ver contas em atraso" : "Ver clientes"}
+                  Ver clientes e contas
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={() => document.getElementById("cockpit-atencao")?.scrollIntoView()}
+                >
+                  Ver alertas e vencimentos
                 </Button>
               </div>
             </div>
           </div>
         </Card>
 
-        <div className="cockpit-kpis">
+        <section className="cockpit-kpis" aria-label="Indicadores financeiros">
           <Card>
             <div className="cockpit-kpi">
               <span>A receber</span>
@@ -177,10 +189,23 @@ export function Cockpit() {
             <div className="cockpit-kpi">
               <span>Recebido</span>
               <strong>{formatarMoeda(cockpit.recebido)}</strong>
+              <progress
+                className="cockpit-received-progress"
+                max={1}
+                value={cockpit.parteRecebida}
+                aria-label="Proporção recebida do faturamento"
+              />
               <small>{porcentagem(cockpit.parteRecebida)} do faturamento</small>
             </div>
           </Card>
-        </div>
+          <Card>
+            <div className="cockpit-kpi">
+              <span>Faturamento total</span>
+              <strong>{formatarMoeda(cockpit.faturamento)}</strong>
+              <small>Valor total das contas cadastradas</small>
+            </div>
+          </Card>
+        </section>
 
         <div className="cockpit-columns">
           <Card padding="lg">
@@ -198,15 +223,14 @@ export function Cockpit() {
                       .map((p) => `${p.rotulo}: ${formatarMoeda(p.valor)}`)
                       .join(", ")}
                   >
-                    {partes
-                      .filter((p) => p.valor > 0)
-                      .map((p) => (
+                    {partes.map((p) => (
+                      <div key={p.chave} className="cockpit-bar-column">
                         <span
-                          key={p.chave}
                           className={`cockpit-bar-${p.chave}`}
-                          style={{ flexGrow: p.valor }}
+                          style={{ height: `${(p.valor / cockpit.faturamento) * 100}%` }}
                         />
-                      ))}
+                      </div>
+                    ))}
                   </div>
                   <ul className="cockpit-legend">
                     {partes.map((p) => (
@@ -228,7 +252,7 @@ export function Cockpit() {
           <Card padding="lg">
             <div className="cockpit-panel">
               <div>
-                <h2>Precisa da sua atenção</h2>
+                <h2 id="cockpit-atencao">Precisa da sua atenção</h2>
                 <p>Contas em atraso e vencimentos dos próximos 7 dias</p>
               </div>
               {cockpit.itens.length > 0 ? (
