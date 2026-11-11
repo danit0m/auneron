@@ -33,64 +33,83 @@ function space(actions, recommendable, noAction) {
     no_action: noAction,
   };
 }
+const OVERDUE = 'account.mark_overdue';
+const ESCALATE = 'escalate_to_human';
+const single = (key) => ({ decision_type: 'single_action', selected_actions: [key] });
+const bundle = (...keys) => ({ decision_type: 'action_bundle', selected_actions: keys });
+const noAction = () => ({ decision_type: 'no_action', selected_actions: [] });
+
+// Space "real": conta aberta e vencida, as duas acoes recomendaveis.
+const bothSpace = () =>
+  space(
+    [
+      action(OVERDUE, { system_recommendable: true }),
+      action(ESCALATE, { system_recommendable: true }),
+      action('account.mark_paid', { requires_external_fact: 'payment_observed' }),
+    ],
+    [OVERDUE, ESCALATE],
+    false,
+  );
+const overdueOnlySpace = () =>
+  space([action(OVERDUE, { system_recommendable: true })], [OVERDUE], false);
+const escalateOnlySpace = () =>
+  space([action(ESCALATE, { system_recommendable: true })], [ESCALATE], false);
 const pick = (r) => ({ mood: r.mood, message: r.message });
 const NEUTRAL_MOOD = 'pensando';
 
-test('mark_overdue recomendavel -> preocupado, decisao de quem aprova', () => {
-  const r = botFromPolicy(space([
-    action('account.mark_overdue', { system_recommendable: true }),
-    action('account.mark_paid', { requires_external_fact: 'payment_observed' }),
-  ], ['account.mark_overdue'], false));
+test('REGRESSAO: space com as duas recomendaveis, decisao single mark_overdue -> preocupado', () => {
+  const r = botFromPolicy(single(OVERDUE), bothSpace());
   assert.equal(r.mood, 'preocupado');
   assert.match(r.message, /marcar este título como vencido/);
   assert.match(r.message, /decisão é de quem aprova/);
+  assert.doesNotMatch(r.message, /atendimento humano/);
 });
 
-test('escalate_to_human recomendavel -> critico', () => {
-  const r = botFromPolicy(space([
-    action('escalate_to_human', { system_recommendable: true }),
-  ], ['escalate_to_human'], false));
-  assert.equal(r.mood, 'critico');
-  assert.match(r.message, /atendimento humano/);
-});
-
-test('precedencia: escalate_to_human vence mark_overdue, em qualquer ordem', () => {
-  const actions = [
-    action('account.mark_overdue', { system_recommendable: true }),
-    action('escalate_to_human', { system_recommendable: true }),
-  ];
-  for (const rec of [
-    ['account.mark_overdue', 'escalate_to_human'],
-    ['escalate_to_human', 'account.mark_overdue'],
-  ]) {
-    assert.equal(botFromPolicy(space(actions, rec, false)).mood, 'critico');
+test('single escalate_to_human -> critico, atendimento humano', () => {
+  for (const sp of [escalateOnlySpace(), bothSpace()]) {
+    const r = botFromPolicy(single(ESCALATE), sp);
+    assert.equal(r.mood, 'critico');
+    assert.match(r.message, /atendimento humano/);
+    assert.doesNotMatch(r.message, /vencido/);
   }
 });
 
-test('invariante violado: lista vazia com no_action=false -> pensando', () => {
-  const r = botFromPolicy(space([
-    action('account.mark_overdue', { reason: null }),
-    action('account.mark_paid', { requires_external_fact: 'payment_observed' }),
-  ], [], false));
-  assert.equal(r.mood, NEUTRAL_MOOD);
-  assert.doesNotMatch(r.message, /indica|recomend/i);
-  assert.equal(botFromPolicy(space([], [], false)).mood, NEUTRAL_MOOD);
+test('action_bundle com as duas acoes -> critico, cita as duas, em qualquer ordem', () => {
+  for (const keys of [[OVERDUE, ESCALATE], [ESCALATE, OVERDUE]]) {
+    const r = botFromPolicy(bundle(...keys), bothSpace());
+    assert.equal(r.mood, 'critico');
+    assert.match(r.message, /marcar este título como vencido/);
+    assert.match(r.message, /atendimento humano/);
+    assert.match(r.message, /A decisão é de quem aprova\.$/);
+  }
 });
 
-test('invariante violado: lista nao vazia com no_action=true -> pensando', () => {
-  const r = botFromPolicy(space([
-    action('account.mark_overdue', { system_recommendable: true }),
-  ], ['account.mark_overdue'], true));
-  assert.equal(r.mood, NEUTRAL_MOOD);
-  assert.doesNotMatch(r.message, /indica|recomend/i);
+test('invariante do space violado: lista vazia com no_action=false -> pensando', () => {
+  const sp = space([action(OVERDUE, { reason: null })], [], false);
+  for (const d of [noAction(), single(OVERDUE)]) {
+    const r = botFromPolicy(d, sp);
+    assert.equal(r.mood, NEUTRAL_MOOD);
+    assert.doesNotMatch(r.message, /indica|recomend/i);
+  }
+  assert.equal(botFromPolicy(noAction(), space([], [], false)).mood, NEUTRAL_MOOD);
+});
+
+test('invariante do space violado: lista nao vazia com no_action=true -> pensando', () => {
+  const sp = space([action(OVERDUE, { system_recommendable: true })], [OVERDUE], true);
+  for (const d of [noAction(), single(OVERDUE)]) {
+    const r = botFromPolicy(d, sp);
+    assert.equal(r.mood, NEUTRAL_MOOD);
+    assert.doesNotMatch(r.message, /indica|recomend/i);
+  }
 });
 
 test('no_action + already_paid -> feliz com motivo traduzido', () => {
-  const r = botFromPolicy(space([
-    action('account.mark_overdue', { reason: 'already_paid' }),
+  const r = botFromPolicy(noAction(), space([
+    action(OVERDUE, { reason: 'already_paid' }),
     action('account.mark_paid', { reason: 'already_paid' }),
   ], [], true));
   assert.equal(r.mood, 'feliz');
+  assert.match(r.message, /Nenhuma ação necessária\./);
   assert.match(r.message, /Esta conta já foi paga\./);
 });
 
@@ -101,49 +120,93 @@ test('no_action + outros motivos conhecidos -> dormindo', () => {
     due_date_mismatch: /Data de vencimento não corresponde ao episódio atual\./,
   };
   for (const [reason, re] of Object.entries(expected)) {
-    const r = botFromPolicy(space([action('account.mark_overdue', { reason })], [], true));
+    const r = botFromPolicy(noAction(), space([action(OVERDUE, { reason })], [], true));
     assert.equal(r.mood, 'dormindo', reason);
+    assert.match(r.message, /Nenhuma ação necessária\./, reason);
     assert.match(r.message, re, reason);
   }
 });
 
-test('fail-closed: motivo desconhecido, ausente ou herdado do prototype -> pensando', () => {
+test('no_action com motivo desconhecido, nulo, ausente ou do prototype -> dormindo, sem rotulo', () => {
   for (const reason of ['novo_motivo', null, 'constructor', '__proto__', 'toString']) {
-    const r = botFromPolicy(space([action('account.mark_overdue', { reason })], [], true));
-    assert.equal(r.mood, NEUTRAL_MOOD, String(reason));
+    const r = botFromPolicy(noAction(), space([action(OVERDUE, { reason })], [], true));
+    assert.equal(r.mood, 'dormindo', String(reason));
+    assert.equal(r.message, 'Nenhuma ação necessária.', String(reason));
   }
-  assert.equal(botFromPolicy(space([], [], true)).mood, NEUTRAL_MOOD);
+  const semAcao = botFromPolicy(noAction(), space([], [], true));
+  assert.equal(semAcao.mood, 'dormindo');
+  assert.equal(semAcao.message, 'Nenhuma ação necessária.');
 });
 
-test('fail-closed: nunca "recomendavel" sem system_recommendable=true', () => {
+test('fail-closed: decision_type incoerente com a lista', () => {
+  const sp = bothSpace();
   const cases = [
-    // listada mas flag falso
-    space([action('account.mark_overdue', { system_recommendable: false })], ['account.mark_overdue'], false),
-    space([action('escalate_to_human', { system_recommendable: false })], ['escalate_to_human'], false),
-    // listada mas sem avaliacao correspondente
-    space([], ['account.mark_overdue'], false),
-    // flag verdadeiro mas fora da lista -> nao recomenda
-    space([action('account.mark_overdue', { system_recommendable: true })], [], false),
-    // acao desconhecida / mark_paid recomendada
-    space([action('acao.nova', { system_recommendable: true })], ['acao.nova'], false),
-    space([action('account.mark_paid', { system_recommendable: true })], ['account.mark_paid'], false),
-    // contraditorio: recomendavel e no_action
-    space([action('account.mark_overdue', { system_recommendable: true })], ['account.mark_overdue'], true),
-    // no_action com mark_overdue recomendavel na avaliacao
-    space([action('account.mark_overdue', { system_recommendable: true, reason: 'already_paid' })], [], true),
+    { decision_type: 'no_action', selected_actions: [OVERDUE] },
+    { decision_type: 'single_action', selected_actions: [] },
+    { decision_type: 'single_action', selected_actions: [OVERDUE, ESCALATE] },
+    { decision_type: 'action_bundle', selected_actions: [OVERDUE] },
+    { decision_type: 'action_bundle', selected_actions: [] },
+    { decision_type: 'tipo_novo', selected_actions: [OVERDUE] },
   ];
-  for (const c of cases) {
-    const r = botFromPolicy(c);
-    assert.equal(r.mood, NEUTRAL_MOOD);
+  for (const d of cases) {
+    assert.equal(botFromPolicy(d, sp).mood, NEUTRAL_MOOD, JSON.stringify(d));
+  }
+});
+
+test('fail-closed: acao selecionada fora de recommendable_actions ou sem system_recommendable', () => {
+  const cases = [
+    // fora de recommendable_actions (mas com flag verdadeiro)
+    [single(ESCALATE), space([
+      action(OVERDUE, { system_recommendable: true }),
+      action(ESCALATE, { system_recommendable: true }),
+    ], [OVERDUE], false)],
+    // na lista mas flag falso
+    [single(OVERDUE), space([action(OVERDUE, { system_recommendable: false })], [OVERDUE], false)],
+    // na lista mas sem avaliacao correspondente
+    [single(OVERDUE), space([], [OVERDUE], false)],
+    // uma das duas do bundle nao recomendavel
+    [bundle(OVERDUE, ESCALATE), overdueOnlySpace()],
+    // mark_paid nunca e recomendavel
+    [single('account.mark_paid'), space(
+      [action('account.mark_paid', { system_recommendable: true })],
+      ['account.mark_paid'], false)],
+  ];
+  for (const [d, sp] of cases) {
+    const r = botFromPolicy(d, sp);
+    assert.equal(r.mood, NEUTRAL_MOOD, JSON.stringify(d));
     assert.doesNotMatch(r.message, /indica|recomend/i);
   }
 });
 
+test('fail-closed: acao desconhecida selecionada', () => {
+  const sp = space(
+    [action('acao.nova', { system_recommendable: true }), action(OVERDUE, { system_recommendable: true })],
+    ['acao.nova', OVERDUE], false);
+  assert.equal(botFromPolicy(single('acao.nova'), sp).mood, NEUTRAL_MOOD);
+  assert.equal(botFromPolicy(bundle(OVERDUE, 'acao.nova'), sp).mood, NEUTRAL_MOOD);
+});
+
+test('fail-closed: item duplicado', () => {
+  assert.equal(botFromPolicy(bundle(OVERDUE, OVERDUE), overdueOnlySpace()).mood, NEUTRAL_MOOD);
+  assert.equal(botFromPolicy(bundle(OVERDUE, OVERDUE), bothSpace()).mood, NEUTRAL_MOOD);
+});
+
+test('fail-closed: decisao no_action com recomendaveis no space', () => {
+  for (const sp of [overdueOnlySpace(), bothSpace()]) {
+    const r = botFromPolicy(noAction(), sp);
+    assert.equal(r.mood, NEUTRAL_MOOD);
+    assert.doesNotMatch(r.message, /Nenhuma ação necessária/);
+  }
+});
+
+test('fail-closed: decisao com acao mas space sem recomendaveis -> pensando', () => {
+  const sp = space([action(OVERDUE, { reason: 'already_paid' })], [], true);
+  assert.equal(botFromPolicy(single(OVERDUE), sp).mood, NEUTRAL_MOOD);
+});
+
 test('dias de atraso e valor nao influenciam o resultado', () => {
-  const base = space([
-    action('account.mark_overdue', { system_recommendable: true }),
-  ], ['account.mark_overdue'], false);
-  const baseline = pick(botFromPolicy(base));
+  const base = overdueOnlySpace();
+  const baseline = pick(botFromPolicy(single(OVERDUE), base));
   for (const [days, amount] of [[0, 0], [1, 1], [365, 1e9], [-5, -1]]) {
     const withFacts = {
       ...base,
@@ -151,7 +214,7 @@ test('dias de atraso e valor nao influenciam o resultado', () => {
       amount,
       observed_facts: { days_overdue: days, amount },
     };
-    assert.deepEqual(pick(botFromPolicy(withFacts)), baseline);
+    assert.deepEqual(pick(botFromPolicy(single(OVERDUE), withFacts)), baseline);
   }
 });
 

@@ -628,7 +628,10 @@ export default function RecommendationDecisionCard({
   );
 
   // Somente apresentacao: a politica deterministica ja decidiu.
-  const botPolicy = botFromPolicy(nba.action_space);
+  const botPolicy = botFromPolicy(
+    nba.decision,
+    nba.action_space,
+  );
 
   return (
     <div className="recommendation-card">

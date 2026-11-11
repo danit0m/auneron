@@ -2,6 +2,7 @@ import type { BotMood } from "../ui";
 import type {
   ActionEvaluation,
   ActionSpaceEvaluationResponse,
+  Decision,
 } from "../../types/nba";
 
 /**
@@ -13,16 +14,14 @@ import type {
  * `system_recommendable`, `reason` e `requires_external_fact`. Nao le
  * dias de atraso, valor nem situacao de fatura.
  *
- * Precedencia (varias acoes recomendaveis ao mesmo tempo):
- *   1. escalate_to_human    -> critico
- *   2. account.mark_overdue -> preocupado
- * Invariante do backend: no_action == (recommendable_actions vazia);
- * qualquer violacao (nas duas direcoes) -> pensando.
- * Com no_action=true: feliz (already_paid) / dormindo (motivo conhecido).
+ * A mensagem vem de `decision.selected_actions` (a mesma acao que o
+ * card mostra); o action_space e so evidencia e checagem. Fail-closed
+ * (-> pensando): decision_type incoerente com a lista, duplicados, acao
+ * fora de `recommendable_actions` ou sem `system_recommendable=true`,
+ * acao desconhecida, ou invariante no_action == (recommendable_actions
+ * vazia) violado. no_action: feliz (already_paid) / dormindo (demais);
+ * o motivo so e anexado se conhecido.
  * account.mark_paid nao tem ramo proprio (nunca e recomendavel pelo sistema).
- * Qualquer outra combinacao -> pensando (fail-closed). Uma acao so e dita
- * "recomendavel" se esta em `recommendable_actions` E tem
- * `system_recommendable=true`; qualquer divergencia cai em pensando.
  */
 
 /**
@@ -97,6 +96,7 @@ function isRecommended(
 }
 
 export function botFromPolicy(
+  decision: Decision,
   space: ActionSpaceEvaluationResponse,
 ): BotPresentation {
   // Invariante do backend (action_space_evaluator.py):
@@ -108,48 +108,91 @@ export function botFromPolicy(
     return NEUTRAL;
   }
 
-  if (!space.no_action) {
-    if (isRecommended(space, "escalate_to_human")) {
-      return {
-        mood: "critico",
-        message:
-          "A política indica encaminhar este título para atendimento humano.",
-      };
-    }
+  const selected = decision.selected_actions;
 
-    if (isRecommended(space, "account.mark_overdue")) {
-      return {
-        mood: "preocupado",
-        message:
-          "A política indica marcar este título como vencido. A decisão é de quem aprova.",
-      };
-    }
-
-    // Acao recomendavel desconhecida, ou lista sem
-    // system_recommendable=true correspondente: fail-closed.
+  // decision_type precisa bater com selected_actions, sem duplicados.
+  if (new Set(selected).size !== selected.length) {
     return NEUTRAL;
   }
 
-  if (space.no_action) {
+  const coherent =
+    (decision.decision_type === "no_action" &&
+      selected.length === 0) ||
+    (decision.decision_type === "single_action" &&
+      selected.length === 1) ||
+    (decision.decision_type === "action_bundle" &&
+      selected.length >= 2);
+
+  if (!coherent) {
+    return NEUTRAL;
+  }
+
+  if (decision.decision_type === "no_action") {
+    // A decisao diverge do space se ha acoes recomendaveis.
+    if (space.recommendable_actions.length > 0) {
+      return NEUTRAL;
+    }
+
     const markOverdue = findAction(
       space,
       "account.mark_overdue",
     );
-    const reason = markOverdue?.reason ?? null;
 
-    if (
-      reason === null ||
-      markOverdue?.system_recommendable === true ||
-      !Object.hasOwn(NO_ACTION_REASON_LABELS, reason)
-    ) {
+    if (markOverdue?.system_recommendable === true) {
       return NEUTRAL;
     }
 
+    const reason = markOverdue?.reason ?? null;
+    const label =
+      reason !== null &&
+      Object.hasOwn(NO_ACTION_REASON_LABELS, reason)
+        ? NO_ACTION_REASON_LABELS[reason]
+        : null;
+
     return {
       mood: reason === "already_paid" ? "feliz" : "dormindo",
-      message: `Nenhuma ação necessária. ${NO_ACTION_REASON_LABELS[reason]}`,
+      message:
+        label === null
+          ? "Nenhuma ação necessária."
+          : `Nenhuma ação necessária. ${label}`,
     };
   }
 
-  return NEUTRAL;
+  // Cada acao selecionada precisa estar no space como recomendavel.
+  if (!selected.every((key) => isRecommended(space, key))) {
+    return NEUTRAL;
+  }
+
+  const hasOverdue = selected.includes("account.mark_overdue");
+  const hasEscalate = selected.includes("escalate_to_human");
+
+  // Acao desconhecida selecionada: fail-closed.
+  if (
+    selected.length !==
+    Number(hasOverdue) + Number(hasEscalate)
+  ) {
+    return NEUTRAL;
+  }
+
+  if (hasOverdue && hasEscalate) {
+    return {
+      mood: "critico",
+      message:
+        "A política indica marcar este título como vencido e encaminhá-lo para atendimento humano. A decisão é de quem aprova.",
+    };
+  }
+
+  if (hasEscalate) {
+    return {
+      mood: "critico",
+      message:
+        "A política indica encaminhar este título para atendimento humano.",
+    };
+  }
+
+  return {
+    mood: "preocupado",
+    message:
+      "A política indica marcar este título como vencido. A decisão é de quem aprova.",
+  };
 }
