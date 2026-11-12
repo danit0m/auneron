@@ -49,7 +49,7 @@
 .ui-bot-dormindo .ui-bot-body{animation:ui-bot-breathe 4s ease-in-out infinite;opacity:.8}
 .ui-bot-blink{animation:ui-bot-blink 5s infinite}
 
-.ui-bot-message{position:relative;max-width:22rem;margin:0;padding:var(--space-3) var(--space-4);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);background:var(--surface-elevated);color:var(--text-secondary);font-size:var(--font-sm);line-height:var(--line-normal);box-shadow:var(--shadow-card)}
+.ui-bot-message{position:relative;min-width:0;max-width:22rem;white-space:normal;overflow-wrap:anywhere;margin:0;padding:var(--space-3) var(--space-4);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);background:var(--surface-elevated);color:var(--text-secondary);font-size:var(--font-sm);line-height:var(--line-normal);box-shadow:var(--shadow-card)}
 .ui-bot-message::before{content:"";position:absolute;left:-6px;top:50%;width:10px;height:10px;margin-top:-5px;border-left:1px solid var(--border-subtle);border-bottom:1px solid var(--border-subtle);background:inherit;transform:rotate(45deg)}
 [data-theme="neon"] .ui-bot-message{-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 
