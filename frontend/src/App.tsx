@@ -18,6 +18,7 @@ import Clientes from "./pages/Clientes";
 import { Cockpit } from "./pages/Cockpit";
 import ExecutiveCenter from "./pages/ExecutiveCenter";
 import Login from "./pages/Login";
+import Recebiveis from "./pages/Recebiveis";
 import Recomendacoes from "./pages/Recomendacoes";
 import { Upload } from "./pages/Upload";
 import AccessDenied from "./pages/AccessDenied";
@@ -83,6 +84,15 @@ function App() {
             element={
               <ProtectedRoute permission="approval:read">
                 <Approvals />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/recebiveis"
+            element={
+              <ProtectedRoute permission="approval:read">
+                <Recebiveis />
               </ProtectedRoute>
             }
           />
