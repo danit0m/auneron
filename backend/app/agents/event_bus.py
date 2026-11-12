@@ -1,7 +1,10 @@
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from app.orchestrator import AIOrchestrator
+
+logger = logging.getLogger(__name__)
 
 LegacyHandler = Callable[
     [dict[str, Any]],
@@ -61,12 +64,23 @@ class EventBus:
 
         A decisão e a seleção de agentes podem ser observadas, mas nenhum
         ExecutionPipeline ou handler legado é executado a partir desta porta.
+
+        O Orchestrator é observe-only: uma falha nele é registrada e nunca
+        propagada a quem publica (o fato de negócio já foi gravado).
+        BaseException (KeyboardInterrupt, SystemExit) continua passando.
         """
 
-        AIOrchestrator.observe(
-            event_name=event_name,
-            payload=payload,
-        )
+        try:
+            AIOrchestrator.observe(
+                event_name=event_name,
+                payload=payload,
+            )
+        except Exception:
+            logger.exception(
+                "Falha observe-only do orquestrador ao publicar o evento %r; "
+                "ignorada.",
+                event_name,
+            )
 
 
 event_bus = EventBus()
