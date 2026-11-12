@@ -1,42 +1,34 @@
 import {
   AlertTriangle,
-  CheckCircle2,
-  Clock3,
   Plus,
   RefreshCw,
   Search,
-  Users,
-  WalletCards,
 } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
 import api, {
   getApiErrorMessage,
 } from "../api/api";
-import ClienteClassificacaoModal from "../components/clientes/ClienteClassificacaoModal";
 import ClienteModal from "../components/clientes/ClienteModal";
 import ClienteTable from "../components/clientes/ClienteTable";
+import SaudeCarteira from "../components/clientes/SaudeCarteira";
 import ConfirmDeleteModal from "../components/clientes/ConfirmDeleteModal";
 import { Header } from "../components/layout/Header";
 import {
-  groupAccountsForClassification,
-  isCurrentClassificationCycle,
-  pruneOrphanClassificationState,
-} from "../lib/classification-grouping";
+  filtrarContas,
+  pluralizarClientes,
+  resumirCadastro,
+  type FiltroCarteira,
+} from "../lib/carteira";
 import type {
   Account,
   AccountCreate,
 } from "../types/account";
-import type {
-  AccountClassificationResponse,
-  ClassificationUIState,
-} from "../types/classification";
 
 function formatarMoeda(valor: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -53,7 +45,8 @@ export default function Clientes() {
   const [erro, setErro] = useState("");
 
   const [pesquisa, setPesquisa] = useState("");
-  const [statusFiltro, setStatusFiltro] = useState("todos");
+  const [filtroCarteira, setFiltroCarteira] =
+    useState<FiltroCarteira>(null);
 
   const [modalAberto, setModalAberto] = useState(false);
   const [clienteSelecionado, setClienteSelecionado] =
@@ -67,20 +60,6 @@ export default function Clientes() {
     useState<Account | null>(null);
   const [excluindo, setExcluindo] = useState(false);
   const [erroExclusao, setErroExclusao] = useState("");
-
-  // Fatia 2C -- classificacao comportamental do cliente (read-only,
-  // Fatia 2B). Indexado por account_id para cobrir toda linha da
-  // tabela, inclusive contas com email=null.
-  const [classificacoes, setClassificacoes] = useState<
-    Record<number, ClassificationUIState>
-  >({});
-
-  const cicloClassificacaoRef = useRef(0);
-
-  const [modalClassificacaoAberto, setModalClassificacaoAberto] =
-    useState(false);
-  const [classificacaoSelecionada, setClassificacaoSelecionada] =
-    useState<AccountClassificationResponse | null>(null);
 
   const carregarClientes = useCallback(
     async (mostrarCarregamento = true) => {
@@ -137,190 +116,40 @@ export default function Clientes() {
     };
   }, [carregarClientes]);
 
-  // Fatia 2C -- busca a classificacao de cada cliente, deduplicada por
-  // e-mail (1 request por e-mail unico; contas com email=null nunca
-  // sao agrupadas entre si). Read-only: nao recalcula, nao cria, nao
-  // altera nada -- so le o que a Fatia 2B ja expoe.
-  useEffect(() => {
-    const ciclo = cicloClassificacaoRef.current + 1;
-    cicloClassificacaoRef.current = ciclo;
-
-    // Reset intencional e sincrono do estado exibido para "loading" ao
-    // trocar a lista de clientes (padrao documentado pelo proprio React
-    // -- "resetting state when a prop changes"), para nunca mostrar a
-    // classificacao velha de um cliente enquanto o novo ciclo de busca
-    // esta em voo. A regra react-hooks/set-state-in-effect e uma
-    // recomendacao geral contra cascatas de render evitaveis, nao uma
-    // proibicao categorica -- aqui o reset e o proprio requisito do
-    // contrato UX (estado "loading" explicito), entao o disable e
-    // deliberado e escopado so a esta linha.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setClassificacoes((estadoAtual) => {
-      const semOrfaos = pruneOrphanClassificationState(
-        estadoAtual,
-        clientes.map((cliente) => cliente.id),
-      );
-
-      const carregando: Record<number, ClassificationUIState> = {
-        ...semOrfaos,
-      };
-
-      for (const cliente of clientes) {
-        carregando[cliente.id] = { kind: "loading" };
-      }
-
-      return carregando;
-    });
-
-    if (clientes.length === 0) {
-      return;
-    }
-
-    const grupos = groupAccountsForClassification(clientes);
-
-    void Promise.allSettled(
-      grupos.map(async (grupo) => {
-        try {
-          const response = await api.get<AccountClassificationResponse>(
-            `/accounts/${grupo.representativeAccountId}/classification`,
-          );
-
-          return {
-            grupo,
-            estado: {
-              kind: "resolved" as const,
-              data: response.data,
-            },
-          };
-        } catch (error) {
-          // 404, erro de rede ou 5xx -- tudo vira "Indisponível" no
-          // contrato congelado. Nunca é reinterpretado como
-          // not_classified_yet, que só existe quando o backend
-          // devolve 200 explicitamente com esse status.
-          console.error(
-            "Erro ao carregar classificação do cliente:",
-            error,
-          );
-
-          return {
-            grupo,
-            estado: { kind: "request_failed" as const },
-          };
-        }
-      }),
-    ).then((resultados) => {
-      if (
-        !isCurrentClassificationCycle(
-          ciclo,
-          cicloClassificacaoRef.current,
-        )
-      ) {
-        // Uma busca mais nova ja foi disparada -- descarta esta
-        // resposta obsoleta para nao sobrescrever o ciclo atual.
-        return;
-      }
-
-      setClassificacoes((estadoAtual) => {
-        const proximoEstado = { ...estadoAtual };
-
-        for (const resultado of resultados) {
-          if (resultado.status !== "fulfilled") {
-            continue;
-          }
-
-          const { grupo, estado } = resultado.value;
-
-          for (const accountId of grupo.accountIds) {
-            proximoEstado[accountId] = estado;
-          }
-        }
-
-        return proximoEstado;
-      });
-    });
-  }, [clientes]);
-
-  function abrirModalClassificacao(
-    _accountId: number,
-    estado: ClassificationUIState,
-  ) {
-    // Modal só abre para status="classified" -- inclui
-    // INSUFFICIENT_DATA (é classificacao real e persistida), mas
-    // nunca not_classified_yet/loading/request_failed, que nao tem
-    // evidencia para detalhar.
-    if (
-      estado.kind !== "resolved" ||
-      estado.data.status !== "classified"
-    ) {
-      return;
-    }
-
-    setClassificacaoSelecionada(estado.data);
-    setModalClassificacaoAberto(true);
-  }
-
-  function fecharModalClassificacao() {
-    setModalClassificacaoAberto(false);
-    setClassificacaoSelecionada(null);
-  }
+  // Referência de "hoje" renovada a cada nova lista carregada; a
+  // mesma data alimenta cards, filtros e a coluna Status da tabela.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const hoje = useMemo(() => new Date(), [clientes]);
 
   const clientesFiltrados = useMemo(() => {
     const pesquisaNormalizada = pesquisa
       .trim()
       .toLowerCase();
 
-    return clientes.filter((cliente) => {
+    return filtrarContas(
+      clientes,
+      hoje,
+      filtroCarteira,
+    ).filter((cliente) => {
       const nome = cliente.cliente.toLowerCase();
       const email = (cliente.email || "").toLowerCase();
       const whatsapp = (
         cliente.whatsapp || ""
       ).toLowerCase();
-      const status = cliente.status.toLowerCase();
 
-      const correspondePesquisa =
+      return (
         !pesquisaNormalizada ||
         nome.includes(pesquisaNormalizada) ||
         email.includes(pesquisaNormalizada) ||
-        whatsapp.includes(pesquisaNormalizada);
-
-      const correspondeStatus =
-        statusFiltro === "todos" ||
-        status === statusFiltro;
-
-      return correspondePesquisa && correspondeStatus;
+        whatsapp.includes(pesquisaNormalizada)
+      );
     });
-  }, [clientes, pesquisa, statusFiltro]);
+  }, [clientes, hoje, pesquisa, filtroCarteira]);
 
-  const resumo = useMemo(() => {
-    const pagos = clientes.filter(
-      (cliente) =>
-        cliente.status.toLowerCase() === "pago",
-    ).length;
-
-    const abertos = clientes.filter(
-      (cliente) =>
-        cliente.status.toLowerCase() === "aberto",
-    ).length;
-
-    const atrasados = clientes.filter(
-      (cliente) =>
-        cliente.status.toLowerCase() === "atrasado",
-    ).length;
-
-    const valorTotal = clientes.reduce(
-      (total, cliente) =>
-        total + cliente.valor,
-      0,
-    );
-
-    return {
-      total: clientes.length,
-      pagos,
-      abertos,
-      atrasados,
-      valorTotal,
-    };
-  }, [clientes]);
+  const cadastro = useMemo(
+    () => resumirCadastro(clientes),
+    [clientes],
+  );
 
   function abrirNovoCliente() {
     setClienteSelecionado(null);
@@ -462,26 +291,15 @@ export default function Clientes() {
   return (
     <div className="page">
       <Header
-        title="Gestão de Clientes"
-        subtitle="Cadastre, edite e acompanhe sua carteira de clientes"
+        title="Clientes"
       />
 
       <section className="page-content clientes-page">
         <div className="clientes-page-heading">
-          <div>
-            <span className="clientes-page-eyebrow">
-              Carteira de clientes
-            </span>
-
-            <h2>
-              Visão geral dos clientes
-            </h2>
-
-            <p>
-              Consulte contatos, valores,
-              vencimentos e situação financeira.
-            </p>
-          </div>
+          <p>
+            {pluralizarClientes(cadastro.clientes)} ·{" "}
+            {formatarMoeda(cadastro.valorCadastrado)} cadastrados
+          </p>
 
           <button
             type="button"
@@ -493,91 +311,13 @@ export default function Clientes() {
           </button>
         </div>
 
-        <div className="clientes-summary-grid">
-          <button
-            type="button"
-            className="clientes-summary-card clientes-summary-card--interactive"
-            aria-pressed={statusFiltro === "todos"}
-            onClick={() => setStatusFiltro("todos")}
-          >
-            <div className="clientes-summary-icon clientes-summary-blue">
-              <Users size={21} />
-            </div>
+        <SaudeCarteira
+          contas={clientes}
+          filtro={filtroCarteira}
+          onFiltrar={setFiltroCarteira}
+        />
 
-            <div>
-              <span>Total de clientes</span>
-              <strong>{resumo.total}</strong>
-              <small>Cadastros ativos</small>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            className="clientes-summary-card clientes-summary-card--interactive"
-            aria-pressed={statusFiltro === "pago"}
-            onClick={() => setStatusFiltro("pago")}
-          >
-            <div className="clientes-summary-icon clientes-summary-green">
-              <CheckCircle2 size={21} />
-            </div>
-
-            <div>
-              <span>Pagos</span>
-              <strong>{resumo.pagos}</strong>
-              <small>Clientes em dia</small>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            className="clientes-summary-card clientes-summary-card--interactive"
-            aria-pressed={statusFiltro === "aberto"}
-            onClick={() => setStatusFiltro("aberto")}
-          >
-            <div className="clientes-summary-icon clientes-summary-orange">
-              <Clock3 size={21} />
-            </div>
-
-            <div>
-              <span>Em aberto</span>
-              <strong>{resumo.abertos}</strong>
-              <small>Aguardando pagamento</small>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            className="clientes-summary-card clientes-summary-card--interactive"
-            aria-pressed={statusFiltro === "atrasado"}
-            onClick={() => setStatusFiltro("atrasado")}
-          >
-            <div className="clientes-summary-icon clientes-summary-red">
-              <AlertTriangle size={21} />
-            </div>
-
-            <div>
-              <span>Atrasados</span>
-              <strong>{resumo.atrasados}</strong>
-              <small>Exigem atenção</small>
-            </div>
-          </button>
-
-          <article className="clientes-summary-card">
-            <div className="clientes-summary-icon clientes-summary-purple">
-              <WalletCards size={21} />
-            </div>
-
-            <div>
-              <span>Valor total</span>
-              <strong>
-                {formatarMoeda(resumo.valorTotal)}
-              </strong>
-              <small>Carteira financeira</small>
-            </div>
-          </article>
-        </div>
-
-        <section className="panel clientes-panel">
+        <section id="clientes-lista" className="panel clientes-panel">
           <div className="clientes-toolbar">
             <div className="clientes-search">
               <Search size={18} />
@@ -594,30 +334,6 @@ export default function Clientes() {
             </div>
 
             <div className="clientes-toolbar-actions">
-              <select
-                className="clientes-status-filter"
-                value={statusFiltro}
-                aria-label="Filtrar clientes por status"
-                onChange={(event) =>
-                  setStatusFiltro(
-                    event.target.value,
-                  )
-                }
-              >
-                <option value="todos">
-                  Todos os status
-                </option>
-                <option value="pago">
-                  Pago
-                </option>
-                <option value="aberto">
-                  Aberto
-                </option>
-                <option value="atrasado">
-                  Atrasado
-                </option>
-              </select>
-
               <button
                 type="button"
                 className="secondary-button"
@@ -652,17 +368,16 @@ export default function Clientes() {
               <strong>
                 {clientes.length}
               </strong>{" "}
-              clientes
+              títulos
             </span>
 
-            {(pesquisa ||
-              statusFiltro !== "todos") && (
+            {(pesquisa || filtroCarteira) && (
               <button
                 type="button"
                 className="clear-filter-button"
                 onClick={() => {
                   setPesquisa("");
-                  setStatusFiltro("todos");
+                  setFiltroCarteira(null);
                 }}
               >
                 Limpar filtros
@@ -699,10 +414,9 @@ export default function Clientes() {
           ) : (
             <ClienteTable
               clientes={clientesFiltrados}
-              classificacoes={classificacoes}
+              hoje={hoje}
               onEdit={editarCliente}
               onDelete={abrirConfirmacaoExclusao}
-              onClassificacaoClick={abrirModalClassificacao}
             />
           )}
         </section>
@@ -727,14 +441,6 @@ export default function Clientes() {
         onClose={fecharConfirmacaoExclusao}
         onConfirm={confirmarExclusao}
       />
-
-      {modalClassificacaoAberto && classificacaoSelecionada && (
-        <ClienteClassificacaoModal
-          aberto
-          classificacao={classificacaoSelecionada}
-          onClose={fecharModalClassificacao}
-        />
-      )}
     </div>
   );
 }

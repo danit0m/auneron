@@ -974,6 +974,61 @@ tbody tr:hover {
   padding: 14px 18px;
 }
 
+.clientes-table .status-badge {
+  text-transform: none;
+}
+
+@media (max-width: 900px) {
+  .clientes-table {
+    min-width: 0;
+  }
+
+  .clientes-table th {
+    padding: 10px 8px;
+    white-space: normal;
+  }
+
+  .clientes-table td {
+    padding: 10px 8px;
+  }
+
+  .clientes-table .cliente-avatar,
+  .clientes-table .cliente-name span,
+  .clientes-table .cliente-date svg {
+    display: none;
+  }
+
+  .clientes-table .cliente-name strong {
+    max-width: none;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+
+  .clientes-table td:first-child {
+    min-width: 0;
+    max-width: 130px;
+  }
+
+  .clientes-table .cliente-contact span {
+    max-width: 120px;
+  }
+
+  .clientes-table .status-badge {
+    white-space: normal;
+    text-align: center;
+  }
+
+  .clientes-table .cliente-row-actions {
+    gap: 4px;
+  }
+
+  .clientes-table .cliente-action-button {
+    width: 30px;
+    height: 30px;
+  }
+}
+
 .cliente-identity {
   display: flex;
   align-items: center;
