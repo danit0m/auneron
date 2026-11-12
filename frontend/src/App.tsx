@@ -15,7 +15,7 @@ import AgentOperations from "./pages/AgentOperations";
 import Approvals from "./pages/Approvals";
 import Brain from "./pages/Brain";
 import Clientes from "./pages/Clientes";
-import { Dashboard } from "./pages/Dashboard";
+import { Cockpit } from "./pages/Cockpit";
 import ExecutiveCenter from "./pages/ExecutiveCenter";
 import Login from "./pages/Login";
 import Recomendacoes from "./pages/Recomendacoes";
@@ -37,7 +37,7 @@ function App() {
             path="/"
             element={
               <ProtectedRoute permission="dashboard.view">
-                <Dashboard />
+                <Cockpit />
               </ProtectedRoute>
             }
           />

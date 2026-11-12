@@ -60,7 +60,7 @@ interface MenuSectionProps {
 
 const principalItems: MenuItem[] = [
   {
-    label: "Dashboard",
+    label: "Cockpit",
     path: "/",
     icon: LayoutDashboard,
     permission: "dashboard.view",
