@@ -3,6 +3,7 @@ import {
   BrainCircuit,
   ClipboardCheck,
   FileUp,
+  HandCoins,
   LayoutDashboard,
   Lightbulb,
   LockKeyhole,
@@ -65,6 +66,12 @@ const principalItems: MenuItem[] = [
     icon: LayoutDashboard,
     permission: "dashboard.view",
     end: true,
+  },
+  {
+    label: "Recebíveis",
+    path: "/recebiveis",
+    icon: HandCoins,
+    permission: "approval:read",
   },
   {
     label: "Clientes",
