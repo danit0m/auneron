@@ -230,3 +230,29 @@ test('traduzirRazao preserva textos originais do card', () => {
   assert.equal(traduzirRazao('account_paid'), 'Esta conta já foi paga.');
   assert.equal(traduzirRazao('codigo_novo'), 'codigo_novo');
 });
+
+test('traduzirRazao traduz motivos de marcacao (mark_overdue / mark_paid)', () => {
+  assert.equal(traduzirRazao('status_not_open'), 'Esta conta não está em aberto.');
+  assert.equal(traduzirRazao('already_paid'), 'Esta conta já foi paga.');
+  assert.equal(traduzirRazao('not_overdue'), 'Esta conta ainda não está em atraso.');
+});
+
+test('traduzirRazao mantem os 4 motivos de escalacao inalterados', () => {
+  assert.equal(
+    traduzirRazao('due_date_mismatch'),
+    'Data de vencimento não corresponde ao episódio atual.',
+  );
+  assert.equal(traduzirRazao('account_paid'), 'Esta conta já foi paga.');
+  assert.equal(traduzirRazao('lifecycle_not_overdue'), 'Esta conta não está mais em atraso.');
+  assert.equal(
+    traduzirRazao('active_escalation_exists'),
+    'Este episódio já tem um escalonamento em andamento.',
+  );
+});
+
+test('traduzirRazao: desconhecido, null e chaves do prototype devolvem o proprio valor', () => {
+  assert.equal(traduzirRazao('motivo_inexistente'), 'motivo_inexistente');
+  assert.equal(traduzirRazao(null), null);
+  assert.equal(traduzirRazao('__proto__'), '__proto__');
+  assert.equal(traduzirRazao('toString'), 'toString');
+});

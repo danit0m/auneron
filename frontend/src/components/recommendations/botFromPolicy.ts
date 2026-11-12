@@ -51,7 +51,17 @@ export function traduzirRazao(
     return null;
   }
 
-  return INELIGIBILITY_REASON_LABELS[reason] ?? reason;
+  if (Object.hasOwn(INELIGIBILITY_REASON_LABELS, reason)) {
+    return INELIGIBILITY_REASON_LABELS[reason];
+  }
+
+  // Motivos de marcacao (mark_overdue / mark_paid) tambem aparecem
+  // na evidencia do card.
+  if (Object.hasOwn(NO_ACTION_REASON_LABELS, reason)) {
+    return NO_ACTION_REASON_LABELS[reason];
+  }
+
+  return reason;
 }
 
 /**
