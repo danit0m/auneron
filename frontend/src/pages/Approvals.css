@@ -114,3 +114,20 @@
 .approvals-decided-label {
   color: var(--text-subtle);
 }
+
+.approvals-section-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.approvals-action-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  white-space: normal;
+}
+
+.approvals-action-cell .ui-bot-message {
+  display: none;
+}
