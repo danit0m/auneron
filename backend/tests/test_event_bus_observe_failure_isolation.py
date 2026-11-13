@@ -1,13 +1,15 @@
 """A falha do orquestrador observe-only nao pode afetar quem publica o evento."""
 
+import importlib
 import logging
 
 import pytest
 
 from app.agents.event_bus import EventBus
-from app.orchestrator import decision_engine as decision_engine_module
-from app.orchestrator import orchestrator as orchestrator_module
 from app.orchestrator.orchestrator import AIOrchestrator
+
+decision_engine_module = importlib.import_module("app.orchestrator.decision_engine")
+orchestrator_module = importlib.import_module("app.orchestrator.orchestrator")
 
 ARROW = "→"
 
