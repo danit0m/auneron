@@ -1,0 +1,50 @@
+/* =====================================
+   COMPLETAR CONTATO (modal enxuto)
+===================================== */
+
+.contato-cliente-modal {
+  width: min(520px, 100%);
+}
+
+.contato-cliente-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.contato-cliente-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 13px 14px;
+  border: 1px solid var(--color-warning-300);
+  border-radius: 12px;
+  background: var(--color-warning-50);
+  color: var(--color-warning-700);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.contato-cliente-aviso svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.contato-cliente-aviso div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.cliente-action-button.cliente-contact-button {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}

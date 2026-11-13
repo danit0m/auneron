@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -8,6 +9,7 @@ from pydantic import (
     EmailStr,
     Field,
     PlainSerializer,
+    field_validator,
     model_validator,
 )
 
@@ -116,6 +118,54 @@ class AccountUpdate(BaseModel):
     @classmethod
     def _no_title_reference(cls, data):
         return _reject_title_reference_keys(data)
+
+
+# Fatia "Contato por cliente": completa e-mail/WhatsApp de todos os titulos de
+# um cliente. A regra de WhatsApp vale so aqui (AccountCreate/AccountUpdate nao
+# mudam) e o frontend (lib/contatoCliente.ts) espelha a mesma regra.
+_WHATSAPP_SEPARATORS = re.compile(r"[\s\-()]")
+_WHATSAPP_NORMALIZED = re.compile(r"^\+?[0-9]{10,15}$")
+
+
+def normalize_whatsapp(value: str) -> str:
+    cleaned = _WHATSAPP_SEPARATORS.sub("", value)
+    if not _WHATSAPP_NORMALIZED.fullmatch(cleaned):
+        raise ValueError(
+            "WhatsApp inválido: use apenas números, com + opcional no "
+            "início, de 10 a 15 dígitos (espaços, hífens e parênteses "
+            "são aceitos)."
+        )
+    return cleaned
+
+
+class ClientContactUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    cliente: str = Field(min_length=2, max_length=150)
+    email: EmailStr | None = None
+    whatsapp: str | None = None
+
+    @field_validator("whatsapp")
+    @classmethod
+    def _normalize_whatsapp(cls, value):
+        # Branco equivale a ausente (nao altera o campo).
+        if value is None or value == "":
+            return None
+        return normalize_whatsapp(value)
+
+    @model_validator(mode="after")
+    def _require_some_contact(self) -> "ClientContactUpdate":
+        if self.email is None and self.whatsapp is None:
+            raise ValueError(
+                "Informe ao menos um contato: e-mail ou WhatsApp."
+            )
+        return self
+
+
+class ClientContactUpdateResponse(BaseModel):
+    cliente: str
+    matched: int
+    updated: int
 
 
 class ReceivableLifecycle(BaseModel):

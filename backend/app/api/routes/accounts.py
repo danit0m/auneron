@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.event_bus import event_bus
@@ -32,6 +32,8 @@ from app.schemas.account import (
     AccountResponse,
     AccountUpdate,
     ClientClassificationDetail,
+    ClientContactUpdate,
+    ClientContactUpdateResponse,
     TitleReferenceAssignRequest,
     TitleReferenceAssignResponse,
 )
@@ -268,6 +270,68 @@ def create_account(
         )
 
     return account
+
+
+@router.put(
+    "/client-contact",
+    response_model=ClientContactUpdateResponse,
+)
+def update_client_contact(
+    payload: ClientContactUpdate,
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("clients.manage")
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Completa e-mail/WhatsApp em todos os titulos do cliente (nome
+    normalizado por lower(trim), com lower aplicado pelo Postgres nos dois
+    lados; o strip do corpo vem do Pydantic). Campo ausente nao altera. Nao toca valor,
+    vencimento nem status. Uma linha de auditoria por conta efetivamente
+    alterada; tudo no mesmo commit.
+    """
+    try:
+        lock_account_identity(db)
+    except AccountWritersBusy:
+        raise _writers_busy() from None
+
+    actor = audit_actor(authenticated)
+
+    accounts = list(
+        db.execute(
+            select(Account)
+            .where(
+                func.lower(func.trim(Account.cliente))
+                == func.lower(payload.cliente)
+            )
+            .order_by(Account.id.asc())
+            .with_for_update()
+        ).scalars()
+    )
+
+    if not accounts:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cliente não encontrado.",
+        )
+
+    updated = 0
+    for account in accounts:
+        before = snapshot(account)
+        if payload.email is not None:
+            account.email = payload.email
+        if payload.whatsapp is not None:
+            account.whatsapp = payload.whatsapp
+        if record_update(db, before, account, actor):
+            updated += 1
+
+    db.commit()
+
+    return ClientContactUpdateResponse(
+        cliente=payload.cliente,
+        matched=len(accounts),
+        updated=updated,
+    )
 
 
 @router.put(
