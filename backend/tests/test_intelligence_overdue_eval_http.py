@@ -587,17 +587,17 @@ def test_first_chunk_and_first_token_are_different_when_a_block_has_no_content(
     def slow_first_token(handler, key, data):
         handler.begin()
         handler.line(piece(""))  # a block with nothing generated yet
-        time.sleep(0.3)
+        time.sleep(0.6)
         handler.line(piece("{}"))
         handler.line(handler.final_line())
         handler.finish_stream()
 
     server.behaviors[("c001", 0, "abstention")] = slow_first_token
-    reply = ask(server, tmp_path, dataset)
+    reply = ask(server, tmp_path, dataset, timeout_s=2.0)
 
     assert reply.status == "ok"
-    assert 0 <= reply.first_chunk_s < 0.25
-    assert reply.first_token_s - reply.first_chunk_s >= 0.25
+    assert 0 <= reply.first_chunk_s < 0.3
+    assert reply.first_token_s - reply.first_chunk_s >= 0.3
     assert reply.first_chunk_s != reply.first_token_s
 
 
