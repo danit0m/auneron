@@ -449,9 +449,8 @@ def main() -> None:
                 )
 
                 page.get_by_role(
-                    "region",
-                    name="Saúde da carteira",
-                    exact=True,
+                    "searchbox",
+                    name="Pesquisar clientes",
                 ).wait_for(
                     timeout=15000
                 )
