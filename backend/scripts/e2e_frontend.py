@@ -440,15 +440,17 @@ def main() -> None:
                         wait_until="domcontentloaded",
                     )
 
-                page.get_by_text(
-                    "Gestão de Clientes",
+                page.get_by_role(
+                    "heading",
+                    name="Clientes",
                     exact=True,
                 ).wait_for(
                     timeout=15000
                 )
 
-                page.get_by_text(
-                    "Carteira de clientes",
+                page.get_by_role(
+                    "region",
+                    name="Saúde da carteira",
                     exact=True,
                 ).wait_for(
                     timeout=15000
