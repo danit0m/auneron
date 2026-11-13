@@ -105,9 +105,9 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Testar confirmação de importação do frontend
-        working-directory: ${{ github.workspace }}
-        run: node --test frontend/tests/import-confirmation.test.cjs
+      - name: Testar frontend (node --test)
+        working-directory: frontend
+        run: npm test
 
       - name: Validar lint do frontend
         working-directory: frontend
