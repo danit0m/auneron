@@ -14,7 +14,10 @@ import {
 import api, {
   getApiErrorMessage,
 } from "../api/api";
+import InteligenciaResumo from "../components/inteligencia/InteligenciaResumo";
 import { Header } from "../components/layout/Header";
+import { AuneronBot } from "../components/ui";
+import { humorDaAprovacao } from "../lib/inteligencia";
 import { useAuth } from "../hooks/useAuth";
 import {
   getApprovalActionLabel,
@@ -206,8 +209,8 @@ export default function Approvals() {
     return (
       <div className="page">
         <Header
-          title="Aprovações"
-          subtitle="Ações governadas aguardando decisão humana"
+          title="Inteligência e aprovações"
+          subtitle="O que a IA identificou, resolveu e o que espera por você"
         />
 
         <div className="state-container">
@@ -221,8 +224,8 @@ export default function Approvals() {
   return (
     <div className="page">
       <Header
-        title="Aprovações"
-        subtitle="Ações governadas aguardando decisão humana"
+        title="Inteligência e aprovações"
+        subtitle="O que a IA identificou, resolveu e o que espera por você"
       />
 
       <section className="page-content approvals-page">
@@ -232,6 +235,12 @@ export default function Approvals() {
             <span>{erro}</span>
           </div>
         )}
+
+        <InteligenciaResumo gatilho={itens} />
+
+        <h2 className="approvals-section-title">
+          Aguardando sua decisão
+        </h2>
 
         <div className="panel approvals-panel">
           <div className="approvals-toolbar">
@@ -315,9 +324,22 @@ export default function Approvals() {
                   {itens.map((item) => (
                     <tr key={item.request_id}>
                       <td>
-                        {getApprovalActionLabel(
-                          item.skill_key,
-                        )}
+                        <div className="approvals-action-cell">
+                          {item.status ===
+                            "pending" && (
+                            <AuneronBot
+                              mood={humorDaAprovacao(
+                                item.risk_level,
+                              )}
+                              size="sm"
+                            />
+                          )}
+                          <span>
+                            {getApprovalActionLabel(
+                              item.skill_key,
+                            )}
+                          </span>
+                        </div>
                       </td>
 
                       <td>

@@ -1,0 +1,133 @@
+.inteligencia-resumo {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.inteligencia-resumo .ui-bot-message {
+  display: none;
+}
+
+.inteligencia-funil {
+  padding: var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+.inteligencia-funil h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.inteligencia-sub {
+  margin: 4px 0 var(--space-4);
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.inteligencia-etapas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inteligencia-etapa {
+  --etapa-cor: var(--color-primary-500);
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.inteligencia-etapa-autonomas {
+  --etapa-cor: var(--color-success-500);
+}
+
+.inteligencia-etapa-humanas {
+  --etapa-cor: var(--color-warning-500);
+}
+
+.inteligencia-etapa-verificadas {
+  --etapa-cor: var(--color-success-500);
+}
+
+.inteligencia-barra {
+  display: block;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--etapa-cor) 14%, var(--surface));
+}
+
+.inteligencia-barra > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 999px;
+  background: var(--etapa-cor);
+}
+
+.inteligencia-etapa strong {
+  min-width: 2ch;
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.inteligencia-cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--space-4);
+}
+
+.inteligencia-cartao {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+.inteligencia-cartao-texto {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  white-space: normal;
+}
+
+.inteligencia-cartao-texto span {
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.inteligencia-cartao-texto strong {
+  color: var(--text-primary);
+  font-size: 22px;
+}
+
+.inteligencia-cartao-texto small {
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .inteligencia-etapa {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .inteligencia-barra {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
