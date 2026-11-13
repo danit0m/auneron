@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from app.orchestrator.decision import (
@@ -12,6 +13,15 @@ from app.orchestrator.rules import (
     DecisionRule,
     build_context,
 )
+
+
+_log = logging.getLogger(__name__)
+
+
+def _emit(message: str = "") -> None:
+    """Registra a saída de observação via logging (ASCII-safe, sem exceção de codificação)."""
+
+    _log.info("%s", message)
 
 
 class DecisionEngine:
@@ -113,70 +123,70 @@ class DecisionEngine:
         rule: DecisionRule,
         decision_id: str,
     ) -> None:
-        print()
-        print(
+        _emit()
+        _emit(
             "------------------------------------------"
         )
-        print("DECISION ENGINE")
-        print(
+        _emit("DECISION ENGINE")
+        _emit(
             "------------------------------------------"
         )
-        print(
+        _emit(
             f"Regra aplicada: {rule.name}"
         )
-        print(
+        _emit(
             "Prioridade da regra: "
             f"{rule.priority}"
         )
-        print(
+        _emit(
             "Decisão: "
             f"{decision.decision_name}"
         )
-        print(
+        _emit(
             "Confiança: "
             f"{decision.confidence * 100:.1f}%"
         )
-        print(
+        _emit(
             f"Cliente: {context.cliente}"
         )
-        print(
+        _emit(
             f"Valor: R$ {context.valor:,.2f}"
         )
-        print(
+        _emit(
             f"Status: {context.status}"
         )
-        print(
+        _emit(
             "Dias em atraso: "
             f"{context.dias_atraso}"
         )
-        print(
+        _emit(
             f"Decision ID: {decision_id}"
         )
 
         if decision.selected_agents:
-            print(
+            _emit(
                 "Agentes definidos: "
-                + " → ".join(
+                + " -> ".join(
                     decision.selected_agents,
                 )
             )
         else:
-            print(
+            _emit(
                 "Agentes definidos: nenhum"
             )
 
-        print("Sinais identificados:")
+        _emit("Sinais identificados:")
 
         for signal in decision.signals:
-            print(
+            _emit(
                 f"- {signal.name}: "
                 f"{signal.value}"
             )
 
-        print(
+        _emit(
             "------------------------------------------"
         )
-        print()
+        _emit()
 
 
 decision_engine = DecisionEngine()

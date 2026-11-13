@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,15 @@ from app.orchestrator.registry import (
 from app.orchestrator.safety import (
     LegacyAutonomyExecutionBlockedError,
 )
+
+
+_log = logging.getLogger(__name__)
+
+
+def _emit(message: str = "") -> None:
+    """Registra a saída de observação via logging (ASCII-safe, sem exceção de codificação)."""
+
+    _log.info("%s", message)
 
 
 class AIOrchestrator:
@@ -66,18 +76,18 @@ class AIOrchestrator:
             ),
         )
 
-        print("Modo: OBSERVE-ONLY")
-        print(
+        _emit("Modo: OBSERVE-ONLY")
+        _emit(
             "Execução legada: BLOQUEADA"
         )
-        print(
+        _emit(
             "Agentes selecionados são metadado consultivo; "
             "nenhum handler foi executado."
         )
-        print(
+        _emit(
             "=========================================="
         )
-        print()
+        _emit()
 
         return decision
 
@@ -101,42 +111,42 @@ class AIOrchestrator:
         available_count: int,
         selected_count: int,
     ) -> None:
-        print()
-        print(
+        _emit()
+        _emit(
             "=========================================="
         )
-        print("AI ORCHESTRATOR")
-        print(
+        _emit("AI ORCHESTRATOR")
+        _emit(
             "=========================================="
         )
-        print(f"Evento: {event_name}")
-        print(
+        _emit(f"Evento: {event_name}")
+        _emit(
             "Horário: "
             f"{datetime.now().isoformat(timespec='seconds')}"
         )
-        print(
+        _emit(
             f"Decisão: {decision.decision_name}"
         )
-        print(
+        _emit(
             "Confiança: "
             f"{decision.confidence * 100:.1f}%"
         )
-        print(
+        _emit(
             f"Motivo: {decision.reason}"
         )
-        print(
+        _emit(
             "Agentes disponíveis: "
             f"{available_count}"
         )
-        print(
+        _emit(
             "Agentes selecionados: "
             f"{selected_count}"
         )
 
         if decision.selected_agents:
-            print(
+            _emit(
                 "Plano observado: "
-                + " → ".join(
+                + " -> ".join(
                     decision.selected_agents
                 )
             )
