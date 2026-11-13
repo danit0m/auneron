@@ -479,7 +479,13 @@
   margin-top: var(--space-6);
 }
 
+/* O rotulo ja aparece na legenda e no aria-label do SVG; o balao transbordaria na grade. */
+.ui-showcase-bot-grid .ui-bot-message {
+  display: none;
+}
+
 .ui-showcase-bot-grid > div {
+  min-width: 0;
   display: grid;
   justify-items: center;
   gap: var(--space-2);
