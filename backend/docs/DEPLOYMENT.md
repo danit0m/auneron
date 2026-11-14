@@ -401,3 +401,68 @@ Após cada publicação:
 13. valide `HTTP 429`/`Retry-After` em ambiente de teste controlado.
 
 Use também `RELEASE_CHECKLIST.md`.
+
+## Script de homologacao local
+
+`backend/scripts/homologacao.ps1` opera a homologacao local no Windows
+(PowerShell 5.1) com comandos fixos: `configurar`, `status`,
+`versao-banco`, `pendentes`, `backup`, `migrar`, `subir-backend`,
+`parar-backend`, `subir-frontend`, `parar-frontend`. Qualquer outro
+comando e recusado. Nao existe comando que imprima, exporte ou copie
+valores de segredos, e o script nao tem downgrade.
+
+Os segredos (`DATABASE_URL`, `API_KEY`) ficam no cofre
+`%LOCALAPPDATA%\Auneron\homologacao\cofre.xml` (ou `-Cofre <caminho>`),
+fora do repositorio: nomes em claro, valores cifrados com DPAPI do
+usuario do Windows. As demais variaveis (`APP_ENV=development`,
+`CORS_ORIGINS` para 127.0.0.1:5180, `FORWARDED_ALLOW_IPS`,
+`BUSINESS_TIMEZONE`, `INTELLIGENCE_MODE=off` etc.) sao padroes nao
+secretos embutidos no script. Os segredos chegam aos processos filhos
+apenas por variaveis de ambiente, nunca por argumento de linha de comando.
+
+Fluxo (a partir da raiz do checkout; `<P>` e a pasta do checkout a usar):
+
+```powershell
+# 1. uma vez, pelo diretor, em terminal interativo
+.\backend\scripts\homologacao.ps1 configurar
+# 2. rotina
+.\backend\scripts\homologacao.ps1 status
+.\backend\scripts\homologacao.ps1 versao-banco -Pasta <P>
+.\backend\scripts\homologacao.ps1 pendentes    -Pasta <P>
+.\backend\scripts\homologacao.ps1 backup       # imprime caminho, tamanho e SHA-256
+.\backend\scripts\homologacao.ps1 parar-backend -Confirmar
+.\backend\scripts\homologacao.ps1 migrar -Pasta <P> -ConfirmarBackup <arquivo.dump>
+.\backend\scripts\homologacao.ps1 subir-backend -Pasta <P>
+.\backend\scripts\homologacao.ps1 parar-frontend -Confirmar
+.\backend\scripts\homologacao.ps1 subir-frontend -Pasta <P>
+```
+
+Regras: `-Simular` mostra o que seria feito sem fazer; `migrar` exige
+backup com menos de 24 h e backend parado; `parar-*` so param o processo
+que escuta na porta fixa (8000/5180) e cuja linha de comando e o
+uvicorn `app.main:app` / o vite, e sem `-Confirmar` apenas mostram;
+`subir-frontend` exige `node_modules` (rode `npm ci` antes; o script nao
+instala nada). Logs ficam em `%LOCALAPPDATA%\Auneron\homologacao\logs\`
+e o estado (PID/pasta) em `estado.json` na mesma pasta.
+
+Limite do DPAPI: o cofre e cifrado por usuario do Windows. Protege contra
+leitura casual e contra segredo em texto puro em disco, mas NAO contra
+outro processo rodando como o mesmo usuario, que pode decifra-lo.
+
+Volta atras: suba de novo a pasta antiga (`subir-backend -Pasta <antiga>`).
+Migracoes ja aplicadas nao sao revertidas pelo script; a restauracao do
+backup (`pg_restore`) e manual e fora do script.
+
+Autoteste offline (sem banco, rede ou processos reais):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File backend\scripts\test_homologacao.ps1
+```
+
+Limite do `-Pasta`: o codigo do checkout indicado em `-Pasta` roda com os
+segredos no ambiente (alembic, uvicorn, vite). Por isso `-Pasta` deve ser
+sempre um checkout limpo de um commit da main ja revisado. O interpretador
+nao e configuravel: o script usa `backend\.venv\Scripts\python.exe` do
+checkout de `-Pasta` ou, senao, o `python.exe` do PATH (o atalho da
+Microsoft Store, em `WindowsApps`, e recusado). O interpretador escolhido
+aparece na saida de `-Simular` e de `subir-backend`.
