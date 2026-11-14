@@ -406,7 +406,8 @@ Use também `RELEASE_CHECKLIST.md`.
 
 `backend/scripts/homologacao.ps1` opera a homologacao local no Windows
 (PowerShell 5.1) com comandos fixos: `configurar`, `status`,
-`versao-banco`, `pendentes`, `backup`, `migrar`, `subir-backend`,
+`versao-banco`, `pendentes`, `backup`, `ensaiar`, `migrar`,
+`registrar-acao-pagamento`, `subir-backend`,
 `parar-backend`, `subir-frontend`, `parar-frontend`. Qualquer outro
 comando e recusado. Nao existe comando que imprima, exporte ou copie
 valores de segredos, e o script nao tem downgrade.
@@ -430,15 +431,41 @@ Fluxo (a partir da raiz do checkout; `<P>` e a pasta do checkout a usar):
 .\backend\scripts\homologacao.ps1 versao-banco -Pasta <P>
 .\backend\scripts\homologacao.ps1 pendentes    -Pasta <P>
 .\backend\scripts\homologacao.ps1 backup       # imprime caminho, tamanho e SHA-256
+.\backend\scripts\homologacao.ps1 ensaiar      -Pasta <P> -ConfirmarBackup <arquivo.dump>   # antes de parar qualquer servico
 .\backend\scripts\homologacao.ps1 parar-backend -Confirmar
 .\backend\scripts\homologacao.ps1 migrar -Pasta <P> -ConfirmarBackup <arquivo.dump>
+.\backend\scripts\homologacao.ps1 registrar-acao-pagamento -Pasta <P>   # uma vez por ambiente, depois da migracao
 .\backend\scripts\homologacao.ps1 subir-backend -Pasta <P>
 .\backend\scripts\homologacao.ps1 parar-frontend -Confirmar
 .\backend\scripts\homologacao.ps1 subir-frontend -Pasta <P>
 ```
 
+Ordem: backup -> ensaiar -> parar-backend -> migrar -> (registrar-acao-pagamento,
+uma vez por ambiente) -> subir-backend -> parar/subir-frontend.
+
+`ensaiar` prova, sem tocar no banco da homologacao, que o backup restaura e
+que as migracoes pendentes aplicam sem erro. Ele cria no MESMO servidor
+(mesmas credenciais, banco de manutencao `postgres`) um banco descartavel
+`auneron_ensaio_<yyyyMMddHHmmss>` (nome gerado pelo script), restaura o
+dump nele, roda `alembic current`, `upgrade head` e `current` com
+`DATABASE_URL` apontando so ao descartavel, exige um unico head e revisao
+final igual ao head, e SEMPRE remove o descartavel no fim (so o que ele
+mesmo criou). Exige que o usuario do banco tenha CREATEDB. Se a remocao
+falhar, o script informa o nome que sobrou e sai com erro. Em caso de
+sucesso grava o recibo `ensaios\ensaio-<data>.json` (sem segredos: SHA-256
+e caminho do dump, revisoes inicial e final, commit e estado da arvore do
+checkout, data). `migrar` recusa se nao houver recibo com o mesmo SHA-256
+do dump de `-ConfirmarBackup`, o mesmo commit do checkout de `-Pasta`,
+revisao final igual ao head atual, arvore limpa e menos de 24 h; nao ha
+parametro para pular essa exigencia (mensagem: rode `ensaiar` antes).
+
+`registrar-acao-pagamento` roda, em `<P>\backend`, exatamente
+`python -m scripts.register_account_mark_paid_skill` com o ambiente do
+cofre; o modulo e fixo no script e o registro e idempotente. Nao exige o
+backend parado.
+
 Regras: `-Simular` mostra o que seria feito sem fazer; `migrar` exige
-backup com menos de 24 h e backend parado; `parar-*` so param o processo
+backup com menos de 24 h, recibo de ensaio valido e backend parado; `parar-*` so param o processo
 que escuta na porta fixa (8000/5180) e cuja linha de comando e o
 uvicorn `app.main:app` / o vite, e sem `-Confirmar` apenas mostram;
 `subir-frontend` exige `node_modules` (rode `npm ci` antes; o script nao
