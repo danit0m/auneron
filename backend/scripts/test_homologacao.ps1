@@ -195,6 +195,94 @@ try {
     $r = Rodar-Script (@('subir-backend', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Cofre', (Join-Path $tmp 'sem-cofre.xml'), '-Base', $base2))
     Verificar 'sem cofre: subir-backend recusa citando os nomes' ($r.Codigo -ne 0 -and $r.Saida -match 'DATABASE_URL' -and $r.Saida -match 'configurar') $r.Saida
 
+    Write-Host '== Busca de pg_dump/pg_restore (arvore temporaria) =='
+    $raizPg = Join-Path $tmp 'PostgreSQL'
+    foreach ($v in @('9', '16', '17')) {
+        [void](New-Item -ItemType Directory -Force -Path (Join-Path $raizPg ($v + '\bin')))
+        Set-Content -LiteralPath (Join-Path $raizPg ($v + '\bin\pg_dump.exe')) -Value '' -Encoding ASCII
+    }
+    Set-Content -LiteralPath (Join-Path $raizPg '16\bin\pg_restore.exe') -Value '' -Encoding ASCII
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $raizPg '18'))
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $raizPg '99\bin'))
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $raizPg 'abc\bin'))
+    Set-Content -LiteralPath (Join-Path $raizPg 'abc\bin\pg_dump.exe') -Value '' -Encoding ASCII
+    $f = Buscar-FerramentaPgEmRaiz $raizPg 'pg_dump'
+    Verificar 'pg_dump: maior versao numerica (17, nao 9; ignora 18 sem bin, 99 sem exe, abc)' ($f -eq (Join-Path $raizPg '17\bin\pg_dump.exe')) $f
+    $f = Buscar-FerramentaPgEmRaiz $raizPg 'pg_restore'
+    Verificar 'pg_restore: so existe na 16' ($f -eq (Join-Path $raizPg '16\bin\pg_restore.exe')) $f
+    Verificar 'ferramenta inexistente: $null' ($null -eq (Buscar-FerramentaPgEmRaiz $raizPg 'psql'))
+    Verificar 'raiz inexistente: $null' ($null -eq (Buscar-FerramentaPgEmRaiz (Join-Path $tmp 'nada') 'pg_dump'))
+    $irma = Resolver-FerramentaPgIrma (Join-Path $raizPg '16\bin\pg_restore.exe') 'pg_dump'
+    Verificar 'ferramenta irma no mesmo diretorio' ($irma -eq (Join-Path $raizPg '16\bin\pg_dump.exe'))
+
+    Write-Host '== Banco descartavel do ensaio (funcoes puras) =='
+    Verificar 'nome valido aceito' (Test-NomeBancoEnsaio 'auneron_ensaio_20261114093015' 'auneron')
+    Verificar 'nome igual ao banco real recusado' (-not (Test-NomeBancoEnsaio 'auneron_ensaio_20261114093015' 'auneron_ensaio_20261114093015'))
+    foreach ($ruim in @('', 'auneron', 'auneron_ensaio_123', 'auneron_ensaio_20261114093015x', 'auneron_ensaio_20261114093015 ', 'auneron_ensaio_20261114093015;', 'auneron_ensaio_2026111409301"', 'auneron_ensaio_20261114093015.x', 'x auneron_ensaio_20261114093015', "auneron_ensaio_20261114093015`n", 'AUNERON_ENSAIO_20261114093015')) {
+        Verificar ('nome recusado: [' + ($ruim -replace "`n", '\n') + ']') (-not (Test-NomeBancoEnsaio $ruim 'auneron'))
+    }
+    $u = Montar-UrlBancoEnsaio $fakeUrl 'auneron_ensaio_20261114093015'
+    Verificar 'URL do descartavel: esquema, credenciais percent-encoded, host e porta preservados' ($u -eq ('postgresql+psycopg://fakeuser:' + $fakeSenhaCodificada + '@fakehost:5999/auneron_ensaio_20261114093015')) 'ok'
+    $u = Montar-UrlBancoEnsaio 'postgresql://u:p%40q@h:5433/real?sslmode=require&x=1' 'auneron_ensaio_20261114093015'
+    Verificar 'URL do descartavel preserva a query' ($u -eq 'postgresql://u:p%40q@h:5433/auneron_ensaio_20261114093015?sslmode=require&x=1') 'ok'
+    $u = Montar-UrlBancoEnsaio 'postgresql+psycopg2://u@h/real' 'auneron_ensaio_20261114093015'
+    Verificar 'URL sem senha e sem query' ($u -eq 'postgresql+psycopg2://u@h/auneron_ensaio_20261114093015')
+    $m = Lancar { Montar-UrlBancoEnsaio $fakeUrl 'fakedb' }
+    Verificar 'URL com nome fora do padrao recusada, sem eco da URL' ($m -ne '' -and $m -notmatch 'ZZfake')
+
+    Write-Host '== Recibo de ensaio (funcao pura, recibos falsos) =='
+    $agoraUtc = (Get-Date).ToUniversalTime()
+    $fmt = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+    function Novo-Recibo {
+        param([hashtable]$Mudar = @{})
+        $r = [ordered]@{
+            sha256 = 'aa11'; dump = 'x.dump'; revisao_inicial = 'r0'; revisao_final = 'h1'; head = 'h1'
+            commit = 'c1'; arvore_limpa = $true; criado_em_utc = $agoraUtc.AddHours(-1).ToString($fmt)
+        }
+        foreach ($k in $Mudar.Keys) { $r[$k] = $Mudar[$k] }
+        return [pscustomobject]$r
+    }
+    $sel = { param($lista) Selecionar-ReciboEnsaio $lista 'aa11' 'c1' 'h1' $agoraUtc }
+    Verificar 'recibo ok aceito' ((& $sel @((Novo-Recibo))) -eq '')
+    Verificar 'sem recibo: rode ensaiar antes' ((& $sel @()) -match 'rode ensaiar antes')
+    Verificar 'SHA diferente recusado' ((& $sel @((Novo-Recibo @{ sha256 = 'bb22' }))) -match 'rode ensaiar antes')
+    Verificar 'commit diferente recusado' ((& $sel @((Novo-Recibo @{ commit = 'c2' }))) -match 'commit.*rode ensaiar antes')
+    Verificar 'recibo velho (30 h) recusado' ((& $sel @((Novo-Recibo @{ criado_em_utc = $agoraUtc.AddHours(-30).ToString($fmt) }))) -match 'h \(limite 24 h\).*rode ensaiar antes')
+    Verificar 'arvore suja recusada' ((& $sel @((Novo-Recibo @{ arvore_limpa = $false }))) -match 'suja.*rode ensaiar antes')
+    Verificar 'revisao final != head atual recusada' ((Selecionar-ReciboEnsaio @((Novo-Recibo)) 'aa11' 'c1' 'h2' $agoraUtc) -match 'head atual')
+    Verificar 'data no futuro recusada' ((& $sel @((Novo-Recibo @{ criado_em_utc = $agoraUtc.AddHours(2).ToString($fmt) }))) -match 'rode ensaiar antes')
+    Verificar 'um recibo ruim e um bom: aceita' ((& $sel @((Novo-Recibo @{ commit = 'c2' }), (Novo-Recibo))) -eq '')
+
+    Write-Host '== ensaiar e migrar (recusas offline) =='
+    $dumpFalso = Join-Path $tmp 'novo.dump'
+    Set-Content -LiteralPath $dumpFalso -Value 'x' -Encoding ASCII
+    $r = Rodar-Script (@('ensaiar', '-Pasta', $pasta) + $comuns)
+    Verificar 'ensaiar sem -ConfirmarBackup: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'ConfirmarBackup') $r.Saida
+    $r = Rodar-Script (@('ensaiar', '-ConfirmarBackup', $dumpFalso) + $comuns)
+    Verificar 'ensaiar sem -Pasta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta') $r.Saida
+    $r = Rodar-Script (@('ensaiar', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-ConfirmarBackup', $dumpFalso) + $comuns)
+    $saidas['ensaiar-simular'] = $r.Saida
+    Verificar 'ensaiar -Simular: exit 0, mostra descartavel e passos' ($r.Codigo -eq 0 -and $r.Saida -match 'auneron_ensaio_\d{14}' -and $r.Saida -match 'SIMULACAO' -and $r.Saida -match 'fakehost') $r.Saida
+    Verificar 'ensaiar -Simular nao criou recibo nem pasta de ensaios' (-not (Test-Path -LiteralPath (Join-Path $base 'ensaios')))
+    $r = Rodar-Script (@('migrar', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-ConfirmarBackup', $dumpFalso) + $comuns)
+    $saidas['migrar-sem-recibo'] = $r.Saida
+    Verificar 'migrar sem recibo de ensaio: recusa pedindo ensaiar' ($r.Codigo -ne 0 -and $r.Saida -match 'rode ensaiar antes') $r.Saida
+    $r = Rodar-Script (@('migrar', '-Pasta', $pasta, '-ConfirmarBackup', $dumpFalso, '-PularEnsaio') + $comuns)
+    Verificar 'nao existe parametro para pular o ensaio' ($r.Codigo -ne 0 -and $r.Saida -match 'PularEnsaio')
+
+    Write-Host '== registrar-acao-pagamento =='
+    $r = Rodar-Script (@('registrar-acao-pagamento', '-Simular', '-SemSondagem') + $comuns)
+    Verificar 'registrar-acao-pagamento sem -Pasta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta') $r.Saida
+    $r = Rodar-Script (@('registrar-acao-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comuns)
+    Verificar 'sem o .py no checkout: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'register_account_mark_paid_skill') $r.Saida
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pasta 'backend\scripts'))
+    Set-Content -LiteralPath (Join-Path $pasta 'backend\scripts\register_account_mark_paid_skill.py') -Value '' -Encoding ASCII
+    $r = Rodar-Script (@('registrar-acao-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comuns)
+    $saidas['registrar-acao-pagamento'] = $r.Saida
+    Verificar 'registrar-acao-pagamento -Simular: exit 0 e mostra o modulo fixo' ($r.Codigo -eq 0 -and $r.Saida.Contains('-m scripts.register_account_mark_paid_skill')) $r.Saida
+    $r = Rodar-Script (@('registrar-acao-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Modulo', 'os') + $comuns)
+    Verificar 'nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
+
     Write-Host '== Varredura de vazamento =='
     foreach ($k in $saidas.Keys) {
         $achou = @($proibidos | Where-Object { $saidas[$k].Contains($_) })
@@ -214,6 +302,17 @@ try {
     Verificar 'sem Stop-Process por nome' ($codigo -notmatch 'Stop-Process\s+-Name')
     Verificar 'PGPASSWORD so via ambiente (nao em argumentos)' ($codigo -cnotmatch "'--password'" -and $codigo -cnotmatch "'-W'")
     Verificar 'sem operadores indisponiveis no 5.1' ($codigo -notmatch '\s&&\s' -and $codigo -notmatch '\s\|\|\s' -and $codigo -notmatch '\?\?' -and $codigo -notmatch 'AsHashtable')
+    $padraoDrop = '(?i)drop\s+database|dropdb'
+    $todosDrop = [regex]::Matches($codigo, $padraoDrop)
+    Verificar 'exatamente uma remocao de banco no script' ($todosDrop.Count -eq 1) ([string]$todosDrop.Count)
+    $mLimpa = [regex]::Match($codigo, '(?s)function Limpar-BancoEnsaio \{.*?\r?\n\}\r?\n')
+    $posDrop = if ($mLimpa.Success) { [regex]::Match($mLimpa.Value, $padraoDrop).Index } else { -1 }
+    $posChecagem = if ($mLimpa.Success) { $mLimpa.Value.IndexOf('Test-NomeBancoEnsaio') } else { -1 }
+    Verificar 'a remocao esta na funcao de limpeza do ensaio' ($mLimpa.Success -and $posDrop -ge 0 -and [regex]::Matches($mLimpa.Value, $padraoDrop).Count -eq 1)
+    Verificar 'a remocao e precedida pela checagem do padrao do nome' ($posChecagem -ge 0 -and $posChecagem -lt $posDrop)
+    Verificar 'limpeza do ensaio so e chamada com o nome criado nesta execucao' ([regex]::Matches($codigo, 'Limpar-BancoEnsaio \$psql \$db \$criado').Count -eq 1)
+    $mReg = [regex]::Match($codigo, '(?s)function Cmd-RegistrarAcaoPagamento \{.*?\r?\n\}\r?\n')
+    Verificar 'registrar-acao-pagamento: modulo e constante literal e unico uso' ($mReg.Success -and $mReg.Value.Contains("`$modulo = 'scripts.register_account_mark_paid_skill'") -and [regex]::Matches($mReg.Value, '\$modulo\s*=').Count -eq 1 -and $mReg.Value.Contains("@('-m', `$modulo)"))
     Verificar 'script e ASCII puro' (-not ($codigo.ToCharArray() | Where-Object { [int]$_ -gt 127 }))
 }
 finally {

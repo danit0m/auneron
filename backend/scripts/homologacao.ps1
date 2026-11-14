@@ -7,7 +7,8 @@
     ficam em um cofre cifrado (DPAPI do usuario do Windows) FORA do repositorio.
     Nenhum comando imprime, exporta ou copia valores do cofre.
 
-    Comandos: configurar, status, versao-banco, pendentes, backup, migrar,
+    Comandos: configurar, status, versao-banco, pendentes, backup, ensaiar, migrar,
+              registrar-acao-pagamento,
               subir-backend, parar-backend, subir-frontend, parar-frontend
 
     Exemplos:
@@ -15,6 +16,7 @@
       .\homologacao.ps1 status
       .\homologacao.ps1 versao-banco -Pasta C:\auneron
       .\homologacao.ps1 backup
+      .\homologacao.ps1 ensaiar -Pasta C:\auneron -ConfirmarBackup C:\...\hml-X.dump
       .\homologacao.ps1 migrar -Pasta C:\auneron -ConfirmarBackup C:\...\hml-X.dump
       .\homologacao.ps1 parar-backend -Confirmar
 
@@ -25,7 +27,8 @@
 param(
     [Parameter(ParameterSetName = 'Normal', Position = 0, Mandatory = $true)]
     [ValidateSet(
-        'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'migrar',
+        'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
+        'registrar-acao-pagamento',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend'
     )]
     [string]$Comando,
@@ -38,7 +41,7 @@ param(
     [Parameter(ParameterSetName = 'Normal')][string]$Base,
     # Destino do dump (backup).
     [Parameter(ParameterSetName = 'Normal')][string]$Destino,
-    # Dump existente, criado ha menos de 24 h (migrar).
+    # Dump existente, criado ha menos de 24 h (ensaiar, migrar).
     [Parameter(ParameterSetName = 'Normal')][string]$ConfirmarBackup,
     [Parameter(ParameterSetName = 'Normal')][switch]$Confirmar,
     [Parameter(ParameterSetName = 'Normal')][switch]$Simular,
@@ -509,19 +512,43 @@ function Test-PythonStoreStub {
     return ($Caminho -match '(?i)[\\/]WindowsApps[\\/]')
 }
 
+function Buscar-FerramentaPgEmRaiz {
+    # Enumera os subdiretorios de versao (nome numerico) da raiz e testa
+    # <versao>\bin\<nome>.exe; devolve o caminho da MAIOR versao numerica, ou $null.
+    param([string]$Raiz, [string]$Nome)
+    if ([string]::IsNullOrEmpty($Raiz)) { return $null }
+    if (-not (Test-Path -LiteralPath $Raiz -PathType Container)) { return $null }
+    $cands = @()
+    $dirs = @(Get-ChildItem -LiteralPath $Raiz -Directory -ErrorAction SilentlyContinue)
+    foreach ($d in $dirs) {
+        if ($d.Name -notmatch '^[0-9]+(\.[0-9]+)*$') { continue }
+        $exe = Join-Path (Join-Path $d.FullName 'bin') ($Nome + '.exe')
+        if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { continue }
+        $partes = @($d.Name.Split('.'))
+        if ($partes.Count -lt 2) { $partes += '0' }
+        if ($partes.Count -gt 4) { continue }
+        $ver = $null
+        try { $ver = [version]($partes -join '.') } catch { continue }
+        $cands += [pscustomobject]@{ Versao = $ver; Caminho = $exe }
+    }
+    if ($cands.Count -eq 0) { return $null }
+    $melhor = @($cands | Sort-Object -Property Versao -Descending)[0]
+    return $melhor.Caminho
+}
+
 function Resolver-FerramentaPg {
     param([string]$Nome)  # 'pg_dump' | 'pg_restore'
     $cmd = Get-Command ($Nome + '.exe') -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($cmd) { return $cmd.Source }
-    $achados = @()
-    $raizPg = 'C:\Program Files\PostgreSQL'
-    if (Test-Path -LiteralPath $raizPg) {
-        $achados = @(Get-ChildItem -Path (Join-Path $raizPg '*\bin') -Filter ($Nome + '.exe') -ErrorAction SilentlyContinue)
-    }
-    if ($achados.Count -gt 0) {
-        $melhor = $achados | Sort-Object { [int]([regex]::Match($_.FullName, 'PostgreSQL\\(\d+)').Groups[1].Value) } -Descending | Select-Object -First 1
-        return $melhor.FullName
-    }
+    return (Buscar-FerramentaPgEmRaiz 'C:\Program Files\PostgreSQL' $Nome)
+}
+
+function Resolver-FerramentaPgIrma {
+    # Ferramenta (ex.: psql) do MESMO diretorio de uma ferramenta de referencia ja resolvida.
+    param([string]$CaminhoReferencia, [string]$Nome)
+    if ([string]::IsNullOrEmpty($CaminhoReferencia)) { return $null }
+    $c = Join-Path (Split-Path -Parent $CaminhoReferencia) ($Nome + '.exe')
+    if (Test-Path -LiteralPath $c -PathType Leaf) { return $c }
     return $null
 }
 
@@ -538,9 +565,14 @@ function Exigir-FerramentaPg {
 # Alembic
 # ---------------------------------------------------------------------------
 function Rodar-Alembic {
-    param([string]$Raiz, [string[]]$Args2)
+    param([string]$Raiz, [string[]]$Args2, [string]$UrlBanco = '')
     $py = Resolver-Python $Raiz
     $amb = Montar-Ambiente 'backend'
+    if ($UrlBanco) {
+        # Ensaio: o filho enxerga SO o banco descartavel (URL montada em memoria).
+        Registrar-Segredo $UrlBanco
+        $amb['DATABASE_URL'] = $UrlBanco
+    }
     $res = Invoke-Filho -Exe $py -Argumentos (@('-m', 'alembic') + $Args2) -DiretorioTrabalho (Join-Path $Raiz 'backend') -Ambiente $amb
     if ($res.Codigo -ne 0) {
         $linhas = @($res.Saida -split "`r?`n" | Select-Object -Last 12)
@@ -584,6 +616,288 @@ function Mostrar-Pendentes {
 # ---------------------------------------------------------------------------
 # Comandos
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Ensaio da migracao: funcoes puras e auxiliares
+# ---------------------------------------------------------------------------
+function Test-NomeBancoEnsaio {
+    # Funcao pura: o nome e do padrao auneron_ensaio_<14 digitos> e NAO e o banco real?
+    param([string]$Nome, [string]$BancoReal)
+    if ([string]::IsNullOrEmpty($Nome)) { return $false }
+    if ($Nome -cnotmatch '^auneron_ensaio_[0-9]{14}\z') { return $false }
+    if ($BancoReal -and ($Nome -ieq $BancoReal)) { return $false }
+    return $true
+}
+
+function Montar-UrlBancoEnsaio {
+    # Funcao pura: mesma URL (esquema, credenciais como estao, host, porta, query);
+    # so o nome do banco muda. O nome precisa ser do padrao do ensaio.
+    param([string]$Url, [string]$NomeBanco)
+    if (-not (Test-NomeBancoEnsaio $NomeBanco '')) { Falhar 'Nome de banco de ensaio invalido.' }
+    $m = [regex]::Match($Url, '^(?<esq>postgresql(?:\+psycopg2?)?)://(?<auth>[^/?#]*)(?:/(?<banco>[^?#]*))?(?:\?(?<q>[^#]*))?(?:#.*)?$')
+    if (-not $m.Success) { Falhar 'DATABASE_URL: formato nao suportado.' }
+    $r = $m.Groups['esq'].Value + '://' + $m.Groups['auth'].Value + '/' + $NomeBanco
+    $q = $m.Groups['q'].Value
+    if ($q) { $r += '?' + $q }
+    return $r
+}
+
+function Get-DataUtcRecibo {
+    param($Valor)
+    if ($Valor -is [datetime]) { return $Valor.ToUniversalTime() }
+    $s = [string]$Valor
+    $dt = [datetime]::MinValue
+    $ok = [datetime]::TryParseExact($s, "yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture,
+        ([Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal), [ref]$dt)
+    if (-not $ok) { return $null }
+    return $dt
+}
+
+function Avaliar-ReciboEnsaio {
+    # Funcao pura: '' se o recibo serve; senao o motivo da recusa.
+    param($Recibo, [string]$Sha, [string]$Commit, [string]$Head, [datetime]$AgoraUtc)
+    if ($null -eq $Recibo) { return 'recibo ilegivel' }
+    if ([string]$Recibo.sha256 -ine $Sha) { return 'o recibo e de outro dump (SHA-256 diferente)' }
+    if ([string]$Recibo.commit -ine $Commit) { return 'o recibo e de outro commit do checkout' }
+    if ([string]$Recibo.revisao_final -ne $Head -or [string]$Recibo.head -ne $Head) {
+        return 'a revisao final do ensaio nao e o head atual do checkout'
+    }
+    if ($Recibo.arvore_limpa -ne $true) { return 'o ensaio foi feito com a arvore do checkout suja' }
+    $criado = Get-DataUtcRecibo $Recibo.criado_em_utc
+    if ($null -eq $criado) { return 'data do recibo ilegivel' }
+    $idade = $AgoraUtc - $criado
+    if ($idade.TotalHours -ge 24 -or $idade.TotalSeconds -lt -300) { return ('o recibo tem {0:N1} h (limite 24 h)' -f $idade.TotalHours) }
+    return ''
+}
+
+function Selecionar-ReciboEnsaio {
+    # Funcao pura sobre uma lista de recibos. Devolve '' se algum serve; senao a mensagem de recusa.
+    param($Recibos, [string]$Sha, [string]$Commit, [string]$Head, [datetime]$AgoraUtc)
+    $mesmos = @($Recibos | Where-Object { $null -ne $_ -and [string]$_.sha256 -ieq $Sha })
+    if ($mesmos.Count -eq 0) {
+        return 'Nao ha recibo de ensaio para este dump; rode ensaiar antes de migrar.'
+    }
+    $ultimo = ''
+    foreach ($r in $mesmos) {
+        $mot = Avaliar-ReciboEnsaio $r $Sha $Commit $Head $AgoraUtc
+        if ($mot -eq '') { return '' }
+        $ultimo = $mot
+    }
+    return ('Nenhum recibo de ensaio serve (' + $ultimo + '); rode ensaiar antes de migrar.')
+}
+
+function Get-EnsaiosDir { return (Join-Path (Get-BaseDir) 'ensaios') }
+
+function Ler-RecibosEnsaio {
+    $dir = Get-EnsaiosDir
+    $r = @()
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return $r }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter 'ensaio-*.json' -File | Sort-Object Name)) {
+        try { $r += (Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json) }
+        catch { }
+    }
+    return $r
+}
+
+function Obter-InfoGit {
+    param([string]$Raiz)
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $git) { Falhar 'git.exe nao encontrado no PATH (necessario para identificar o commit do checkout).' }
+    $h = Invoke-Filho -Exe $git.Source -Argumentos @('-C', $Raiz, 'rev-parse', 'HEAD')
+    if ($h.Codigo -ne 0 -or $h.Saida.Trim() -notmatch '^[0-9a-fA-F]{40}$') { Falhar 'Nao foi possivel obter o commit do checkout (git rev-parse HEAD).' }
+    $s = Invoke-Filho -Exe $git.Source -Argumentos @('--no-optional-locks', '-C', $Raiz, 'status', '--porcelain')
+    if ($s.Codigo -ne 0) { Falhar 'git status falhou no checkout.' }
+    return [pscustomobject]@{ Commit = $h.Saida.Trim().ToLowerInvariant(); Limpa = ($s.Saida.Trim() -eq '') }
+}
+
+function Obter-HeadUnico {
+    param([string]$Raiz, [string]$UrlBanco = '')
+    $heads = @(Extrair-Revisoes (Rodar-Alembic $Raiz @('heads') $UrlBanco))
+    if ($heads.Count -ne 1) { Falhar 'O checkout tem mais de um head (ou nenhum) de migracao; resolva antes.' }
+    return $heads[0]
+}
+
+function Validar-DumpArquivo {
+    # Existe, nao vazio, menos de 24 h. Devolve o FileInfo.
+    param([string]$Caminho, [string]$Opcao)
+    if (-not (Test-Path -LiteralPath $Caminho -PathType Leaf)) { Falhar ('O arquivo de ' + $Opcao + ' nao existe.') }
+    $item = Get-Item -LiteralPath $Caminho
+    if ($item.Length -le 0) { Falhar 'O arquivo de backup esta vazio.' }
+    $idade = (Get-Date) - $item.LastWriteTime
+    if ($idade.TotalHours -ge 24 -or $idade.TotalSeconds -lt -300) {
+        Falhar ('O backup tem {0:N1} h; precisa ter sido criado ha menos de 24 h. Rode backup de novo.' -f $idade.TotalHours)
+    }
+    return $item
+}
+
+function Invoke-Psql {
+    # Sempre no banco de manutencao 'postgres'; senha so por ambiente.
+    param([string]$Psql, $Db, [string]$Sql)
+    $amb = @{ 'PGPASSWORD' = $(if ($Db.Senha) { $Db.Senha } else { $null }); 'PGCLIENTENCODING' = 'UTF8'; 'PGCONNECT_TIMEOUT' = '10' }
+    if ($Db.SslMode) { $amb['PGSSLMODE'] = $Db.SslMode }
+    $a = @('-h', $Db.Host, '-p', [string]$Db.Porta)
+    if ($Db.Usuario) { $a += @('-U', $Db.Usuario) }
+    $a += @('-d', 'postgres', '-w', '-X', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', $Sql)
+    return (Invoke-Filho -Exe $Psql -Argumentos $a -Ambiente $amb)
+}
+
+function Limpar-BancoEnsaio {
+    # UNICO ponto do script que remove um banco: so o descartavel criado nesta execucao,
+    # com o nome conferido pelo padrao. Devolve '' se removeu, senao a mensagem de erro.
+    param([string]$Psql, $Db, [string]$Nome)
+    if (-not (Test-NomeBancoEnsaio $Nome $Db.Banco)) {
+        return ('Remocao recusada: nome fora do padrao de ensaio (' + $Nome + ').')
+    }
+    $res = Invoke-Psql $Psql $Db ('DROP DATABASE "' + $Nome + '"')
+    if ($res.Codigo -ne 0) {
+        return ("Falha ao remover o banco descartavel {0}; REMOVA-O MANUALMENTE. Saida:`n{1}" -f $Nome, $res.Saida)
+    }
+    return ''
+}
+
+function Cmd-Ensaiar {
+    if (-not $script:Ctx.ConfirmarBackup) {
+        Falhar 'ensaiar exige -ConfirmarBackup <caminho do .dump> criado ha menos de 24 h (rode backup antes).'
+    }
+    $raiz = Resolver-Pasta
+    $item = Validar-DumpArquivo $script:Ctx.ConfirmarBackup '-ConfirmarBackup'
+    $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $cofre = Ler-Cofre
+    Exigir-Segredos $cofre @('DATABASE_URL')
+    $url = Obter-Segredo $cofre 'DATABASE_URL'
+    $db = ConvertFrom-DatabaseUrl $url
+    Registrar-Segredo $db.Senha
+    $nome = 'auneron_ensaio_' + (Get-Date).ToString('yyyyMMddHHmmss')
+    if (-not (Test-NomeBancoEnsaio $nome $db.Banco)) { Falhar 'Nome do banco descartavel recusado (igual ao banco real ou fora do padrao).' }
+    $urlEnsaio = Montar-UrlBancoEnsaio $url $nome
+    Registrar-Segredo $urlEnsaio
+    $pgrestore = Resolver-FerramentaPg 'pg_restore'
+    $psql = Resolver-FerramentaPgIrma $pgrestore 'psql'
+    if ($script:Ctx.Simular) {
+        Info 'SIMULACAO: nada sera criado.'
+        Info ('Dump     : {0} ({1} bytes, SHA-256 {2})' -f $item.FullName, $item.Length, $hash)
+        Info ('Servidor : host={0} porta={1} usuario={2} (banco real {3} NAO sera tocado)' -f $db.Host, $db.Porta, $db.Usuario, $db.Banco)
+        Info ('Descartavel: ' + $nome)
+        Info ('pg_restore: ' + $(if ($pgrestore) { $pgrestore } else { 'NAO ENCONTRADO' }))
+        Info ('psql      : ' + $(if ($psql) { $psql } else { 'NAO ENCONTRADO' }))
+        Info ('Interpretador: ' + (Resolver-Python $raiz))
+        Info ('Faria: pg_restore --list; checar permissao de criar banco e inexistencia do nome; criar o banco; pg_restore --no-owner; em {0}\backend, com DATABASE_URL do filho apontando ao descartavel: alembic current, upgrade head, current (exige 1 head e revisao final == head); remover SEMPRE o descartavel; gravar recibo em {1}.' -f $raiz, (Get-EnsaiosDir))
+        return
+    }
+    if (-not $pgrestore) { [void](Exigir-FerramentaPg 'pg_restore') }
+    if (-not $psql) { Falhar 'psql.exe nao encontrado na mesma pasta do pg_restore.' }
+    $lst = Invoke-Filho -Exe $pgrestore -Argumentos @('--list', $item.FullName)
+    if ($lst.Codigo -ne 0) { Falhar 'pg_restore --list reprovou o arquivo informado em -ConfirmarBackup.' }
+    $git0 = Obter-InfoGit $raiz
+    if (-not $git0.Limpa) { Info 'AVISO: a arvore do checkout esta suja; o recibo sera gravado, mas migrar o recusara.' }
+    Info ('Dump aceito: {0} (SHA-256 {1})' -f $item.FullName, $hash)
+    Info ('Banco descartavel: {0} em {1}:{2} (banco real {3} nao sera tocado)' -f $nome, $db.Host, $db.Porta, $db.Banco)
+
+    $criado = ''
+    $erroCorpo = $null
+    $revIni = @()
+    $revFim = @()
+    $head = ''
+    try {
+        $perm = Invoke-Psql $psql $db 'SELECT (rolcreatedb OR rolsuper) FROM pg_roles WHERE rolname = current_user'
+        if ($perm.Codigo -ne 0) { Falhar ("Nao foi possivel consultar o servidor com psql:`n" + $perm.Saida) }
+        if ($perm.Saida.Trim() -ne 't') {
+            Falhar ("O usuario '{0}' nao tem permissao para criar bancos (CREATEDB); o ensaio precisa criar um banco descartavel. Peca a um administrador do PostgreSQL: ALTER ROLE <usuario> CREATEDB." -f $db.Usuario)
+        }
+        $ex = Invoke-Psql $psql $db ("SELECT 1 FROM pg_database WHERE datname = '" + $nome + "'")
+        if ($ex.Codigo -ne 0) { Falhar ("Falha ao verificar o banco descartavel:`n" + $ex.Saida) }
+        if ($ex.Saida.Trim() -ne '') { Falhar ('O banco ' + $nome + ' ja existe; nada foi feito. Tente de novo.') }
+        $cr = Invoke-Psql $psql $db ('CREATE DATABASE "' + $nome + '"')
+        if ($cr.Codigo -ne 0) { Falhar ("Falha ao criar o banco descartavel:`n" + $cr.Saida) }
+        $criado = $nome
+        Info 'Banco descartavel criado. Restaurando o dump ...'
+        $amb = @{ 'PGPASSWORD' = $(if ($db.Senha) { $db.Senha } else { $null }); 'PGCLIENTENCODING' = 'UTF8' }
+        if ($db.SslMode) { $amb['PGSSLMODE'] = $db.SslMode }
+        $ar = @('-h', $db.Host, '-p', [string]$db.Porta)
+        if ($db.Usuario) { $ar += @('-U', $db.Usuario) }
+        $ar += @('-d', $nome, '--no-owner', '--exit-on-error', '-w', $item.FullName)
+        $rs = Invoke-Filho -Exe $pgrestore -Argumentos $ar -Ambiente $amb
+        if ($rs.Codigo -ne 0) {
+            $l = @($rs.Saida -split "`r?`n" | Select-Object -Last 12)
+            Falhar ("pg_restore falhou no banco descartavel (codigo {0}):`n{1}" -f $rs.Codigo, ($l -join "`n"))
+        }
+        Info 'Restauracao concluida. Rodando alembic no descartavel ...'
+        $revIni = @(Extrair-Revisoes (Rodar-Alembic $raiz @('current') $urlEnsaio))
+        Info ('Revisao inicial: ' + $(if ($revIni.Count -gt 0) { $revIni -join ', ' } else { '(sem versao)' }))
+        $head = Obter-HeadUnico $raiz $urlEnsaio
+        $up = Rodar-Alembic $raiz @('upgrade', 'head') $urlEnsaio
+        foreach ($l in @($up -split "`r?`n" | Where-Object { $_ -match 'Running upgrade' })) { Info ('  ' + $l) }
+        $revFim = @(Extrair-Revisoes (Rodar-Alembic $raiz @('current') $urlEnsaio))
+        Info ('Revisao final  : ' + ($revFim -join ', '))
+        if ($revFim.Count -ne 1 -or $revFim[0] -ne $head) {
+            Falhar ('Revisao final do ensaio ({0}) difere do head ({1}).' -f ($revFim -join ', '), $head)
+        }
+    }
+    catch { $erroCorpo = Mascarar-Texto ([string]$_.Exception.Message) }
+
+    $erroLimpeza = ''
+    if ($criado -ne '') {
+        $erroLimpeza = Limpar-BancoEnsaio $psql $db $criado
+        if ($erroLimpeza -eq '') { Info ('Banco descartavel removido: ' + $criado) }
+    }
+    if ($erroCorpo -or $erroLimpeza) {
+        $partes = @()
+        if ($erroCorpo) { $partes += ('ENSAIO FALHOU: ' + $erroCorpo) }
+        if ($erroLimpeza) { $partes += $erroLimpeza }
+        Falhar ($partes -join "`n")
+    }
+
+    $git1 = Obter-InfoGit $raiz
+    if ($git1.Commit -ne $git0.Commit -or $git1.Limpa -ne $git0.Limpa) {
+        Falhar 'O checkout mudou durante o ensaio (commit ou arvore); nenhum recibo foi gravado.'
+    }
+    $dirE = Get-EnsaiosDir
+    if (-not (Test-Path -LiteralPath $dirE)) { [void](New-Item -ItemType Directory -Force -Path $dirE) }
+    $agora = Get-Date
+    $arq = Join-Path $dirE ('ensaio-' + $agora.ToString('yyyyMMdd-HHmmss') + '.json')
+    if (Test-Path -LiteralPath $arq) { Falhar 'O recibo de ensaio ja existe; o script nunca sobrescreve.' }
+    $recibo = [ordered]@{
+        sha256         = $hash
+        dump           = $item.FullName
+        revisao_inicial = ($revIni -join ',')
+        revisao_final  = $revFim[0]
+        head           = $head
+        commit         = $git1.Commit
+        arvore_limpa   = $git1.Limpa
+        criado_em_utc  = $agora.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+    }
+    [IO.File]::WriteAllText($arq, ($recibo | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+    Info ''
+    Info 'ENSAIO CONCLUIDO: o backup restaura e as migracoes pendentes aplicam sem erro.'
+    Info ('SHA-256 do dump : ' + $hash)
+    Info ('Revisao inicial : ' + $(if ($revIni.Count -gt 0) { $revIni -join ', ' } else { '(sem versao)' }))
+    Info ('Revisao final   : ' + $revFim[0] + ' (head)')
+    Info ('Commit          : {0} (arvore limpa: {1})' -f $git1.Commit, $(if ($git1.Limpa) { 'sim' } else { 'NAO' }))
+    Info ('Recibo          : ' + $arq)
+}
+
+function Cmd-RegistrarAcaoPagamento {
+    $raiz = Resolver-Pasta
+    $modulo = 'scripts.register_account_mark_paid_skill'
+    $arqPy = Join-Path $raiz 'backend\scripts\register_account_mark_paid_skill.py'
+    if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
+        Falhar 'Nao existe backend\scripts\register_account_mark_paid_skill.py no checkout informado.'
+    }
+    $py = Resolver-Python $raiz
+    if ($script:Ctx.Simular) {
+        Info 'SIMULACAO: nada sera feito.'
+        Info ('Faria, em {0}\backend: {1} -m {2}' -f $raiz, $py, $modulo)
+        Info ('Ambiente do filho (nomes): ' + (Nomes-Do-Ambiente 'backend'))
+        return
+    }
+    $amb = Montar-Ambiente 'backend'
+    $res = Invoke-Filho -Exe $py -Argumentos @('-m', $modulo) -DiretorioTrabalho (Join-Path $raiz 'backend') -Ambiente $amb
+    if ($res.Saida) { Info $res.Saida }
+    if ($res.Codigo -ne 0) {
+        $script:Codigo = $res.Codigo
+        Falhar ('{0} terminou com codigo {1}.' -f $modulo, $res.Codigo)
+    }
+}
+
 function Cmd-Configurar {
     # Recusa ANTES de ler qualquer coisa.
     $interativo = [Environment]::UserInteractive
@@ -743,17 +1057,22 @@ function Cmd-Migrar {
         Falhar '-SemSondagem so vale com -Simular ou status.'
     }
     $raiz = Resolver-Pasta
-    $bk = $script:Ctx.ConfirmarBackup
-    if (-not (Test-Path -LiteralPath $bk -PathType Leaf)) { Falhar 'O arquivo de -ConfirmarBackup nao existe.' }
-    $item = Get-Item -LiteralPath $bk
-    if ($item.Length -le 0) { Falhar 'O arquivo de backup esta vazio.' }
+    $item = Validar-DumpArquivo $script:Ctx.ConfirmarBackup '-ConfirmarBackup'
     $idade = (Get-Date) - $item.LastWriteTime
-    if ($idade.TotalHours -ge 24 -or $idade.TotalSeconds -lt -300) {
-        Falhar ('O backup tem {0:N1} h; precisa ter sido criado ha menos de 24 h. Rode backup de novo.' -f $idade.TotalHours)
+    $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $recibos = @(Ler-RecibosEnsaio)
+    if (@($recibos | Where-Object { [string]$_.sha256 -ieq $hash }).Count -eq 0) {
+        Falhar ('Nao ha recibo de ensaio para este dump (SHA-256 {0}); rode ensaiar antes de migrar.' -f $hash)
     }
     $pgrestore = Exigir-FerramentaPg 'pg_restore'
     $lst = Invoke-Filho -Exe $pgrestore -Argumentos @('--list', $item.FullName)
     if ($lst.Codigo -ne 0) { Falhar 'pg_restore --list reprovou o arquivo informado em -ConfirmarBackup.' }
+    $gitInfo = Obter-InfoGit $raiz
+    if (-not $gitInfo.Limpa) { Falhar 'A arvore do checkout de -Pasta esta suja; migrar exige checkout limpo (e um novo ensaiar).' }
+    $headAtual = Obter-HeadUnico $raiz
+    $mot = Selecionar-ReciboEnsaio $recibos $hash $gitInfo.Commit $headAtual ((Get-Date).ToUniversalTime())
+    if ($mot -ne '') { Falhar $mot }
+    Info ('Recibo de ensaio aceito (commit {0}, head {1}).' -f $gitInfo.Commit, $headAtual)
     Exigir-PortaLivre $script:PortaBackend
     Info ('Backup aceito: {0} ({1:N1} h, {2} bytes)' -f $item.FullName, $idade.TotalHours, $item.Length)
     if ($script:Ctx.Simular) {
@@ -924,7 +1243,9 @@ function Principal {
             'versao-banco'   { Cmd-VersaoBanco }
             'pendentes'      { Cmd-Pendentes }
             'backup'         { Cmd-Backup }
+            'ensaiar'        { Cmd-Ensaiar }
             'migrar'         { Cmd-Migrar }
+            'registrar-acao-pagamento' { Cmd-RegistrarAcaoPagamento }
             'subir-backend'  { Cmd-SubirBackend }
             'parar-backend'  { Cmd-Parar 'backend' $script:PortaBackend }
             'subir-frontend' { Cmd-SubirFrontend }
@@ -932,7 +1253,7 @@ function Principal {
         }
     }
     catch {
-        $script:Codigo = 1
+        if ($script:Codigo -eq 0) { $script:Codigo = 1 }
         $msg = Mascarar-Texto ([string]$_.Exception.Message)
         [Console]::Error.WriteLine('ERRO: ' + $msg)
     }
