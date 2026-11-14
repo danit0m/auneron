@@ -8,7 +8,7 @@
     Nenhum comando imprime, exporta ou copia valores do cofre.
 
     Comandos: configurar, status, versao-banco, pendentes, backup, ensaiar, migrar,
-              registrar-acao-pagamento,
+              registrar-acao-pagamento, consultar,
               subir-backend, parar-backend, subir-frontend, parar-frontend
 
     Exemplos:
@@ -18,6 +18,8 @@
       .\homologacao.ps1 backup
       .\homologacao.ps1 ensaiar -Pasta C:\auneron -ConfirmarBackup C:\...\hml-X.dump
       .\homologacao.ps1 migrar -Pasta C:\auneron -ConfirmarBackup C:\...\hml-X.dump
+      .\homologacao.ps1 consultar -Relatorio pagamento -Conta 123   (somente leitura)
+      .\homologacao.ps1 consultar -Relatorio catalogo
       .\homologacao.ps1 parar-backend -Confirmar
 
     Nao existe downgrade neste script. Veja backend/docs/DEPLOYMENT.md.
@@ -28,7 +30,7 @@ param(
     [Parameter(ParameterSetName = 'Normal', Position = 0, Mandatory = $true)]
     [ValidateSet(
         'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
-        'registrar-acao-pagamento',
+        'registrar-acao-pagamento', 'consultar',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend'
     )]
     [string]$Comando,
@@ -43,6 +45,10 @@ param(
     [Parameter(ParameterSetName = 'Normal')][string]$Destino,
     # Dump existente, criado ha menos de 24 h (ensaiar, migrar).
     [Parameter(ParameterSetName = 'Normal')][string]$ConfirmarBackup,
+    # Relatorio fixo de somente leitura (consultar).
+    [Parameter(ParameterSetName = 'Normal')][ValidateSet('pagamento', 'catalogo')][string]$Relatorio,
+    # Id da conta (consultar -Relatorio pagamento); inteiro positivo, passado como variavel do psql.
+    [Parameter(ParameterSetName = 'Normal')][ValidateRange(1, 2147483647)][int]$Conta,
     [Parameter(ParameterSetName = 'Normal')][switch]$Confirmar,
     [Parameter(ParameterSetName = 'Normal')][switch]$Simular,
     # Nao consulta portas/HTTP (so com status ou -Simular; usado no autoteste).
@@ -78,8 +84,69 @@ $script:ConfigPadrao = [ordered]@{
 $script:Ctx = @{
     Base = ''; Cofre = ''; Pasta = ''
     Simular = $false; Confirmar = $false; SemSondagem = $false
+    Relatorio = ''; Conta = 0
 }
 $script:Conhecidos = New-Object System.Collections.ArrayList
+
+# SQL FIXO do comando consultar (somente leitura; nenhum parametro escolhe SQL).
+# A conta entra como variavel do psql (-v conta=<int>, usada como :conta), nunca
+# concatenada no texto. Cada relatorio abre BEGIN READ ONLY e termina em ROLLBACK.
+$script:SqlConsultaPagamento = @'
+BEGIN READ ONLY;
+\echo == Conta ==
+SELECT a.id, a.cliente, a.status, a.vencimento
+FROM accounts a
+WHERE a.id = :conta;
+\echo == Pagamento (account_payments) ==
+SELECT p.id, p.paid_on, p.approval_request_id, p.created_at
+FROM account_payments p
+WHERE p.account_id = :conta
+ORDER BY p.id;
+\echo == Data efetiva do pedido (approval_request_inputs) ==
+SELECT i.approval_request_id, i.effective_date, i.created_at
+FROM approval_request_inputs i
+WHERE i.approval_request_id IN (SELECT r.id FROM approval_requests r WHERE r.target_account_id = :conta OR r.id IN (SELECT pp.approval_request_id FROM account_payments pp WHERE pp.account_id = :conta))
+ORDER BY i.approval_request_id;
+\echo == Pedido de aprovacao (approval_requests) ==
+SELECT r.id, sk.skill_key, sv.version, r.status, r.requester_actor_type, r.requester_reference, r.risk_level, r.created_at, r.expires_at, r.resolved_at
+FROM approval_requests r
+JOIN skill_versions sv ON sv.id = r.skill_version_id
+JOIN skills sk ON sk.id = sv.skill_id
+WHERE r.target_account_id = :conta OR r.id IN (SELECT pp.approval_request_id FROM account_payments pp WHERE pp.account_id = :conta)
+ORDER BY r.id;
+\echo == Decisao (approval_decisions) ==
+SELECT d.approval_request_id, d.decision, d.decided_by_reference, d.decided_by_role, d.created_at
+FROM approval_decisions d
+WHERE d.approval_request_id IN (SELECT r.id FROM approval_requests r WHERE r.target_account_id = :conta OR r.id IN (SELECT pp.approval_request_id FROM account_payments pp WHERE pp.account_id = :conta))
+ORDER BY d.approval_request_id;
+\echo == Consumo da aprovacao (approval_consumptions) ==
+SELECT c.approval_request_id, c.status, c.consumer_reference, c.authority_reference, c.authority_role, c.error_code, c.skill_invocation_id, c.reserved_at, c.finalized_at
+FROM approval_consumptions c
+WHERE c.approval_request_id IN (SELECT r.id FROM approval_requests r WHERE r.target_account_id = :conta OR r.id IN (SELECT pp.approval_request_id FROM account_payments pp WHERE pp.account_id = :conta))
+ORDER BY c.approval_request_id;
+\echo == Eventos da conta (account_events) ==
+SELECT e.id, e.event_type, e.previous_status, e.new_status, e.actor_type, e.actor_reference, e.idempotency_key, e.occurred_at
+FROM account_events e
+WHERE e.account_id = :conta
+ORDER BY e.occurred_at, e.id;
+\echo == Invocacao da skill (skill_invocations; so o campo paid_on do output) ==
+SELECT c.approval_request_id, si.id AS invocation_id, si.status, si.output_payload->>'paid_on' AS paid_on_output
+FROM approval_consumptions c
+JOIN skill_invocations si ON si.id = c.skill_invocation_id
+WHERE c.approval_request_id IN (SELECT r.id FROM approval_requests r WHERE r.target_account_id = :conta OR r.id IN (SELECT pp.approval_request_id FROM account_payments pp WHERE pp.account_id = :conta))
+ORDER BY si.id;
+ROLLBACK;
+'@
+
+$script:SqlConsultaCatalogo = @'
+BEGIN READ ONLY;
+\echo == Catalogo de skills e versoes ==
+SELECT s.skill_key, s.status AS skill_status, v.version, v.status AS version_status, v.execution_mode, v.published_at
+FROM skills s
+LEFT JOIN skill_versions v ON v.skill_id = s.id
+ORDER BY s.skill_key, v.created_at, v.id;
+ROLLBACK;
+'@
 
 # ---------------------------------------------------------------------------
 # Utilidades basicas
@@ -392,9 +459,10 @@ function Invoke-Filho {
         [string]$Exe,
         [string[]]$Argumentos = @(),
         [string]$DiretorioTrabalho = '',
-        [hashtable]$Ambiente = @{}
+        [hashtable]$Ambiente = @{},
+        [string]$Entrada = ''
     )
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi =New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Exe
     $psi.Arguments = (($Argumentos | ForEach-Object { ConvertTo-ArgWin $_ }) -join ' ')
     $psi.UseShellExecute = $false
@@ -414,8 +482,14 @@ function Invoke-Filho {
     $p = New-Object System.Diagnostics.Process
     $p.StartInfo = $psi
     [void]$p.Start()
-    $p.StandardInput.Close()
     $tarefa = $p.StandardOutput.ReadToEndAsync()
+    if ($Entrada) {
+        # Entrada fixa em ASCII (bytes diretos, sem BOM); a saida ja esta sendo lida.
+        $bytes = [Text.Encoding]::ASCII.GetBytes($Entrada)
+        $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $p.StandardInput.BaseStream.Flush()
+    }
+    $p.StandardInput.Close()
     $err = $p.StandardError.ReadToEnd()
     $p.WaitForExit()
     $out = $tarefa.Result
@@ -898,6 +972,59 @@ function Cmd-RegistrarAcaoPagamento {
     }
 }
 
+function Cmd-Consultar {
+    # Somente leitura: SQL fixo por relatorio, transacao read-only forcada em duas camadas
+    # (PGOPTIONS no ambiente do filho e BEGIN READ ONLY / ROLLBACK no proprio SQL).
+    $rel = [string]$script:Ctx.Relatorio
+    $conta = [int]$script:Ctx.Conta
+    if (-not $rel) { Falhar 'consultar exige -Relatorio pagamento|catalogo.' }
+    if ($rel -eq 'pagamento') {
+        if ($conta -lt 1) { Falhar 'consultar -Relatorio pagamento exige -Conta <id inteiro positivo>.' }
+        $sql = $script:SqlConsultaPagamento
+    }
+    elseif ($rel -eq 'catalogo') {
+        if ($conta -ne 0) { Falhar '-Conta so vale com -Relatorio pagamento.' }
+        $sql = $script:SqlConsultaCatalogo
+    }
+    else { Falhar 'Relatorio desconhecido.' }
+    $cofre = Ler-Cofre
+    Exigir-Segredos $cofre @('DATABASE_URL')
+    $url = Obter-Segredo $cofre 'DATABASE_URL'
+    $db = ConvertFrom-DatabaseUrl $url
+    Registrar-Segredo $db.Senha
+    $ref = Resolver-FerramentaPg 'pg_dump'
+    if (-not $ref) { $ref = Resolver-FerramentaPg 'pg_restore' }
+    $psql = Resolver-FerramentaPgIrma $ref 'psql'
+    if ($script:Ctx.Simular) {
+        Info 'SIMULACAO: nada sera conectado nem consultado.'
+        Info ('Relatorio: ' + $rel + $(if ($rel -eq 'pagamento') { ' (conta ' + $conta + ')' } else { '' }))
+        Info ('Banco    : host={0} porta={1} banco={2} (transacao somente leitura)' -f $db.Host, $db.Porta, $db.Banco)
+        Info ('psql     : ' + $(if ($psql) { $psql } else { 'NAO ENCONTRADO' }))
+        Info 'Opcoes   : -X -v ON_ERROR_STOP=1 -P pager=off; ambiente do filho: PGPASSWORD (valor oculto), PGOPTIONS=-c default_transaction_read_only=on'
+        if ($rel -eq 'pagamento') { Info ('Variavel : -v conta=' + $conta) }
+        Info 'SQL fixo (stdin do psql):'
+        foreach ($l in @($sql -split "`r?`n")) { Info ('  ' + $l) }
+        return
+    }
+    if (-not $psql) { Falhar 'psql.exe nao encontrado na mesma pasta de pg_dump/pg_restore (PATH ou C:\Program Files\PostgreSQL\*\bin).' }
+    $amb = @{
+        'PGPASSWORD' = $(if ($db.Senha) { $db.Senha } else { $null })
+        'PGCLIENTENCODING' = 'UTF8'
+        'PGCONNECT_TIMEOUT' = '10'
+        'PGOPTIONS' = '-c default_transaction_read_only=on'
+    }
+    if ($db.SslMode) { $amb['PGSSLMODE'] = $db.SslMode }
+    $a = @('-h', $db.Host, '-p', [string]$db.Porta)
+    if ($db.Usuario) { $a += @('-U', $db.Usuario) }
+    $a += @('-d', $db.Banco, '-w', '-X', '-v', 'ON_ERROR_STOP=1', '-P', 'pager=off')
+    if ($rel -eq 'pagamento') { $a += @('-v', ('conta=' + $conta)) }
+    $a += @('-f', '-')
+    Info ('Consultando (somente leitura) {0}:{1}/{2}: relatorio {3} ...' -f $db.Host, $db.Porta, $db.Banco, $rel)
+    $res = Invoke-Filho -Exe $psql -Argumentos $a -Ambiente $amb -Entrada $sql
+    if ($res.Saida) { Info $res.Saida }
+    if ($res.Codigo -ne 0) { Falhar ('psql terminou com codigo {0}.' -f $res.Codigo) }
+}
+
 function Cmd-Configurar {
     # Recusa ANTES de ler qualquer coisa.
     $interativo = [Environment]::UserInteractive
@@ -1234,6 +1361,11 @@ function Principal {
         $script:Ctx.SemSondagem = [bool]$SemSondagem
         $script:Ctx.Destino = $Destino
         $script:Ctx.ConfirmarBackup = $ConfirmarBackup
+        $script:Ctx.Relatorio = $Relatorio
+        $script:Ctx.Conta = $Conta
+        if (($Relatorio -or $Conta) -and ($Comando -ne 'consultar')) {
+            Falhar '-Relatorio e -Conta so valem com consultar.'
+        }
         if ($SemSondagem -and ($Comando -ne 'status') -and (-not $Simular)) {
             Falhar '-SemSondagem so vale com status ou -Simular.'
         }
@@ -1246,6 +1378,7 @@ function Principal {
             'ensaiar'        { Cmd-Ensaiar }
             'migrar'         { Cmd-Migrar }
             'registrar-acao-pagamento' { Cmd-RegistrarAcaoPagamento }
+            'consultar'      { Cmd-Consultar }
             'subir-backend'  { Cmd-SubirBackend }
             'parar-backend'  { Cmd-Parar 'backend' $script:PortaBackend }
             'subir-frontend' { Cmd-SubirFrontend }

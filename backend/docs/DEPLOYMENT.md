@@ -407,7 +407,7 @@ Use também `RELEASE_CHECKLIST.md`.
 `backend/scripts/homologacao.ps1` opera a homologacao local no Windows
 (PowerShell 5.1) com comandos fixos: `configurar`, `status`,
 `versao-banco`, `pendentes`, `backup`, `ensaiar`, `migrar`,
-`registrar-acao-pagamento`, `subir-backend`,
+`registrar-acao-pagamento`, `consultar`, `subir-backend`,
 `parar-backend`, `subir-frontend`, `parar-frontend`. Qualquer outro
 comando e recusado. Nao existe comando que imprima, exporte ou copie
 valores de segredos, e o script nao tem downgrade.
@@ -463,6 +463,8 @@ parametro para pular essa exigencia (mensagem: rode `ensaiar` antes).
 `python -m scripts.register_account_mark_paid_skill` com o ambiente do
 cofre; o modulo e fixo no script e o registro e idempotente. Nao exige o
 backend parado.
+
+`consultar -Relatorio <pagamento|catalogo> [-Conta <id>]` e SOMENTE LEITURA: roda relatorios com SQL fixo no script (auditoria do pagamento de uma conta; skills e versoes publicadas) via `psql`, em transacao read-only forcada, no banco do `DATABASE_URL`; `-Simular` mostra o SQL sem conectar.
 
 Regras: `-Simular` mostra o que seria feito sem fazer; `migrar` exige
 backup com menos de 24 h, recibo de ensaio valido e backend parado; `parar-*` so param o processo

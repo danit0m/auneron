@@ -283,6 +283,68 @@ try {
     $r = Rodar-Script (@('registrar-acao-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Modulo', 'os') + $comuns)
     Verificar 'nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
 
+    Write-Host '== consultar (somente leitura) =='
+    $r = Rodar-Script (@('consultar', '-Simular', '-SemSondagem') + $comuns)
+    Verificar 'consultar sem -Relatorio: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Relatorio') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'qualquer', '-Simular') + $comuns)
+    Verificar '-Relatorio fora do ValidateSet recusado' ($r.Codigo -ne 0 -and $r.Saida -match 'Relatorio') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'pagamento', '-Simular') + $comuns)
+    Verificar 'pagamento sem -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
+    foreach ($ruim in @('0', '-1', 'abc', '2147483648', '1;SELECT 1')) {
+        $r = Rodar-Script (@('consultar', '-Relatorio', 'pagamento', '-Conta', $ruim, '-Simular') + $comuns)
+        Verificar ('-Conta recusada: [' + $ruim + ']') ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
+    }
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Conta', '5', '-Simular') + $comuns)
+    Verificar 'catalogo com -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
+    $r = Rodar-Script (@('status', '-SemSondagem', '-Relatorio', 'catalogo') + $comuns)
+    Verificar '-Relatorio fora de consultar: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'consultar') $r.Saida
+
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'pagamento', '-Conta', '42', '-Simular') + $comuns)
+    $saidas['consultar-pagamento-simular'] = $r.Saida
+    Verificar 'consultar pagamento -Simular: exit 0, banco sem usuario/senha, SQL fixo' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida -match 'fakehost' -and $r.Saida -match '5999' -and $r.Saida -match 'fakedb' -and $r.Saida -notmatch 'fakeuser') $r.Saida
+    Verificar 'consultar pagamento -Simular: mostra BEGIN READ ONLY, ROLLBACK, PGOPTIONS e -v conta=42' ($r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida -match 'default_transaction_read_only=on' -and $r.Saida.Contains('-v conta=42') -and $r.Saida.Contains(':conta')) $r.Saida
+    Verificar 'consultar pagamento -Simular: o id nao foi interpolado no SQL' (-not $r.Saida.Contains('= 42;') -and -not $r.Saida.Contains('account_id = 42'))
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular') + $comuns)
+    $saidas['consultar-catalogo-simular'] = $r.Saida
+    Verificar 'consultar catalogo -Simular: exit 0, mostra BEGIN READ ONLY e ROLLBACK' ($r.Codigo -eq 0 -and $r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida -match 'skill_versions') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular', '-Executavel', 'x.exe') + $comuns)
+    Verificar 'nenhum parametro escolhe executavel, SQL ou modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular', '-Sql', 'select 1') + $comuns)
+    Verificar '-Sql recusado como parametro desconhecido' ($r.Codigo -ne 0 -and $r.Saida -match 'Sql')
+
+    $padraoEscrita = '(?i)\b(insert|update|delete|drop|alter|create|truncate|grant)\b'
+    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo))) {
+        $nomeSql = [string]$par[0]
+        $txtSql = [string]$par[1]
+        $linhasSql = @($txtSql -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+        Verificar ('SQL ' + $nomeSql + ': comeca com BEGIN READ ONLY;') ($linhasSql[0].Trim() -eq 'BEGIN READ ONLY;')
+        Verificar ('SQL ' + $nomeSql + ': termina com ROLLBACK;') ($linhasSql[$linhasSql.Count - 1].Trim() -eq 'ROLLBACK;')
+        Verificar ('SQL ' + $nomeSql + ': sem INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/TRUNCATE/GRANT') (-not [regex]::IsMatch($txtSql, $padraoEscrita))
+        Verificar ('SQL ' + $nomeSql + ': sem COMMIT e sem SET') ($txtSql -notmatch '(?i)\bcommit\b' -and $txtSql -notmatch '(?im)^\s*set\b')
+        Verificar ('SQL ' + $nomeSql + ': somente ASCII') (-not ($txtSql.ToCharArray() | Where-Object { [int]$_ -gt 127 }))
+    }
+    Verificar 'SQL pagamento usa a variavel :conta e nenhum numero literal de conta' ($script:SqlConsultaPagamento.Contains('= :conta') -and $script:SqlConsultaPagamento -notmatch '(?i)(account_id|target_account_id|a\.id)\s*=\s*[0-9]')
+    Verificar 'SQL catalogo nao usa variaveis' ($script:SqlConsultaCatalogo -notmatch ':conta')
+
+    $ast = [Management.Automation.Language.Parser]::ParseFile($alvoScript, [ref]$null, [ref]$null)
+    $nomesParam = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    $esperados = @('Comando', 'Pasta', 'Cofre', 'Base', 'Destino', 'ConfirmarBackup', 'Relatorio', 'Conta', 'Confirmar', 'Simular', 'SemSondagem', 'CarregarFuncoes')
+    $extras = @($nomesParam | Where-Object { $esperados -notcontains $_ })
+    $faltam = @($esperados | Where-Object { $nomesParam -notcontains $_ })
+    Verificar 'parametros: apenas os existentes mais -Relatorio e -Conta' ($extras.Count -eq 0 -and $faltam.Count -eq 0) (($extras + $faltam) -join ',')
+    $pRel = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Relatorio' })[0]
+    $vsRel = @($pRel.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
+    Verificar '-Relatorio: ValidateSet(pagamento, catalogo)' (($vsRel -join ',') -eq 'pagamento,catalogo') ($vsRel -join ',')
+    $pCon = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Conta' })[0]
+    $vrCon = @($pCon.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateRange' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
+    Verificar '-Conta: [int] com ValidateRange(1, 2147483647)' ((($vrCon -join ',') -eq '1,2147483647') -and ($pCon.StaticType.Name -eq 'Int32')) ($vrCon -join ',')
+
+    $mCons = [regex]::Match([IO.File]::ReadAllText($alvoScript), '(?s)function Cmd-Consultar \{.*?\r?\n\}\r?\n')
+    Verificar 'consultar: read-only forcado por PGOPTIONS no ambiente do filho' ($mCons.Success -and $mCons.Value.Contains("'PGOPTIONS' = '-c default_transaction_read_only=on'"))
+    Verificar 'consultar: conta passada como -v conta=<int> e SQL por stdin (-f -)' ($mCons.Success -and $mCons.Value.Contains("('conta=' + `$conta)") -and $mCons.Value.Contains("'-f', '-'") -and $mCons.Value.Contains('-Entrada $sql'))
+    Verificar 'consultar: -X, ON_ERROR_STOP e pager desligado' ($mCons.Success -and $mCons.Value.Contains("'-X'") -and $mCons.Value.Contains("'ON_ERROR_STOP=1'") -and $mCons.Value.Contains("'pager=off'"))
+    Verificar 'consultar: PGPASSWORD so no ambiente' ($mCons.Success -and $mCons.Value.Contains("'PGPASSWORD' =") -and $mCons.Value -cnotmatch "'-W'")
+
     Write-Host '== Varredura de vazamento =='
     foreach ($k in $saidas.Keys) {
         $achou = @($proibidos | Where-Object { $saidas[$k].Contains($_) })
