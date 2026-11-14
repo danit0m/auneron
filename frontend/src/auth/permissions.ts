@@ -13,6 +13,7 @@ const analystPermissions = [
   "clients.manage",
   "imports.execute",
   "brain.view",
+  "brain.manage",
   "work:create",
   "work:assess_escalation",
 ] as const satisfies readonly Permission[];

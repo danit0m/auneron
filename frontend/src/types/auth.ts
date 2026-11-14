@@ -13,6 +13,7 @@ export type Permission =
   | "imports.execute"
   | "executive.view"
   | "brain.view"
+  | "brain.manage"
   | "administration.ai-operations"
   | "developer.ui-showcase"
   | "approval:read"
