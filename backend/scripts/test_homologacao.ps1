@@ -283,6 +283,23 @@ try {
     $r = Rodar-Script (@('registrar-acao-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Modulo', 'os') + $comuns)
     Verificar 'nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
 
+    Write-Host '== registrar-acao-atraso =='
+    $pastaAtraso = Join-Path $tmp 'checkout-atraso'
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaAtraso 'backend\scripts'))
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaAtraso 'frontend'))
+    Set-Content -LiteralPath (Join-Path $pastaAtraso 'backend\alembic.ini') -Value '' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $pastaAtraso 'frontend\package.json') -Value '{}' -Encoding ASCII
+    $r = Rodar-Script (@('registrar-acao-atraso', '-Simular', '-SemSondagem') + $comuns)
+    Verificar 'registrar-acao-atraso aceito no ValidateSet (recusa por falta de -Pasta, nao por comando invalido)' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta' -and $r.Saida -notmatch 'ValidateSet') $r.Saida
+    $r = Rodar-Script (@('registrar-acao-atraso', '-Simular', '-SemSondagem', '-Pasta', $pastaAtraso) + $comuns)
+    Verificar 'registrar-acao-atraso sem o .py no checkout: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'register_account_mark_overdue_skill') $r.Saida
+    Set-Content -LiteralPath (Join-Path $pastaAtraso 'backend\scripts\register_account_mark_overdue_skill.py') -Value '' -Encoding ASCII
+    $r = Rodar-Script (@('registrar-acao-atraso', '-Simular', '-SemSondagem', '-Pasta', $pastaAtraso) + $comuns)
+    $saidas['registrar-acao-atraso'] = $r.Saida
+    Verificar 'registrar-acao-atraso -Simular: exit 0 e mostra o modulo fixo' ($r.Codigo -eq 0 -and $r.Saida.Contains('-m scripts.register_account_mark_overdue_skill')) $r.Saida
+    $r = Rodar-Script (@('registrar-acao-atraso', '-Simular', '-SemSondagem', '-Pasta', $pastaAtraso, '-Modulo', 'os') + $comuns)
+    Verificar 'registrar-acao-atraso: nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
+
     Write-Host '== consultar (somente leitura) =='
     $r = Rodar-Script (@('consultar', '-Simular', '-SemSondagem') + $comuns)
     Verificar 'consultar sem -Relatorio: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Relatorio') $r.Saida
@@ -373,8 +390,17 @@ try {
     Verificar 'a remocao esta na funcao de limpeza do ensaio' ($mLimpa.Success -and $posDrop -ge 0 -and [regex]::Matches($mLimpa.Value, $padraoDrop).Count -eq 1)
     Verificar 'a remocao e precedida pela checagem do padrao do nome' ($posChecagem -ge 0 -and $posChecagem -lt $posDrop)
     Verificar 'limpeza do ensaio so e chamada com o nome criado nesta execucao' ([regex]::Matches($codigo, 'Limpar-BancoEnsaio \$psql \$db \$criado').Count -eq 1)
-    $mReg = [regex]::Match($codigo, '(?s)function Cmd-RegistrarAcaoPagamento \{.*?\r?\n\}\r?\n')
-    Verificar 'registrar-acao-pagamento: modulo e constante literal e unico uso' ($mReg.Success -and $mReg.Value.Contains("`$modulo = 'scripts.register_account_mark_paid_skill'") -and [regex]::Matches($mReg.Value, '\$modulo\s*=').Count -eq 1 -and $mReg.Value.Contains("@('-m', `$modulo)"))
+    $mPag = [regex]::Match($codigo, '(?s)function Cmd-RegistrarAcaoPagamento \{.*?\r?\n\}\r?\n')
+    $mAtr = [regex]::Match($codigo, '(?s)function Cmd-RegistrarAcaoAtraso \{.*?\r?\n\}\r?\n')
+    $mRod = [regex]::Match($codigo, '(?s)function Rodar-RegistroDeAcao \{.*?\r?\n\}\r?\n')
+    Verificar 'registrar-acao-pagamento: modulo e arquivo sao literais fixos na chamada' ($mPag.Success -and $mPag.Value.Contains("-Modulo 'scripts.register_account_mark_paid_skill' -Arquivo 'register_account_mark_paid_skill.py'"))
+    Verificar 'registrar-acao-atraso: modulo e arquivo sao literais fixos na chamada' ($mAtr.Success -and $mAtr.Value.Contains("-Modulo 'scripts.register_account_mark_overdue_skill' -Arquivo 'register_account_mark_overdue_skill.py'"))
+    Verificar 'Rodar-RegistroDeAcao: modulo so vem do argumento interno e vai a -m' ($mRod.Success -and [regex]::Matches($mRod.Value, '\$modulo\s*=').Count -eq 1 -and $mRod.Value.Contains('$modulo = $Modulo') -and $mRod.Value.Contains("@('-m', `$modulo)"))
+    $chamadas = [regex]::Matches($codigo, 'Rodar-RegistroDeAcao\s+-Modulo\s+(\S+)')
+    Verificar 'Rodar-RegistroDeAcao so e chamado 2 vezes, ambas com literal entre aspas' ($chamadas.Count -eq 2 -and @($chamadas | Where-Object { $_.Groups[1].Value -match "^'scripts\.register_account_mark_(paid|overdue)_skill'$" }).Count -eq 2) ([string]$chamadas.Count)
+    Verificar 'nao existe parametro -Modulo no script' ($nomesParam -notcontains 'Modulo')
+    $vsCmd = @(@($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Comando' })[0].Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
+    Verificar 'ValidateSet de -Comando contem registrar-acao-atraso' ($vsCmd -contains 'registrar-acao-atraso') ($vsCmd -join ',')
     Verificar 'script e ASCII puro' (-not ($codigo.ToCharArray() | Where-Object { [int]$_ -gt 127 }))
 }
 finally {

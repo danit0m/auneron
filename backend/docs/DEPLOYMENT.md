@@ -407,7 +407,7 @@ Use também `RELEASE_CHECKLIST.md`.
 `backend/scripts/homologacao.ps1` opera a homologacao local no Windows
 (PowerShell 5.1) com comandos fixos: `configurar`, `status`,
 `versao-banco`, `pendentes`, `backup`, `ensaiar`, `migrar`,
-`registrar-acao-pagamento`, `consultar`, `subir-backend`,
+`registrar-acao-pagamento`, `registrar-acao-atraso`, `consultar`, `subir-backend`,
 `parar-backend`, `subir-frontend`, `parar-frontend`. Qualquer outro
 comando e recusado. Nao existe comando que imprima, exporte ou copie
 valores de segredos, e o script nao tem downgrade.
@@ -435,13 +435,14 @@ Fluxo (a partir da raiz do checkout; `<P>` e a pasta do checkout a usar):
 .\backend\scripts\homologacao.ps1 parar-backend -Confirmar
 .\backend\scripts\homologacao.ps1 migrar -Pasta <P> -ConfirmarBackup <arquivo.dump>
 .\backend\scripts\homologacao.ps1 registrar-acao-pagamento -Pasta <P>   # uma vez por ambiente, depois da migracao
+.\backend\scripts\homologacao.ps1 registrar-acao-atraso -Pasta <P>       # uma vez por ambiente, depois da migracao
 .\backend\scripts\homologacao.ps1 subir-backend -Pasta <P>
 .\backend\scripts\homologacao.ps1 parar-frontend -Confirmar
 .\backend\scripts\homologacao.ps1 subir-frontend -Pasta <P>
 ```
 
-Ordem: backup -> ensaiar -> parar-backend -> migrar -> (registrar-acao-pagamento,
-uma vez por ambiente) -> subir-backend -> parar/subir-frontend.
+Ordem: backup -> ensaiar -> parar-backend -> migrar -> (registrar-acao-pagamento e
+registrar-acao-atraso, uma vez por ambiente) -> subir-backend -> parar/subir-frontend.
 
 `ensaiar` prova, sem tocar no banco da homologacao, que o backup restaura e
 que as migracoes pendentes aplicam sem erro. Ele cria no MESMO servidor
@@ -462,7 +463,9 @@ parametro para pular essa exigencia (mensagem: rode `ensaiar` antes).
 `registrar-acao-pagamento` roda, em `<P>\backend`, exatamente
 `python -m scripts.register_account_mark_paid_skill` com o ambiente do
 cofre; o modulo e fixo no script e o registro e idempotente. Nao exige o
-backend parado.
+backend parado. `registrar-acao-atraso` faz o mesmo para `account.mark_overdue`
+com o modulo fixo `scripts.register_account_mark_overdue_skill` (se a skill ja
+existe, apenas reporta).
 
 `consultar -Relatorio <pagamento|catalogo> [-Conta <id>]` e SOMENTE LEITURA: roda relatorios com SQL fixo no script (auditoria do pagamento de uma conta; skills e versoes publicadas) via `psql`, em transacao read-only forcada, no banco do `DATABASE_URL`; `-Simular` mostra o SQL sem conectar.
 
