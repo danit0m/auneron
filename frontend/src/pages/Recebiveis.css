@@ -236,10 +236,24 @@
   }
 }
 
-/* Telas estreitas: 4 colunas legíveis não cabem; mantém rolagem dentro da tabela. */
-@media (max-width: 560px) {
+/*
+ * Telas médias e estreitas: as 5 colunas (com Pagamento) não cabem apertadas.
+ * A tabela ganha largura mínima e rola dentro do wrapper (overflow-x: auto),
+ * sem rolagem da página; o nome do cliente quebra por palavra, nunca por
+ * letra, e o selo de situação não encolhe.
+ */
+@media (max-width: 900px) {
   .recebiveis-table {
-    min-width: 36rem;
+    min-width: 52rem;
+  }
+
+  .recebiveis-table td:nth-child(1) {
+    min-width: 11rem;
+    overflow-wrap: break-word;
+  }
+
+  .recebiveis-table td:nth-child(3) {
+    min-width: 10rem;
   }
 }
 
@@ -282,6 +296,56 @@
 
 .recebiveis-muted {
   color: var(--text-muted);
+}
+
+.recebiveis-indicadores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.recebiveis-indicadores > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+}
+
+.recebiveis-indicadores dt {
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
+}
+
+.recebiveis-indicadores dd {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.recebiveis-indicadores strong {
+  color: var(--text-primary);
+  font-size: var(--font-lg);
+  font-weight: var(--font-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.recebiveis-indicadores small {
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+}
+
+.recebiveis-nota {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-xs);
 }
 
 .recebiveis-link {

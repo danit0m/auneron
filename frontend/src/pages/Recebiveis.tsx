@@ -26,6 +26,15 @@ import {
   type ContaEmAberto,
   type FaixaChave,
 } from "../lib/recebiveis";
+import {
+  atrasoMedioPagamento,
+  descreverAtrasoMedio,
+  descreverPagosEmDia,
+  descreverSemData,
+  descreverTitulosPagos,
+  pagosSemData,
+  recebidoNoPeriodo,
+} from "../lib/recebimento";
 import type { Account } from "../types/account";
 import type {
   ApprovalDetailsResponse,
@@ -267,6 +276,9 @@ export default function Recebiveis() {
 
   const itens = useMemo(() => classificarContas(contas, new Date()), [contas]);
   const resumo = useMemo(() => resumirFaixas(itens), [itens]);
+  const recebido = useMemo(() => recebidoNoPeriodo(contas, new Date()), [contas]);
+  const atrasoMedio = useMemo(() => atrasoMedioPagamento(contas), [contas]);
+  const semData = useMemo(() => pagosSemData(contas), [contas]);
   const abas = useMemo(() => contarAbas(itens), [itens]);
   const fila = useMemo(() => filtrarFila(itens, aba), [itens, aba]);
 
@@ -464,17 +476,61 @@ export default function Recebiveis() {
     );
   }
 
+  const temPagos = contas.some((c) => c.status === "pago");
+  const cartaoRecebimentos = (
+    <Card padding="lg">
+      <section className="recebiveis-panel" aria-label="Recebimentos">
+        <div>
+          <h2>Recebimentos</h2>
+          <p>Pagamentos com data registrada, em relação ao vencimento</p>
+        </div>
+        {recebido === null || atrasoMedio === null ? (
+          <p className="recebiveis-muted">Ainda não há pagamentos com data registrada.</p>
+        ) : (
+          <dl className="recebiveis-indicadores">
+            <div>
+              <dt>Recebido nos últimos {recebido.dias} dias</dt>
+              <dd>
+                <strong>{formatarMoeda(recebido.valor)}</strong>
+                <small>{descreverTitulosPagos(recebido.quantidade)}</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Atraso médio no pagamento</dt>
+              <dd>
+                <strong>{descreverAtrasoMedio(atrasoMedio.mediaDias)}</strong>
+              </dd>
+            </div>
+            <div>
+              <dt>Pagos em dia</dt>
+              <dd>
+                <strong>{descreverPagosEmDia(atrasoMedio.emDia, atrasoMedio.total)}</strong>
+                <small>pagos até o vencimento</small>
+              </dd>
+            </div>
+          </dl>
+        )}
+        {semData && (
+          <p className="recebiveis-nota">
+            {descreverSemData(semData, formatarMoeda(semData.valor))}
+          </p>
+        )}
+      </section>
+    </Card>
+  );
+
   if (itens.length === 0) {
     return (
       <div className="page">
         {header}
-        <section className="page-content">
+        <section className="page-content recebiveis">
           <Card padding="lg">
             <div className="recebiveis-empty">
               <AuneronBot mood="feliz" size="md" label="Nada em aberto" />
               <p>Nenhuma conta em aberto</p>
             </div>
           </Card>
+          {temPagos && cartaoRecebimentos}
         </section>
       </div>
     );
@@ -524,6 +580,8 @@ export default function Recebiveis() {
             </ul>
           </div>
         </Card>
+
+        {cartaoRecebimentos}
 
         <Card padding="lg">
           <div className="recebiveis-panel">
