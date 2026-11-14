@@ -8,7 +8,7 @@
     Nenhum comando imprime, exporta ou copia valores do cofre.
 
     Comandos: configurar, status, versao-banco, pendentes, backup, ensaiar, migrar,
-              registrar-acao-pagamento, consultar,
+              registrar-acao-pagamento, registrar-acao-atraso, consultar,
               subir-backend, parar-backend, subir-frontend, parar-frontend
 
     Exemplos:
@@ -30,7 +30,7 @@ param(
     [Parameter(ParameterSetName = 'Normal', Position = 0, Mandatory = $true)]
     [ValidateSet(
         'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
-        'registrar-acao-pagamento', 'consultar',
+        'registrar-acao-pagamento', 'registrar-acao-atraso', 'consultar',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend'
     )]
     [string]$Comando,
@@ -950,11 +950,21 @@ function Cmd-Ensaiar {
 }
 
 function Cmd-RegistrarAcaoPagamento {
+    Rodar-RegistroDeAcao -Modulo 'scripts.register_account_mark_paid_skill' -Arquivo 'register_account_mark_paid_skill.py'
+}
+
+function Cmd-RegistrarAcaoAtraso {
+    Rodar-RegistroDeAcao -Modulo 'scripts.register_account_mark_overdue_skill' -Arquivo 'register_account_mark_overdue_skill.py'
+}
+
+function Rodar-RegistroDeAcao {
+    # Interno: so e chamado com modulo/arquivo constantes pelos Cmd-RegistrarAcao*; nenhum parametro do usuario chega aqui.
+    param([string]$Modulo, [string]$Arquivo)
     $raiz = Resolver-Pasta
-    $modulo = 'scripts.register_account_mark_paid_skill'
-    $arqPy = Join-Path $raiz 'backend\scripts\register_account_mark_paid_skill.py'
+    $modulo = $Modulo
+    $arqPy = Join-Path $raiz ('backend\scripts\' + $Arquivo)
     if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
-        Falhar 'Nao existe backend\scripts\register_account_mark_paid_skill.py no checkout informado.'
+        Falhar ('Nao existe backend\scripts\' + $Arquivo + ' no checkout informado.')
     }
     $py = Resolver-Python $raiz
     if ($script:Ctx.Simular) {
@@ -1378,6 +1388,7 @@ function Principal {
             'ensaiar'        { Cmd-Ensaiar }
             'migrar'         { Cmd-Migrar }
             'registrar-acao-pagamento' { Cmd-RegistrarAcaoPagamento }
+            'registrar-acao-atraso'    { Cmd-RegistrarAcaoAtraso }
             'consultar'      { Cmd-Consultar }
             'subir-backend'  { Cmd-SubirBackend }
             'parar-backend'  { Cmd-Parar 'backend' $script:PortaBackend }
