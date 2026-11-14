@@ -5,6 +5,7 @@ import {
   MessageCircle,
   Pencil,
   Trash2,
+  UserPlus,
   Users,
 } from "lucide-react";
 
@@ -16,6 +17,8 @@ interface ClienteTableProps {
   hoje: Date;
   onEdit: (cliente: Account) => void;
   onDelete: (cliente: Account) => void;
+  /** Ausente = usuário sem permissão: a ação não aparece. */
+  onCompletarContato?: (cliente: Account) => void;
 }
 
 function formatarMoeda(valor: number): string {
@@ -56,6 +59,7 @@ export default function ClienteTable({
   hoje,
   onEdit,
   onDelete,
+  onCompletarContato,
 }: ClienteTableProps) {
   if (clientes.length === 0) {
     return (
@@ -166,6 +170,19 @@ export default function ClienteTable({
 
               <td>
                 <div className="cliente-row-actions">
+                  {onCompletarContato && contaSemContato(cliente) && (
+                    <button
+                      type="button"
+                      className="cliente-action-button cliente-edit-button cliente-contact-button"
+                      aria-label={`Completar contato de ${cliente.cliente}`}
+                      title="Completar contato do cliente"
+                      onClick={() => onCompletarContato(cliente)}
+                    >
+                      <UserPlus size={16} />
+                      Completar contato
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     className="cliente-action-button cliente-edit-button"

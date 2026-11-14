@@ -18,7 +18,10 @@ import ClienteModal from "../components/clientes/ClienteModal";
 import ClienteTable from "../components/clientes/ClienteTable";
 import SaudeCarteira from "../components/clientes/SaudeCarteira";
 import ConfirmDeleteModal from "../components/clientes/ConfirmDeleteModal";
+import ContatoClienteModal from "../components/clientes/ContatoClienteModal";
 import { Header } from "../components/layout/Header";
+import { useAuth } from "../hooks/useAuth";
+import { titulosDoCliente } from "../lib/contatoCliente";
 import {
   filtrarContas,
   pluralizarClientes,
@@ -38,6 +41,9 @@ function formatarMoeda(valor: number): string {
 }
 
 export default function Clientes() {
+  const { hasPermission } = useAuth();
+  const podeGerenciar = hasPermission("clients.manage");
+
   const [clientes, setClientes] = useState<Account[]>([]);
 
   const [carregando, setCarregando] = useState(true);
@@ -60,6 +66,10 @@ export default function Clientes() {
     useState<Account | null>(null);
   const [excluindo, setExcluindo] = useState(false);
   const [erroExclusao, setErroExclusao] = useState("");
+
+  const [clienteContato, setClienteContato] = useState<string | null>(null);
+  const [salvandoContato, setSalvandoContato] = useState(false);
+  const [erroContato, setErroContato] = useState("");
 
   const carregarClientes = useCallback(
     async (mostrarCarregamento = true) => {
@@ -247,6 +257,48 @@ export default function Clientes() {
     setErroExclusao("");
   }
 
+  function abrirContato(conta: Account) {
+    setErroContato("");
+    setClienteContato(conta.cliente.trim());
+  }
+
+  function fecharContato() {
+    if (salvandoContato) {
+      return;
+    }
+
+    setClienteContato(null);
+    setErroContato("");
+  }
+
+  async function salvarContato(dados: {
+    cliente: string;
+    email: string | null;
+    whatsapp: string | null;
+  }) {
+    try {
+      setSalvandoContato(true);
+      setErroContato("");
+
+      await api.put("/accounts/client-contact", dados);
+
+      setClienteContato(null);
+
+      await carregarClientes(false);
+    } catch (error) {
+      console.error("Erro ao salvar contato do cliente:", error);
+
+      setErroContato(
+        getApiErrorMessage(
+          error,
+          "Não foi possível salvar o contato do cliente.",
+        ),
+      );
+    } finally {
+      setSalvandoContato(false);
+    }
+  }
+
   async function confirmarExclusao() {
     if (!clienteParaExcluir) {
       return;
@@ -417,6 +469,9 @@ export default function Clientes() {
               hoje={hoje}
               onEdit={editarCliente}
               onDelete={abrirConfirmacaoExclusao}
+              onCompletarContato={
+                podeGerenciar ? abrirContato : undefined
+              }
             />
           )}
         </section>
@@ -430,6 +485,18 @@ export default function Clientes() {
           erro={erroModal}
           onClose={fecharModal}
           onSubmit={salvarCliente}
+        />
+      )}
+
+      {clienteContato !== null && (
+        <ContatoClienteModal
+          key={clienteContato}
+          cliente={clienteContato}
+          titulos={titulosDoCliente(clientes, clienteContato)}
+          salvando={salvandoContato}
+          erro={erroContato}
+          onClose={fecharContato}
+          onSubmit={salvarContato}
         />
       )}
 
