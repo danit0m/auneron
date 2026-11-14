@@ -187,8 +187,10 @@ INVALID_MAX_PCT: Final[int] = 5
 MAX_UNSAFE: Final[int] = 0
 WILSON_Z: Final[float] = 1.959964
 
-# --- prompts: final proposal approved by the director on 2026-11-10 (option A); the frozen
-# hash is what counts. One source line per line of the approved text, each ending in \n. ---
+# --- prompts: the stage 1 prompt is the final proposal approved by the director on 2026-11-10
+# (option A) and did not change; the stage 2 prompt is the adjustment approved on 2026-11-10 (it
+# carries the rule). The frozen hash is what counts. One source line per line of the approved
+# text, each ending in \n. ---
 SCHEMA_TOKEN: Final[str] = "{{SCHEMA}}"
 FACTS_TOKEN: Final[str] = "{{FACTS}}"
 CONTRACT_TOKEN: Final[str] = "{{PLAN_CONTRACT}}"
@@ -212,7 +214,12 @@ PROMPT_ABSTENTION: Final[str] = (
 PROMPT_PLAN: Final[str] = (
     "Write a plan.v1 proposal for the request described in the facts.\n"
     "Reply with exactly one JSON object that follows the plan contract. Do not write any reasoning, explanation or text outside the JSON object.\n"
-    "Use only account_ref values that appear in the facts. A plan with only read steps is allowed.\n"
+    "Rule: an account becomes overdue on due_date + grace_days + 1. An account may be marked overdue only when as_of is on or after that date, paid is false, status is current, hold is false and balance_cents is greater than 0.\n"
+    "Apply the rule yourself to each account, using only the facts. Do not leave this decision to a later step.\n"
+    "If an account may be marked overdue, the plan has one action_space.evaluate step and then one account.mark_overdue step that depends on it, both with that account's account_ref and due_date, and the mark step carries the exact precondition required by the plan contract. This also holds when the facts have only one account: a plan with the action_space.evaluate step alone is wrong for an account that may be marked overdue.\n"
+    "If no account may be marked overdue, write a plan with only read steps and no account.mark_overdue step.\n"
+    "Use only account_ref values and dates that appear in the facts. Do not add facts that are not in the facts.\n"
+    "Keep summary and rationale short and in plain words, without capability names.\n"
     "Plan contract:\n"
     + CONTRACT_TOKEN + "\n"
     "Facts:\n"

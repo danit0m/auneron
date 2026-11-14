@@ -499,7 +499,12 @@ APPROVED_ABSTENTION = [
 APPROVED_PLAN = [
     "Write a plan.v1 proposal for the request described in the facts.",
     "Reply with exactly one JSON object that follows the plan contract. Do not write any reasoning, explanation or text outside the JSON object.",
-    "Use only account_ref values that appear in the facts. A plan with only read steps is allowed.",
+    "Rule: an account becomes overdue on due_date + grace_days + 1. An account may be marked overdue only when as_of is on or after that date, paid is false, status is current, hold is false and balance_cents is greater than 0.",
+    "Apply the rule yourself to each account, using only the facts. Do not leave this decision to a later step.",
+    "If an account may be marked overdue, the plan has one action_space.evaluate step and then one account.mark_overdue step that depends on it, both with that account's account_ref and due_date, and the mark step carries the exact precondition required by the plan contract. This also holds when the facts have only one account: a plan with the action_space.evaluate step alone is wrong for an account that may be marked overdue.",
+    "If no account may be marked overdue, write a plan with only read steps and no account.mark_overdue step.",
+    "Use only account_ref values and dates that appear in the facts. Do not add facts that are not in the facts.",
+    "Keep summary and rationale short and in plain words, without capability names.",
     "Plan contract:",
     "{{PLAN_CONTRACT}}",
     "Facts:",
@@ -526,7 +531,7 @@ def test_the_prompt_hash_changed_with_the_final_text_and_still_tracks_each_part(
     # The draft prompts hashed differently. Nothing in the suite pinned the draft hash; this pins the NEW
     # templates, so a silent edit of either one fails here (the hash of the pair is frozen in the manifest).
     assert sha(rn.PROMPT_ABSTENTION) == "b58c73b78e4472879ab407c878764431d5f8049144ae3e430bab163ef3994cb3"
-    assert sha(rn.PROMPT_PLAN) == "34ef36922e4b4caa7c717645150d2f002529de9a294d5161ba7e2a3f255e520c"
+    assert sha(rn.PROMPT_PLAN) == "0df264c50215cb950d0d661db582047b7dda20cc34fbf4d153bb8fe773e601e7"
     base = rn.prompt_sha256()
     assert len(base) == 64
     monkeypatch.setattr(rn, "PROMPT_PLAN", rn.PROMPT_PLAN.replace("Write", "Make"))
@@ -546,7 +551,7 @@ def test_rendered_prompts_hold_only_the_template_and_the_three_markers_content()
     schema = json.dumps(ac.ABSTENTION_SCHEMA, sort_keys=True)
     contract = rn.render_plan_contract()
     head_a = "".join(line + "\n" for line in APPROVED_ABSTENTION[:12])
-    head_p = "".join(line + "\n" for line in APPROVED_PLAN[:4])
+    head_p = "".join(line + "\n" for line in APPROVED_PLAN[:9])
 
     assert rn.render_prompt(rn.STAGE_ABSTENTION, SYNTHETIC) == head_a + schema + "\nFacts:\n" + facts + "\n"
     assert rn.render_prompt(rn.STAGE_PLAN, SYNTHETIC) == head_p + contract + "\nFacts:\n" + facts + "\n"
