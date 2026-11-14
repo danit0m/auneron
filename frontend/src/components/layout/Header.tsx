@@ -1,4 +1,6 @@
-import { Bell, Menu, Search } from "lucide-react";
+import { Menu, Search } from "lucide-react";
+
+import { AvisosBell } from "./AvisosBell";
 
 import {
   roleLabels,
@@ -86,14 +88,7 @@ export function Header({
           />
         </div>
 
-        <button
-          type="button"
-          className="header-icon-button"
-          aria-label="Notificações"
-        >
-          <Bell size={20} />
-          <span className="notification-dot" />
-        </button>
+        <AvisosBell />
 
         <div className="user-profile">
           <div className="user-avatar">
