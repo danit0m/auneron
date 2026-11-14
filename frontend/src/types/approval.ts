@@ -33,6 +33,8 @@ export interface ApprovalRequestResponse {
   expires_at: string;
   resolved_at: string | null;
   created_at: string;
+  /** Data efetiva do pedido (AAAA-MM-DD), so em account.mark_paid pedido pela tela. */
+  effective_date?: string | null;
 }
 
 export interface ApprovalDecisionResponse {
@@ -75,6 +77,7 @@ export interface ApprovalPendingCountResponse {
  */
 export const APPROVAL_ACTION_LABELS: Record<string, string> = {
   "account.mark_overdue": "Marcar conta como atrasada",
+  "account.mark_paid": "Registrar pagamento",
 };
 
 export function getApprovalActionLabel(

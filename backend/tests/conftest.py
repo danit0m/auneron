@@ -81,6 +81,8 @@ def _clean_database() -> None:
                     intelligence_model_calls,
                     intelligence_budgets,
                     work_skill_executions,
+                    account_payments,
+                    approval_request_inputs,
                     approval_consumptions,
                     approval_decisions,
                     approval_requests,

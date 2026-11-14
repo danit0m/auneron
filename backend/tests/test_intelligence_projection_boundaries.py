@@ -277,7 +277,7 @@ def test_no_route_permission_table_or_migration_was_added():
 
     config = Config(str(BACKEND / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND / "migrations"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["e9a4c7d2b135"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["d5b8e2f4a671"]
 
 
 def test_the_projection_documentation_exists_and_states_the_boundary():

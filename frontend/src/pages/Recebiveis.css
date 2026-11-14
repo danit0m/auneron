@@ -290,3 +290,52 @@
   color: var(--color-primary-600);
   font-size: var(--font-xs);
 }
+
+.recebiveis-pagamento {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+}
+
+.recebiveis-pagamento small {
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+}
+
+.recebiveis-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-sm);
+}
+
+.recebiveis-feedback svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.recebiveis-feedback-ok {
+  border-color: var(--color-success-300);
+  background: var(--color-success-50);
+  color: var(--color-success-700);
+}
+
+.recebiveis-feedback-erro {
+  border-color: var(--color-danger-300);
+  background: var(--color-danger-50);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .recebiveis-feedback-ok {
+  background: rgb(34 197 94 / 14%);
+  color: var(--text-primary);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .recebiveis-feedback-erro {
+  background: rgb(239 68 68 / 14%);
+  color: var(--text-primary);
+}

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
@@ -11,6 +12,8 @@ from app.core.account_identity_lock import lock_account_identity, account_identi
 from app.core.account_writers_busy import AccountWritersBusy, busy_detail, busy_headers
 from app.core.authentication import AuthenticatedSession
 from app.core.authentication import require_permission
+from app.core.authorization import has_permission
+from app.core.receivable_lifecycle import business_today
 from app.core.client_classification import _oldest_account_id
 from app.core.client_classification import (
     MEMORY_KEY as CLIENT_CLASSIFICATION_MEMORY_KEY,
@@ -19,16 +22,21 @@ from app.core.config import settings
 from app.database.database import get_db
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.models.account_payment import AccountPayment
 from app.models.account_vencimento_change import AccountVencimentoChange
+from app.models.approval import ApprovalConsumption
 from app.models.approval import ApprovalRequest
+from app.models.approval_request_input import ApprovalRequestInput
 from app.models.business_effect_verification import BusinessEffectVerification
 from app.models.import_confirmation import account_title_references
 from app.models.policy_authority_consumption import PolicyAuthorityConsumption
+from app.repositories.approval_repository import ApprovalRepository
 from app.repositories.memory_repository import MemoryRepository
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.account import (
     AccountClassificationResponse,
     AccountCreate,
+    AccountMarkPaidRequest,
     AccountResponse,
     AccountUpdate,
     ClientClassificationDetail,
@@ -51,14 +59,26 @@ from app.services.orchestrator_skill_binding_projection import (
     OrchestratorSkillBindingProjectionService,
 )
 from app.services.overdue_detection_service import OverdueDetectionService
+from app.api.routes.approvals import _authorize_skill_proposal
 from app.api.routes.approvals import _raise_approval_http_error
+from app.api.routes.approvals import _request_response
+from app.api.routes.approvals import _resolve_effective_dates
+from app.api.routes.approvals import _resolve_skill_keys
+from app.api.routes.approvals import get_approval_idempotency_key
+from app.core.approval_errors import ApprovalAuthorizationError
 from app.core.approval_errors import ApprovalError
 from app.core.approval_observability import log_approval_event
 from app.core.skill_errors import SkillAuthorizationError
 from app.core.skill_errors import SkillScopeNotFoundError
 from app.schemas.account import AccountMarkPaidExecuteRequest
+from app.schemas.approval import ApprovalCreationResponse
+from app.services.approval_service import ApprovalRequester
+from app.services.approval_service import ApprovalService
 from app.services.account_mark_paid_execution_service import (
     AccountMarkPaidExecutionService,
+)
+from app.services.account_mark_paid_execution_service import (
+    SKILL_KEY as MARK_PAID_SKILL_KEY,
 )
 from app.services.account_data_entry_audit import (
     audit_actor,
@@ -112,7 +132,34 @@ GOVERNED_HISTORY_COLUMNS = (
     PolicyAuthorityConsumption.target_account_id,
     BusinessEffectVerification.target_account_id,
     account_title_references.c.account_id,
+    AccountPayment.account_id,
 )
+
+
+def _responses_with_paid_on(
+    db: Session, accounts: list[Account]
+) -> list[AccountResponse]:
+    """
+    A3: monta AccountResponse com paid_on (tabela lateral account_payments)
+    numa unica consulta em lote. So as rotas de leitura/atualizacao para a
+    tela passam por aqui; Account nao depende da tabela nova.
+    """
+    ids = [account.id for account in accounts]
+    paid = {}
+    if ids:
+        paid = {
+            row[0]: row[1]
+            for row in db.execute(
+                select(AccountPayment.account_id, AccountPayment.paid_on)
+                .where(AccountPayment.account_id.in_(ids))
+            ).all()
+        }
+    responses = []
+    for account in accounts:
+        response = AccountResponse.model_validate(account)
+        response.paid_on = paid.get(account.id)
+        responses.append(response)
+    return responses
 
 
 def _has_governed_history(db: Session, account_id: int) -> bool:
@@ -162,7 +209,7 @@ def list_accounts(
             )
         )
 
-    return (
+    accounts = (
         query
         .order_by(
             Account.vencimento.asc(),
@@ -172,6 +219,8 @@ def list_accounts(
         .limit(limit)
         .all()
     )
+
+    return _responses_with_paid_on(db, accounts)
 
 
 @router.get(
@@ -194,7 +243,7 @@ def get_account(
             detail="Conta não encontrada.",
         )
 
-    return account
+    return _responses_with_paid_on(db, [account])[0]
 
 
 @router.post(
@@ -421,7 +470,7 @@ def update_account(
     db.commit()
     db.refresh(account)
 
-    return account
+    return _responses_with_paid_on(db, [account])[0]
 
 
 @router.delete(
@@ -579,6 +628,219 @@ def detect_overdue_accounts(
     """
     result = OverdueDetectionService(db).run_scan()
     return result.as_dict()
+
+
+@router.post(
+    "/{account_id}/request-mark-paid",
+    response_model=ApprovalCreationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_account_mark_paid(
+    account_id: int,
+    payload: AccountMarkPaidRequest,
+    response: Response,
+    idempotency_key: str = Depends(get_approval_idempotency_key),
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("skill:execute")
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    A2/A3 -- pede a aprovacao de 'registrar pagamento' com data efetiva.
+
+    Monta o input governado {account_id, expected_status, paid_on} e usa
+    o mesmo servico de pedido da rota generica; o resumo (data efetiva)
+    e gravado na MESMA transacao do pedido (before_commit). A decisao e
+    a conclusao seguem as rotas existentes (decision / execute-mark-paid).
+    """
+    user = authenticated.user
+
+    # RBAC primeiro, antes de revelar qualquer coisa sobre a conta.
+    if not has_permission(user.role, "skill:execute_mutating"):
+        _raise_approval_http_error(
+            ApprovalAuthorizationError(
+                "Ator sem autoridade para propor esta execução."
+            ),
+            operation="create",
+            user_id=user.id,
+        )
+
+    # Trava a linha da conta: serializa pedidos concorrentes para a
+    # mesma conta (checagem de duplicado) e a execucao governada.
+    account = db.execute(
+        select(Account)
+        .where(Account.id == account_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+    if account.status not in {"aberto", "atrasado"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Título já está pago ou não aceita registro de pagamento.",
+        )
+    if payload.paid_on > business_today():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A data do pagamento não pode ser futura.",
+        )
+
+    skills = SkillRepository(db)
+    skill = skills.find_skill_by_key(MARK_PAID_SKILL_KEY)
+    published = (
+        [
+            version
+            for version in skills.list_versions(skill.id)
+            if version.status == "published"
+        ]
+        if skill is not None and skill.status == "active"
+        else []
+    )
+    if len(published) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Registro de pagamento indisponível: a ação "
+                "account.mark_paid não está publicada no catálogo."
+            ),
+        )
+    version = published[0]
+
+    # Reenvio da mesma chave pelo mesmo solicitante e replay idempotente
+    # do servico (200); so um pedido NOVO passa pelas travas abaixo.
+    requester = ApprovalRequester(
+        actor_type="user",
+        actor_reference=f"user:{user.id}",
+        actor_user_id=user.id,
+    )
+    is_replay = (
+        ApprovalRepository(db).find_request_by_idempotency(
+            requester_actor_type=requester.actor_type,
+            requester_reference=requester.actor_reference,
+            idempotency_key=idempotency_key,
+        )
+        is not None
+    )
+    if not is_replay:
+        if db.execute(
+            select(AccountPayment.id)
+            .where(AccountPayment.account_id == account.id)
+            .limit(1)
+        ).first() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Este título já possui pagamento registrado.",
+            )
+        agora = datetime.now(timezone.utc)
+        # Pedido em andamento: pendente nao expirado, ou aprovado nao
+        # expirado e ainda sem ApprovalConsumption (falta concluir).
+        abertos = {
+            row[0]
+            for row in db.execute(
+                select(ApprovalRequest.status)
+                .where(
+                    ApprovalRequest.target_account_id == account.id,
+                    ApprovalRequest.skill_version_id == version.id,
+                    ApprovalRequest.status.in_(("pending", "approved")),
+                    ApprovalRequest.expires_at > agora,
+                    ~select(ApprovalConsumption.id)
+                    .where(
+                        ApprovalConsumption.approval_request_id
+                        == ApprovalRequest.id
+                    )
+                    .exists(),
+                )
+            ).all()
+        }
+        if "approved" in abertos:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Já existe um pagamento aprovado aguardando "
+                    "conclusão para este título."
+                ),
+            )
+        if "pending" in abertos:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Já existe um pedido de pagamento aguardando "
+                    "aprovação para este título."
+                ),
+            )
+
+    input_payload = {
+        "account_id": account.id,
+        "expected_status": account.status,
+        "paid_on": payload.paid_on.isoformat(),
+    }
+    _authorize_skill_proposal(
+        db=db,
+        authenticated=authenticated,
+        version_id=version.id,
+        input_payload=input_payload,
+    )
+
+    def _store_summary(approval_request) -> None:
+        db.add(
+            ApprovalRequestInput(
+                approval_request_id=approval_request.id,
+                effective_date=payload.paid_on,
+            )
+        )
+
+    try:
+        result = ApprovalService(db).create_skill_execution_request(
+            version_id=version.id,
+            requester=requester,
+            input_payload=input_payload,
+            idempotency_key=idempotency_key,
+            before_commit=_store_summary,
+        )
+    except ApprovalError as error:
+        _raise_approval_http_error(
+            error,
+            operation="create",
+            user_id=user.id,
+            version_id=version.id,
+        )
+
+    response.status_code = (
+        status.HTTP_200_OK
+        if result.duplicate
+        else status.HTTP_201_CREATED
+    )
+
+    log_approval_event(
+        "approval.request_recorded",
+        operation="create",
+        user_id=user.id,
+        approval_request_id=result.request.id,
+        skill_version_id=result.request.skill_version_id,
+        risk_level=result.request.risk_level,
+        status=result.request.status,
+        duplicate=result.duplicate,
+        sensitive=(
+            result.request.required_permission
+            == "approval:decide_sensitive"
+        ),
+    )
+
+    skill_keys = _resolve_skill_keys(db, [result.request])
+    effective_dates = _resolve_effective_dates(db, [result.request])
+
+    return ApprovalCreationResponse(
+        request=_request_response(
+            result.request,
+            skill_key=skill_keys[result.request.skill_version_id],
+            effective_date=effective_dates.get(result.request.id),
+        ),
+        created=not result.duplicate,
+        duplicate=result.duplicate,
+    )
 
 
 @router.post(

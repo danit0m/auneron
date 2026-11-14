@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from collections.abc import Callable
 from hashlib import sha256
 from typing import Any
 from typing import Literal
@@ -339,7 +340,13 @@ class ApprovalService:
         input_payload: Any,
         idempotency_key: str,
         now: datetime | None = None,
+        before_commit: Callable[[ApprovalRequest], None] | None = None,
     ) -> ApprovalCreationResult:
+        # before_commit (opcional): chamado com o pedido ja persistido
+        # (flush, id disponivel) e ANTES do commit, na mesma transacao.
+        # Permite gravar uma linha lateral junto com o pedido; se ela
+        # falhar, o pedido tambem e desfeito. Nao e chamado no replay
+        # idempotente (pedido existente).
         normalized_version_id = _positive_id(
             version_id,
             field_name="version_id",
@@ -457,6 +464,8 @@ class ApprovalService:
             self.repository.add_request(
                 request
             )
+            if before_commit is not None:
+                before_commit(request)
             self.db.commit()
             self.db.refresh(
                 request

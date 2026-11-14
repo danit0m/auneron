@@ -203,7 +203,7 @@ def test_migration_is_the_single_head_and_follows_the_previous_head() -> None:
     # add_intelligence_budget_ledger, que por sua vez e filha desta
     # migracao). As duas asserts acima continuam congelando a identidade
     # desta migracao.
-    assert expected_schema_revision() == "e9a4c7d2b135"
+    assert expected_schema_revision() == "d5b8e2f4a671"
 
 
 def test_migration_is_additive_not_valid_and_has_no_backfill() -> None:

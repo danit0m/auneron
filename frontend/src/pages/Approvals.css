@@ -131,3 +131,16 @@
 .approvals-action-cell .ui-bot-message {
   display: none;
 }
+
+.approvals-action-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.approvals-effective-date {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
+}
