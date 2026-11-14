@@ -21,6 +21,7 @@ import api, {
 } from "../api/api";
 import BrainExecutiveSummary from "../components/brain/BrainExecutiveSummary";
 import { Header } from "../components/layout/Header";
+import { useAuth } from "../hooks/useAuth";
 import type { Knowledge } from "../types/knowledge";
 
 import "../styles/brain.css";
@@ -99,6 +100,10 @@ function tituloSeveridade(
 }
 
 export default function Brain() {
+  const { hasPermission } = useAuth();
+  const canManageBrain =
+    hasPermission("brain.manage");
+
   const [conhecimentos, setConhecimentos] =
     useState<Knowledge[]>([]);
 
@@ -756,25 +761,27 @@ export default function Brain() {
                           )}
                         </span>
 
-                        <button
-                          type="button"
-                          className={
-                            conhecimento.resolved
-                              ? "brain-reopen-button"
-                              : "brain-resolve-button"
-                          }
-                          onClick={() =>
-                            void alternarResolvido(
-                              conhecimento,
-                            )
-                          }
-                        >
-                          {
-                            conhecimento.resolved
-                              ? "Reabrir"
-                              : "Marcar como resolvido"
-                          }
-                        </button>
+                        {canManageBrain && (
+                          <button
+                            type="button"
+                            className={
+                              conhecimento.resolved
+                                ? "brain-reopen-button"
+                                : "brain-resolve-button"
+                            }
+                            onClick={() =>
+                              void alternarResolvido(
+                                conhecimento,
+                              )
+                            }
+                          >
+                            {
+                              conhecimento.resolved
+                                ? "Reabrir"
+                                : "Marcar como resolvido"
+                            }
+                          </button>
+                        )}
                       </div>
                     </div>
                   </article>

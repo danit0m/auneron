@@ -6,6 +6,8 @@ from fastapi import Response
 from fastapi import status
 from sqlalchemy.orm import Session
 
+from app.core.authentication import AuthenticatedSession
+from app.core.authentication import require_permission
 from app.database.database import get_db
 from app.schemas.knowledge import KnowledgeResponse
 from app.schemas.knowledge import KnowledgeResolveResponse
@@ -107,6 +109,9 @@ def get_knowledge(
 )
 def resolve_knowledge(
     knowledge_id: int,
+    _authenticated: AuthenticatedSession = Depends(
+        require_permission("brain.manage")
+    ),
     db: Session = Depends(get_db),
 ):
     knowledge = KnowledgeService.mark_resolved(
@@ -133,6 +138,9 @@ def resolve_knowledge(
 )
 def reopen_knowledge(
     knowledge_id: int,
+    _authenticated: AuthenticatedSession = Depends(
+        require_permission("brain.manage")
+    ),
     db: Session = Depends(get_db),
 ):
     knowledge = KnowledgeService.reopen(
@@ -159,6 +167,9 @@ def reopen_knowledge(
 )
 def delete_knowledge(
     knowledge_id: int,
+    _authenticated: AuthenticatedSession = Depends(
+        require_permission("brain.manage")
+    ),
     db: Session = Depends(get_db),
 ):
     deleted = KnowledgeService.delete(
