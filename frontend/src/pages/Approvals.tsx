@@ -19,6 +19,10 @@ import { Header } from "../components/layout/Header";
 import { AuneronBot } from "../components/ui";
 import { humorDaAprovacao } from "../lib/inteligencia";
 import { useAuth } from "../hooks/useAuth";
+import {
+  podeDecidirPedido,
+  usuarioEhSolicitante,
+} from "../lib/aprovacoes";
 import { formatarDataBr } from "../lib/pagamento";
 import {
   getApprovalActionLabel,
@@ -85,7 +89,7 @@ function formatarDataHora(
 }
 
 export default function Approvals() {
-  const { hasPermission } = useAuth();
+  const { user, hasPermission } = useAuth();
   const podeDecidir = hasPermission(
     "approval:decide",
   );
@@ -384,8 +388,11 @@ export default function Approvals() {
 
                       {podeDecidir && (
                         <td>
-                          {item.status ===
-                          "pending" ? (
+                          {podeDecidirPedido(
+                            item,
+                            user?.id,
+                            podeDecidir,
+                          ) ? (
                             <div className="approvals-actions">
                               <button
                                 type="button"
@@ -427,6 +434,15 @@ export default function Approvals() {
                                 Rejeitar
                               </button>
                             </div>
+                          ) : item.status ===
+                              "pending" &&
+                            usuarioEhSolicitante(
+                              item,
+                              user?.id,
+                            ) ? (
+                            <span className="approvals-decided-label">
+                              Você fez este pedido; outra pessoa decide.
+                            </span>
                           ) : (
                             <span className="approvals-decided-label">
                               —
