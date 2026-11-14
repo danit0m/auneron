@@ -1,3 +1,4 @@
+from datetime import date
 from datetime import datetime
 from typing import Any
 from typing import Literal
@@ -78,6 +79,9 @@ class ApprovalRequestResponse(
     expires_at: datetime
     resolved_at: datetime | None
     created_at: datetime
+    # A3 -- data efetiva do pedido (account.mark_paid); None para
+    # pedidos sem resumo (antigos ou criados pela rota generica).
+    effective_date: date | None = None
 
     @classmethod
     def from_request(
@@ -85,6 +89,7 @@ class ApprovalRequestResponse(
         request: ApprovalRequest,
         *,
         skill_key: str,
+        effective_date: date | None = None,
     ) -> "ApprovalRequestResponse":
         return cls(
             request_id=request.id,
@@ -110,6 +115,7 @@ class ApprovalRequestResponse(
             expires_at=request.expires_at,
             resolved_at=request.resolved_at,
             created_at=request.created_at,
+            effective_date=effective_date,
         )
 
 

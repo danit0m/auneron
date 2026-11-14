@@ -12,6 +12,8 @@ export interface Account {
   vencimento: string;
   status: AccountStatus;
   created_at?: string | null;
+  /** Data efetiva do pagamento (AAAA-MM-DD); null se nao pago ou sem registro. */
+  paid_on?: string | null;
 }
 
 export interface AccountCreate {

@@ -19,6 +19,7 @@ import { Header } from "../components/layout/Header";
 import { AuneronBot } from "../components/ui";
 import { humorDaAprovacao } from "../lib/inteligencia";
 import { useAuth } from "../hooks/useAuth";
+import { formatarDataBr } from "../lib/pagamento";
 import {
   getApprovalActionLabel,
 } from "../types/approval";
@@ -334,11 +335,21 @@ export default function Approvals() {
                               size="sm"
                             />
                           )}
-                          <span>
-                            {getApprovalActionLabel(
-                              item.skill_key,
+                          <div className="approvals-action-text">
+                            <span>
+                              {getApprovalActionLabel(
+                                item.skill_key,
+                              )}
+                            </span>
+                            {item.effective_date && (
+                              <small className="approvals-effective-date">
+                                Data do pagamento:{" "}
+                                {formatarDataBr(
+                                  item.effective_date,
+                                )}
+                              </small>
                             )}
-                          </span>
+                          </div>
                         </div>
                       </td>
 

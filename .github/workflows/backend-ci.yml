@@ -247,7 +247,7 @@ jobs:
       # proprio run. Area1/Layer B nao sao repetidos. O executor remove o
       # banco que criou e apenas a propria linha; o gate e de contexto, nao
       # prova criptografica de aprovacao humana.
-      # TASK054 (TI1, PREPARADO): head e9a4c7d2b135 (39 tabelas); o mesmo
+      # TASK054 (TI1, PREPARADO): head d5b8e2f4a671 (41 tabelas; A2/A3 adicionou account_payments e approval_request_inputs); o mesmo
       # passo prova tambem account_title_references (catalogo estrito, FK
       # RESTRICT, trigger) com UMA conta e UMA referencia sinteticas do run,
       # removidas por limpeza propria, transacional e fail-closed.

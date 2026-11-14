@@ -188,6 +188,10 @@ class AccountResponse(AccountBase):
     id: int
     created_at: datetime
 
+    # A3 -- data efetiva do pagamento (tabela lateral account_payments);
+    # None para titulo nao pago ou pago antes desta fatia.
+    paid_on: date | None = None
+
     # F3 -- projecao advisory/read-only calculada a cada resposta, nunca
     # aceita como entrada (AccountCreate/AccountUpdate nao possuem este
     # campo). Sempre recalculada pelo model_validator abaixo, mesmo se
@@ -248,6 +252,16 @@ class AccountMarkPaidExecuteRequest(BaseModel):
 
     approval_request_id: int = Field(gt=0)
     expected_status: AccountMarkPaidExpectedStatus
+
+
+class AccountMarkPaidRequest(BaseModel):
+    """A2/A3 -- pedido de registro de pagamento com data efetiva."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    paid_on: date
 
 
 # Fatia 2B -- leitura read-only da classificacao ja calculada e

@@ -1,0 +1,33 @@
+/* =====================================
+   REGISTRAR PAGAMENTO (modal enxuto)
+===================================== */
+
+.pagamento-modal {
+  width: min(480px, 100%);
+}
+
+.pagamento-modal-explicacao {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pagamento-modal-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 13px 14px;
+  border: 1px solid var(--color-warning-300);
+  border-radius: 12px;
+  background: var(--color-warning-50);
+  color: var(--color-warning-700);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.pagamento-modal-aviso svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -16,10 +16,13 @@ from app.core.approval_errors import ApprovalRequiredError
 from app.core.approval_errors import ApprovalStateError
 from app.core.approval_errors import ApprovalValidationError
 from app.core.autonomy_policy import classify_skill_risk
+from app.core.receivable_lifecycle import business_today
 from app.core.skill_authorization import authorize_skill_execution
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.models.account_payment import AccountPayment
 from app.models.approval import ApprovalConsumption
+from app.models.approval_request_input import ApprovalRequestInput
 from app.models.skill import SkillInvocation
 from app.models.user import User
 from app.repositories.approval_repository import ApprovalRepository
@@ -218,6 +221,7 @@ class AccountMarkPaidExecutionService:
         authority: User,
         account_id: int,
         expected_status: str,
+        paid_on: date | None,
         normalized_input: Any,
         input_digest: str,
         effective_now: datetime,
@@ -281,6 +285,23 @@ class AccountMarkPaidExecutionService:
             raise ApprovalConsumptionConflictError(
                 "Recibo de consumo e estado atual da conta divergem."
             )
+        if paid_on is not None:
+            # Pedido com data efetiva: o recibo e o pagamento gravado
+            # precisam carregar exatamente a data aprovada.
+            payment = self.db.execute(
+                select(AccountPayment).where(
+                    AccountPayment.approval_request_id == request.id
+                )
+            ).scalar_one_or_none()
+            if (
+                output.get("paid_on") != paid_on.isoformat()
+                or payment is None
+                or payment.account_id != account_id
+                or payment.paid_on != paid_on
+            ):
+                raise ApprovalConsumptionConflictError(
+                    "Recibo de consumo e data de pagamento divergem."
+                )
         return AccountMarkPaidExecutionResult(
             approval_request_id=request.id,
             approval_consumption_id=existing_consumption.id,
@@ -340,6 +361,19 @@ class AccountMarkPaidExecutionService:
             "account_id": normalized_account_id,
             "expected_status": expected_status,
         }
+        # A2/A3: pedido criado por POST /accounts/{id}/request-mark-paid
+        # tem um resumo com a data efetiva, que entra no input recomposto
+        # (mesma serializacao do pedido: ISO-8601). Sem resumo (pedido
+        # antigo / rota generica) o input segue exatamente como antes.
+        summary = self.db.execute(
+            select(ApprovalRequestInput).where(
+                ApprovalRequestInput.approval_request_id == request.id
+            )
+        ).scalar_one_or_none()
+        paid_on: date | None = None
+        if summary is not None:
+            paid_on = summary.effective_date
+            input_payload["paid_on"] = paid_on.isoformat()
         normalized_input, input_digest = approval_input_identity(input_payload)
 
         # Idempotencia: ApprovalConsumption e unico por approval_request_id
@@ -357,6 +391,7 @@ class AccountMarkPaidExecutionService:
                 authority=authority,
                 account_id=normalized_account_id,
                 expected_status=expected_status,
+                paid_on=paid_on,
                 normalized_input=normalized_input,
                 input_digest=input_digest,
                 effective_now=effective_now,
@@ -389,6 +424,10 @@ class AccountMarkPaidExecutionService:
             raise ApprovalConsumptionConflictError(
                 "Status atual da conta diverge do status aprovado."
             )
+        if paid_on is not None and paid_on > business_today():
+            raise ApprovalValidationError(
+                "A data efetiva do pagamento não pode ser futura."
+            )
 
         runtime_key = self._runtime_key(request.id)
         actor = SkillInvocationActor(
@@ -404,6 +443,8 @@ class AccountMarkPaidExecutionService:
             "new_status": "pago",
             "changed": True,
         }
+        if paid_on is not None:
+            output["paid_on"] = paid_on.isoformat()
         normalized_output, output_bytes = _canonical_json(
             output, field_name="output", max_bytes=version.max_output_bytes
         )
@@ -447,6 +488,14 @@ class AccountMarkPaidExecutionService:
             )
             self.approvals.add_consumption(consumption)
             account.status = "pago"
+            if paid_on is not None:
+                self.db.add(
+                    AccountPayment(
+                        account_id=account.id,
+                        paid_on=paid_on,
+                        approval_request_id=request.id,
+                    )
+                )
             self.db.add(
                 AccountEvent(
                     account_id=account.id,

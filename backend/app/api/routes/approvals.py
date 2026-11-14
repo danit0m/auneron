@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from typing import NoReturn
 
 from fastapi import APIRouter
@@ -8,6 +9,7 @@ from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Response
 from fastapi import status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.approval_authorization import (
@@ -38,6 +40,7 @@ from app.core.skill_errors import SkillNotFoundError
 from app.core.skill_errors import SkillStateError
 from app.core.skill_errors import SkillValidationError
 from app.database.database import get_db
+from app.models.approval_request_input import ApprovalRequestInput
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.approval import ApprovalCreateRequest
 from app.schemas.approval import ApprovalCreationResponse
@@ -303,14 +306,41 @@ def _resolve_skill_keys(
     return resolved
 
 
+def _resolve_effective_dates(
+    db: Session,
+    requests,
+) -> dict[int, date]:
+    """
+    A3: request_id -> data efetiva (tabela lateral approval_request_inputs)
+    numa unica consulta em lote. Pedidos sem resumo ficam fora do mapa
+    (effective_date None na resposta).
+    """
+    request_ids = {request.id for request in requests}
+    if not request_ids:
+        return {}
+    rows = db.execute(
+        select(
+            ApprovalRequestInput.approval_request_id,
+            ApprovalRequestInput.effective_date,
+        ).where(
+            ApprovalRequestInput.approval_request_id.in_(
+                request_ids
+            )
+        )
+    ).all()
+    return {row[0]: row[1] for row in rows}
+
+
 def _request_response(
     request,
     *,
     skill_key: str,
+    effective_date: date | None = None,
 ) -> ApprovalRequestResponse:
     return ApprovalRequestResponse.from_request(
         request,
         skill_key=skill_key,
+        effective_date=effective_date,
     )
 
 
@@ -426,6 +456,9 @@ def create_skill_execution_approval(
     skill_keys = _resolve_skill_keys(
         db, [result.request]
     )
+    effective_dates = _resolve_effective_dates(
+        db, [result.request]
+    )
 
     return ApprovalCreationResponse(
         request=_request_response(
@@ -433,6 +466,9 @@ def create_skill_execution_approval(
             skill_key=skill_keys[
                 result.request.skill_version_id
             ],
+            effective_date=effective_dates.get(
+                result.request.id
+            ),
         ),
         created=not result.duplicate,
         duplicate=result.duplicate,
@@ -507,6 +543,9 @@ def list_approval_requests(
     skill_keys = _resolve_skill_keys(
         service.db, page
     )
+    effective_dates = _resolve_effective_dates(
+        service.db, page
+    )
 
     log_approval_event(
         "approval.requests_listed",
@@ -522,6 +561,9 @@ def list_approval_requests(
                 skill_key=skill_keys[
                     request.skill_version_id
                 ],
+                effective_date=effective_dates.get(
+                    request.id
+                ),
             )
             for request in page
         ],
@@ -612,6 +654,9 @@ def get_approval_request(
     skill_keys = _resolve_skill_keys(
         service.db, [request]
     )
+    effective_dates = _resolve_effective_dates(
+        service.db, [request]
+    )
 
     return ApprovalDetailsResponse(
         request=_request_response(
@@ -619,6 +664,9 @@ def get_approval_request(
             skill_key=skill_keys[
                 request.skill_version_id
             ],
+            effective_date=effective_dates.get(
+                request.id
+            ),
         ),
         decision=(
             _decision_response(decision)
@@ -704,6 +752,9 @@ def decide_approval_request(
     skill_keys = _resolve_skill_keys(
         service.db, [result.request]
     )
+    effective_dates = _resolve_effective_dates(
+        service.db, [result.request]
+    )
 
     return ApprovalDecisionResultResponse(
         request=_request_response(
@@ -711,6 +762,9 @@ def decide_approval_request(
             skill_key=skill_keys[
                 result.request.skill_version_id
             ],
+            effective_date=effective_dates.get(
+                result.request.id
+            ),
         ),
         decision=_decision_response(
             result.decision
