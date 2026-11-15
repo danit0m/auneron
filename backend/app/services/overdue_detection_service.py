@@ -163,6 +163,9 @@ class OverdueDetectionService:
         counters = _RunCounters()
 
         for account in overdue_accounts:
+            # Capture before rollback: attributes expire afterwards.
+            failed_account_id = getattr(account, "id", None)
+            failed_due_date = str(getattr(account, "vencimento", None))
             try:
                 self._process_account(
                     account=account,
@@ -170,9 +173,19 @@ class OverdueDetectionService:
                     now=effective_now,
                     counters=counters,
                 )
-            except Exception:
+            except Exception as exc:
                 self.db.rollback()
                 counters.failures += 1
+                logging.getLogger("auneron.overdue_detection").warning(
+                    "overdue_detection_account_failed",
+                    extra={
+                        "event": "overdue.detection.account_failed",
+                        "account_id": failed_account_id,
+                        "due_date": failed_due_date,
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc)[:300],
+                    },
+                )
 
         return OverdueDetectionRunResult(
             accounts_checked=len(overdue_accounts),
