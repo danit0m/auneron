@@ -64,6 +64,36 @@ export function traduzirRazao(
   return reason;
 }
 
+export const SEM_MOTIVO_SERVIDOR =
+  "Sem motivo informado pelo servidor.";
+
+export const MARK_PAID_NAO_RECOMENDAVEL =
+  "Registrado por uma pessoa em Recebíveis; o sistema não recomenda esta ação.";
+
+/**
+ * Texto da linha de evidencia de uma acao do action_space no card.
+ * account.mark_paid nunca e recomendavel pelo sistema: sem motivo do
+ * servidor, explica isso. Com motivo (ex.: already_paid) mantem a
+ * traducao existente. Demais acoes sem motivo -> fallback; codigo
+ * desconhecido -> o proprio codigo (comportamento de traduzirRazao).
+ */
+export function textoEvidenciaAcao(action: {
+  action_key: string;
+  system_recommendable: boolean;
+  reason: string | null;
+}): string {
+  if (action.system_recommendable) {
+    return "Recomendável.";
+  }
+  const traduzida = traduzirRazao(action.reason);
+  if (traduzida !== null) {
+    return traduzida;
+  }
+  return action.action_key === "account.mark_paid"
+    ? MARK_PAID_NAO_RECOMENDAVEL
+    : SEM_MOTIVO_SERVIDOR;
+}
+
 /**
  * Motivos de account.mark_overdue (MarkOverdueReason no backend) que o
  * bot sabe apresentar quando no_action=true. Mapa proprio para nao
