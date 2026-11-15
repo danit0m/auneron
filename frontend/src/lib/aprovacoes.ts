@@ -5,6 +5,19 @@ type PedidoParaDecisao = Pick<
   "status" | "requester_actor_type" | "requester_user_id"
 >;
 
+/**
+ * Params da listagem. O backend le `status=pending` (valor unico); uma lista
+ * viraria `status[]=pending` no axios e seria ignorada, devolvendo tudo.
+ */
+export function paramsListaAprovacoes(statusFiltro: string): {
+  status?: string;
+  limit: number;
+} {
+  return statusFiltro === "todos"
+    ? { limit: 100 }
+    : { status: statusFiltro, limit: 100 };
+}
+
 /** True quando o pedido foi feito pelo proprio usuario logado (comparacao por id). */
 export function usuarioEhSolicitante(
   item: PedidoParaDecisao,

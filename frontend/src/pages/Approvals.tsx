@@ -20,6 +20,7 @@ import { AuneronBot } from "../components/ui";
 import { humorDaAprovacao } from "../lib/inteligencia";
 import { useAuth } from "../hooks/useAuth";
 import {
+  paramsListaAprovacoes,
   podeDecidirPedido,
   rotuloStatusPedido,
   usuarioEhSolicitante,
@@ -120,14 +121,9 @@ export default function Approvals() {
             "/approvals",
             {
               params:
-                statusFiltro === "todos"
-                  ? { limit: 100 }
-                  : {
-                      status: [
-                        statusFiltro,
-                      ],
-                      limit: 100,
-                    },
+                paramsListaAprovacoes(
+                  statusFiltro,
+                ),
             },
           );
 
