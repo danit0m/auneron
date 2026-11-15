@@ -1,5 +1,6 @@
 import logging
 from datetime import date
+from datetime import datetime
 from typing import NoReturn
 
 from fastapi import APIRouter
@@ -40,6 +41,7 @@ from app.core.skill_errors import SkillNotFoundError
 from app.core.skill_errors import SkillStateError
 from app.core.skill_errors import SkillValidationError
 from app.database.database import get_db
+from app.models.approval import ApprovalConsumption
 from app.models.approval_request_input import ApprovalRequestInput
 from app.repositories.skill_repository import SkillRepository
 from app.schemas.approval import ApprovalCreateRequest
@@ -331,16 +333,44 @@ def _resolve_effective_dates(
     return {row[0]: row[1] for row in rows}
 
 
+def _resolve_consumed_at(
+    db: Session,
+    requests,
+) -> dict[int, datetime]:
+    """
+    request_id -> momento da execucao (approval_consumptions consumidas),
+    numa unica consulta em lote. Pedidos nao executados ficam fora do mapa.
+    """
+    request_ids = {request.id for request in requests}
+    if not request_ids:
+        return {}
+    rows = db.execute(
+        select(
+            ApprovalConsumption.approval_request_id,
+            ApprovalConsumption.finalized_at,
+        ).where(
+            ApprovalConsumption.approval_request_id.in_(
+                request_ids
+            ),
+            ApprovalConsumption.status == "consumed",
+            ApprovalConsumption.finalized_at.is_not(None),
+        )
+    ).all()
+    return {row[0]: row[1] for row in rows}
+
+
 def _request_response(
     request,
     *,
     skill_key: str,
     effective_date: date | None = None,
+    consumed_at: datetime | None = None,
 ) -> ApprovalRequestResponse:
     return ApprovalRequestResponse.from_request(
         request,
         skill_key=skill_key,
         effective_date=effective_date,
+        consumed_at=consumed_at,
     )
 
 
@@ -546,6 +576,9 @@ def list_approval_requests(
     effective_dates = _resolve_effective_dates(
         service.db, page
     )
+    consumed_ats = _resolve_consumed_at(
+        service.db, page
+    )
 
     log_approval_event(
         "approval.requests_listed",
@@ -562,6 +595,9 @@ def list_approval_requests(
                     request.skill_version_id
                 ],
                 effective_date=effective_dates.get(
+                    request.id
+                ),
+                consumed_at=consumed_ats.get(
                     request.id
                 ),
             )
@@ -657,6 +693,9 @@ def get_approval_request(
     effective_dates = _resolve_effective_dates(
         service.db, [request]
     )
+    consumed_ats = _resolve_consumed_at(
+        service.db, [request]
+    )
 
     return ApprovalDetailsResponse(
         request=_request_response(
@@ -665,6 +704,9 @@ def get_approval_request(
                 request.skill_version_id
             ],
             effective_date=effective_dates.get(
+                request.id
+            ),
+            consumed_at=consumed_ats.get(
                 request.id
             ),
         ),

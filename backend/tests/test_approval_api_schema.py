@@ -91,6 +91,7 @@ def test_public_request_response_exposes_no_digest_or_idempotency() -> None:
         "resolved_at",
         "created_at",
         "effective_date",
+        "consumed_at",
     }
     assert "input_digest" not in fields
     assert "request_fingerprint" not in fields

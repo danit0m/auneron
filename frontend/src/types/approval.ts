@@ -35,6 +35,8 @@ export interface ApprovalRequestResponse {
   created_at: string;
   /** Data efetiva do pedido (AAAA-MM-DD), so em account.mark_paid pedido pela tela. */
   effective_date?: string | null;
+  /** Momento da execucao do pedido aprovado (ISO); ausente/null se nao executado. */
+  consumed_at?: string | null;
 }
 
 export interface ApprovalDecisionResponse {

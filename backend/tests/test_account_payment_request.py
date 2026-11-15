@@ -472,6 +472,34 @@ def test_full_flow_records_payment_date_event_and_reads(
         item for item in approvals.json()["items"] if item["request_id"] == request_id
     )
     assert item["effective_date"] == paid_on.isoformat()
+    assert item["consumed_at"] is not None
+
+
+def test_approved_list_and_detail_expose_consumed_at_only_when_executed(
+    db_session: Session,
+) -> None:
+    executed = _make_account(db_session, email="consumido.sim@example.com")
+    waiting = _make_account(db_session, email="consumido.nao@example.com")
+    paid_on = business_today() - timedelta(days=2)
+    requester, approver, executed_id = _approved_request(
+        db_session, executed, paid_on, key="pay-consumed-1"
+    )
+    waiting_resp = _request(requester, waiting.id, paid_on, key="pay-consumed-2")
+    assert waiting_resp.status_code == 201, waiting_resp.text
+    waiting_id = waiting_resp.json()["request"]["request_id"]
+    _decide(approver, waiting_id, "approved")
+    assert _execute(requester, executed.id, executed_id).status_code == 200
+
+    listed = approver.get("/approvals", params={"status": "approved"})
+    assert listed.status_code == 200, listed.text
+    by_id = {item["request_id"]: item for item in listed.json()["items"]}
+    assert by_id[executed_id]["consumed_at"] is not None
+    assert by_id[waiting_id]["consumed_at"] is None
+
+    for request_id, has_value in ((executed_id, True), (waiting_id, False)):
+        detail = approver.get(f"/approvals/{request_id}")
+        assert detail.status_code == 200, detail.text
+        assert (detail.json()["request"]["consumed_at"] is not None) is has_value
 
 
 def test_replay_is_idempotent_and_does_not_duplicate_payment(
