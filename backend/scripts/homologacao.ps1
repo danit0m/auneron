@@ -9,7 +9,14 @@
 
     Comandos: configurar, status, versao-banco, pendentes, backup, ensaiar, migrar,
               registrar-acao-pagamento, registrar-acao-atraso, detectar-vencidos, consultar,
+              provisionar-deteccao-vencidos,
               subir-backend, parar-backend, subir-frontend, parar-frontend
+
+    provisionar-deteccao-vencidos: cria a conta de sistema sistema.vencimentos@auneron.core
+      (role=system, active) se ela nao existir, via backend\scripts\create_system_principal.py
+      (modulo fixo). Recusa se o banco conectado nao for auneron_neon_synthetic. Nao altera
+      conta existente. Sem -Confirmar apenas mostra o que faria. Exige -Pasta.
+      Codigos de saida: 0 ok/ja provisionada, 3 conta existente divergente, 4 banco errado.
 
     detectar-vencidos: varredura diaria de vencimento (POST /accounts/detect-overdue).
       Le a API_KEY vigente do cofre na hora e a entrega ao script
@@ -28,6 +35,7 @@
       .\homologacao.ps1 migrar -Pasta C:\auneron -ConfirmarBackup C:\...\hml-X.dump
       .\homologacao.ps1 consultar -Relatorio pagamento -Conta 123   (somente leitura)
       .\homologacao.ps1 consultar -Relatorio catalogo
+      .\homologacao.ps1 consultar -Relatorio sistema   (banco/porta e usuario de sistema, somente leitura)
       .\homologacao.ps1 parar-backend -Confirmar
 
     Nao existe downgrade neste script. Veja backend/docs/DEPLOYMENT.md.
@@ -39,6 +47,7 @@ param(
     [ValidateSet(
         'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
         'registrar-acao-pagamento', 'registrar-acao-atraso', 'detectar-vencidos', 'consultar',
+        'provisionar-deteccao-vencidos',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend'
     )]
     [string]$Comando,
@@ -54,7 +63,7 @@ param(
     # Dump existente, criado ha menos de 24 h (ensaiar, migrar).
     [Parameter(ParameterSetName = 'Normal')][string]$ConfirmarBackup,
     # Relatorio fixo de somente leitura (consultar).
-    [Parameter(ParameterSetName = 'Normal')][ValidateSet('pagamento', 'catalogo')][string]$Relatorio,
+    [Parameter(ParameterSetName = 'Normal')][ValidateSet('pagamento', 'catalogo', 'sistema')][string]$Relatorio,
     # Id da conta (consultar -Relatorio pagamento); inteiro positivo, passado como variavel do psql.
     [Parameter(ParameterSetName = 'Normal')][ValidateRange(1, 2147483647)][int]$Conta,
     [Parameter(ParameterSetName = 'Normal')][switch]$Confirmar,
@@ -153,6 +162,15 @@ SELECT s.skill_key, s.status AS skill_status, v.version, v.status AS version_sta
 FROM skills s
 LEFT JOIN skill_versions v ON v.skill_id = s.id
 ORDER BY s.skill_key, v.created_at, v.id;
+ROLLBACK;
+'@
+
+$script:SqlConsultaSistema = @'
+BEGIN READ ONLY;
+\echo == Banco e porta interna ==
+SELECT current_database() AS banco, inet_server_port() AS porta_interna;
+\echo == Usuario de sistema (vencimentos) ==
+SELECT email, role, active FROM users WHERE email = 'sistema.vencimentos@auneron.core';
 ROLLBACK;
 '@
 
@@ -997,6 +1015,33 @@ function Rodar-RegistroDeAcao {
     }
 }
 
+function Cmd-ProvisionarDeteccaoVencidos {
+    # Cria a conta de sistema da deteccao de vencidos. Modulo e interpretador fixos (nenhum
+    # parametro do usuario escolhe executavel ou arquivo). O proprio script Python recusa
+    # (codigo 4) se o banco conectado nao for o esperado. Sem -Confirmar nao grava.
+    $raiz = Resolver-Pasta
+    $arqPy = Join-Path $raiz 'backend\scripts\create_system_principal.py'
+    if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
+        Falhar 'Nao existe backend\scripts\create_system_principal.py no checkout informado.'
+    }
+    $py = Resolver-Python $raiz
+    if ($script:Ctx.Simular -or (-not $script:Ctx.Confirmar)) {
+        if ($script:Ctx.Simular) { Info 'SIMULACAO: nada sera feito.' }
+        else { Info 'Nada foi gravado. Repita com -Confirmar para provisionar.' }
+        Info ('Faria, em {0}\backend: {1} -m scripts.create_system_principal' -f $raiz, $py)
+        Info 'Efeito: cria sistema.vencimentos@auneron.core (role=system, active) se ausente; recusa se o banco nao for auneron_neon_synthetic; nao altera conta existente.'
+        Info ('Ambiente do filho (nomes): ' + (Nomes-Do-Ambiente 'backend'))
+        return
+    }
+    $amb = Montar-Ambiente 'backend'
+    $res = Invoke-Filho -Exe $py -Argumentos @('-m', 'scripts.create_system_principal') -DiretorioTrabalho (Join-Path $raiz 'backend') -Ambiente $amb
+    if ($res.Saida) { Info $res.Saida }
+    if ($res.Codigo -ne 0) {
+        $script:Codigo = $res.Codigo
+        Falhar ('create_system_principal terminou com codigo {0} (3 = conta existente divergente, 4 = banco diferente do esperado).' -f $res.Codigo)
+    }
+}
+
 function Cmd-DetectarVencidos {
     # Varredura diaria de vencimento. A chave vigente (API_KEY) sai do cofre no momento da execucao
     # e vai ao filho SO por variavel de ambiente. O script e o interpretador sao fixos (nenhum
@@ -1027,7 +1072,7 @@ function Cmd-Consultar {
     # (PGOPTIONS no ambiente do filho e BEGIN READ ONLY / ROLLBACK no proprio SQL).
     $rel = [string]$script:Ctx.Relatorio
     $conta = [int]$script:Ctx.Conta
-    if (-not $rel) { Falhar 'consultar exige -Relatorio pagamento|catalogo.' }
+    if (-not $rel) { Falhar 'consultar exige -Relatorio pagamento|catalogo|sistema.' }
     if ($rel -eq 'pagamento') {
         if ($conta -lt 1) { Falhar 'consultar -Relatorio pagamento exige -Conta <id inteiro positivo>.' }
         $sql = $script:SqlConsultaPagamento
@@ -1035,6 +1080,10 @@ function Cmd-Consultar {
     elseif ($rel -eq 'catalogo') {
         if ($conta -ne 0) { Falhar '-Conta so vale com -Relatorio pagamento.' }
         $sql = $script:SqlConsultaCatalogo
+    }
+    elseif ($rel -eq 'sistema') {
+        if ($conta -ne 0) { Falhar '-Conta so vale com -Relatorio pagamento.' }
+        $sql = $script:SqlConsultaSistema
     }
     else { Falhar 'Relatorio desconhecido.' }
     $cofre = Ler-Cofre
@@ -1431,6 +1480,7 @@ function Principal {
             'registrar-acao-atraso'    { Cmd-RegistrarAcaoAtraso }
             'detectar-vencidos' { Cmd-DetectarVencidos }
             'consultar'      { Cmd-Consultar }
+            'provisionar-deteccao-vencidos' { Cmd-ProvisionarDeteccaoVencidos }
             'subir-backend'  { Cmd-SubirBackend }
             'parar-backend'  { Cmd-Parar 'backend' $script:PortaBackend }
             'subir-frontend' { Cmd-SubirFrontend }
