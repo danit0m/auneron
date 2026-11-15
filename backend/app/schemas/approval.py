@@ -82,6 +82,9 @@ class ApprovalRequestResponse(
     # A3 -- data efetiva do pedido (account.mark_paid); None para
     # pedidos sem resumo (antigos ou criados pela rota generica).
     effective_date: date | None = None
+    # Momento em que o pedido aprovado foi executado (approval_consumptions
+    # com status consumido); None se nao executado.
+    consumed_at: datetime | None = None
 
     @classmethod
     def from_request(
@@ -90,6 +93,7 @@ class ApprovalRequestResponse(
         *,
         skill_key: str,
         effective_date: date | None = None,
+        consumed_at: datetime | None = None,
     ) -> "ApprovalRequestResponse":
         return cls(
             request_id=request.id,
@@ -116,6 +120,7 @@ class ApprovalRequestResponse(
             resolved_at=request.resolved_at,
             created_at=request.created_at,
             effective_date=effective_date,
+            consumed_at=consumed_at,
         )
 
 

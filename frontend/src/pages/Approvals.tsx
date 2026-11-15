@@ -21,6 +21,7 @@ import { humorDaAprovacao } from "../lib/inteligencia";
 import { useAuth } from "../hooks/useAuth";
 import {
   podeDecidirPedido,
+  rotuloStatusPedido,
   usuarioEhSolicitante,
 } from "../lib/aprovacoes";
 import { formatarDataBr } from "../lib/pagamento";
@@ -64,20 +65,6 @@ function classeStatus(
   }
 
   return "status-badge status-open";
-}
-
-function rotuloStatus(
-  status: ApprovalStatus,
-): string {
-  return (
-    {
-      pending: "Pendente",
-      approved: "Aprovada",
-      rejected: "Rejeitada",
-      expired: "Expirada",
-      cancelled: "Cancelada",
-    } satisfies Record<ApprovalStatus, string>
-  )[status];
 }
 
 function formatarDataHora(
@@ -363,9 +350,7 @@ export default function Approvals() {
                             item.status,
                           )}
                         >
-                          {rotuloStatus(
-                            item.status,
-                          )}
+                          {rotuloStatusPedido(item)}
                         </span>
                       </td>
 

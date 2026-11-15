@@ -20,6 +20,7 @@ import SaudeCarteira from "../components/clientes/SaudeCarteira";
 import ConfirmDeleteModal from "../components/clientes/ConfirmDeleteModal";
 import ContatoClienteModal from "../components/clientes/ContatoClienteModal";
 import { Header } from "../components/layout/Header";
+import { podeCadastrarCliente } from "../auth/permissions";
 import { useAuth } from "../hooks/useAuth";
 import { titulosDoCliente } from "../lib/contatoCliente";
 import {
@@ -42,7 +43,7 @@ function formatarMoeda(valor: number): string {
 
 export default function Clientes() {
   const { hasPermission } = useAuth();
-  const podeGerenciar = hasPermission("clients.manage");
+  const podeGerenciar = podeCadastrarCliente(hasPermission);
 
   const [clientes, setClientes] = useState<Account[]>([]);
 

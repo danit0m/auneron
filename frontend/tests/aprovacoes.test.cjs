@@ -54,3 +54,24 @@ test('solicitante que nao e usuario (agente) nao conta como o usuario logado', (
   assert.equal(usuarioEhSolicitante(p, 7), false);
   assert.equal(podeDecidirPedido(p, 7, true), true);
 });
+
+const { rotuloStatusPedido } = load('lib/aprovacoes.ts');
+
+test('rotulo: aprovado e executado mostra a data da execucao (Brasilia)', () => {
+  // 2026-11-10T02:00Z ainda e dia 09 em Brasilia (UTC-3).
+  assert.equal(rotuloStatusPedido({ status: 'approved', consumed_at: '2026-11-10T02:00:00Z' }), 'Aprovada · executada em 09/11/2026');
+  assert.equal(rotuloStatusPedido({ status: 'approved', consumed_at: '2026-11-10T15:00:00Z' }), 'Aprovada · executada em 10/11/2026');
+});
+
+test('rotulo: aprovado sem consumo ou com data invalida segue so Aprovada', () => {
+  assert.equal(rotuloStatusPedido({ status: 'approved' }), 'Aprovada');
+  assert.equal(rotuloStatusPedido({ status: 'approved', consumed_at: null }), 'Aprovada');
+  assert.equal(rotuloStatusPedido({ status: 'approved', consumed_at: 'lixo' }), 'Aprovada');
+});
+
+test('rotulo: outros status ignoram consumed_at', () => {
+  assert.equal(rotuloStatusPedido({ status: 'pending', consumed_at: '2026-11-10T15:00:00Z' }), 'Pendente');
+  assert.equal(rotuloStatusPedido({ status: 'rejected' }), 'Rejeitada');
+  assert.equal(rotuloStatusPedido({ status: 'expired' }), 'Expirada');
+  assert.equal(rotuloStatusPedido({ status: 'cancelled' }), 'Cancelada');
+});

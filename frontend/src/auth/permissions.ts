@@ -65,3 +65,10 @@ export function getPermissionsForRole(
 ): readonly Permission[] {
   return rolePermissions[role];
 }
+
+/** Cadastro de cliente (botao "Novo cliente") exige clients.manage. */
+export function podeCadastrarCliente(
+  hasPermission: (permission: Permission) => boolean,
+): boolean {
+  return hasPermission("clients.manage");
+}
