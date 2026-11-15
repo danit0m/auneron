@@ -38,7 +38,7 @@ import { getActionLabel } from "../../types/nba";
 import { AuneronBot } from "../ui";
 import {
   botFromPolicy,
-  traduzirRazao,
+  textoEvidenciaAcao,
 } from "./botFromPolicy";
 
 interface RecommendationDecisionCardProps {
@@ -1108,10 +1108,7 @@ export default function RecommendationDecisionCard({
                 {getActionLabel(action.action_key)}
               </span>
               <span className="recommendation-evidence-reason">
-                {action.system_recommendable
-                  ? "Recomendável."
-                  : traduzirRazao(action.reason) ??
-                    "Sem motivo informado pelo servidor."}
+                {textoEvidenciaAcao(action)}
               </span>
             </li>
           ))}

@@ -256,3 +256,34 @@ test('traduzirRazao: desconhecido, null e chaves do prototype devolvem o proprio
   assert.equal(traduzirRazao('__proto__'), '__proto__');
   assert.equal(traduzirRazao('toString'), 'toString');
 });
+
+const { textoEvidenciaAcao } = context.exports;
+const MARK_PAID = 'account.mark_paid';
+
+test('textoEvidenciaAcao: mark_paid sem motivo -> explicacao de Recebiveis', () => {
+  assert.equal(
+    textoEvidenciaAcao(action(MARK_PAID)),
+    'Registrado por uma pessoa em Recebíveis; o sistema não recomenda esta ação.',
+  );
+});
+
+test('textoEvidenciaAcao: mark_paid com already_paid mantem traducao existente', () => {
+  assert.equal(
+    textoEvidenciaAcao(action(MARK_PAID, { reason: 'already_paid' })),
+    'Esta conta já foi paga.',
+  );
+});
+
+test('textoEvidenciaAcao: outra acao sem motivo -> fallback', () => {
+  assert.equal(textoEvidenciaAcao(action(OVERDUE)), 'Sem motivo informado pelo servidor.');
+  assert.equal(textoEvidenciaAcao(action(ESCALATE)), 'Sem motivo informado pelo servidor.');
+});
+
+test('textoEvidenciaAcao: codigo desconhecido devolve o proprio codigo (comportamento atual)', () => {
+  assert.equal(textoEvidenciaAcao(action(OVERDUE, { reason: 'novo_codigo' })), 'novo_codigo');
+  assert.equal(textoEvidenciaAcao(action(MARK_PAID, { reason: 'novo_codigo' })), 'novo_codigo');
+});
+
+test('textoEvidenciaAcao: recomendavel', () => {
+  assert.equal(textoEvidenciaAcao(action(OVERDUE, { system_recommendable: true })), 'Recomendável.');
+});
