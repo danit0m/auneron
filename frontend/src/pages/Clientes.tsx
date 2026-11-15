@@ -353,14 +353,16 @@ export default function Clientes() {
             {formatarMoeda(cadastro.valorCadastrado)} cadastrados
           </p>
 
-          <button
-            type="button"
-            className="primary-button"
-            onClick={abrirNovoCliente}
-          >
-            <Plus size={18} />
-            Novo cliente
-          </button>
+          {podeGerenciar && (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={abrirNovoCliente}
+            >
+              <Plus size={18} />
+              Novo cliente
+            </button>
+          )}
         </div>
 
         <SaudeCarteira
