@@ -300,6 +300,23 @@ try {
     $r = Rodar-Script (@('registrar-acao-atraso', '-Simular', '-SemSondagem', '-Pasta', $pastaAtraso, '-Modulo', 'os') + $comuns)
     Verificar 'registrar-acao-atraso: nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
 
+    Write-Host '== provisionar-deteccao-vencidos =='
+    $r = Rodar-Script (@('provisionar-deteccao-vencidos', '-Simular', '-SemSondagem') + $comuns)
+    Verificar 'provisionar: aceito no ValidateSet (recusa por falta de -Pasta)' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta' -and $r.Saida -notmatch 'ValidateSet') $r.Saida
+    $r = Rodar-Script (@('provisionar-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comuns)
+    Verificar 'provisionar sem o .py no checkout: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'create_system_principal') $r.Saida
+    Set-Content -LiteralPath (Join-Path $pasta 'backend\scripts\create_system_principal.py') -Value '' -Encoding ASCII
+    $r = Rodar-Script (@('provisionar-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comuns)
+    $saidas['provisionar-simular'] = $r.Saida
+    Verificar 'provisionar -Simular: exit 0, modulo fixo, nada gravado' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('-m scripts.create_system_principal') -and $r.Saida.Contains('auneron_neon_synthetic')) $r.Saida
+    $r = Rodar-Script (@('provisionar-deteccao-vencidos', '-Pasta', $pasta) + $comuns)
+    $saidas['provisionar-sem-confirmar'] = $r.Saida
+    Verificar 'provisionar sem -Confirmar: exit 0, mostra o que faria e nao grava' ($r.Codigo -eq 0 -and $r.Saida -match 'Nada foi gravado' -and $r.Saida -match '-Confirmar' -and $r.Saida.Contains('-m scripts.create_system_principal')) $r.Saida
+    $r = Rodar-Script (@('provisionar-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Modulo', 'os') + $comuns)
+    Verificar 'provisionar: nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
+    $r = Rodar-Script (@('provisionar-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Executavel', 'x.exe') + $comuns)
+    Verificar 'provisionar: nenhum parametro escolhe o executavel' ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
+
     Write-Host '== detectar-vencidos =='
     $pastaVarr = Join-Path $tmp 'checkout-varredura'
     [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaVarr 'backend\scripts'))
@@ -346,6 +363,8 @@ sys.exit(2)
     }
     $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Conta', '5', '-Simular') + $comuns)
     Verificar 'catalogo com -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'sistema', '-Conta', '5', '-Simular') + $comuns)
+    Verificar 'sistema com -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
     $r = Rodar-Script (@('status', '-SemSondagem', '-Relatorio', 'catalogo') + $comuns)
     Verificar '-Relatorio fora de consultar: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'consultar') $r.Saida
 
@@ -357,13 +376,16 @@ sys.exit(2)
     $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular') + $comuns)
     $saidas['consultar-catalogo-simular'] = $r.Saida
     Verificar 'consultar catalogo -Simular: exit 0, mostra BEGIN READ ONLY e ROLLBACK' ($r.Codigo -eq 0 -and $r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida -match 'skill_versions') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'sistema', '-Simular') + $comuns)
+    $saidas['consultar-sistema-simular'] = $r.Saida
+    Verificar 'consultar sistema -Simular: exit 0, mostra BEGIN READ ONLY, ROLLBACK e as duas consultas' ($r.Codigo -eq 0 -and $r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida.Contains('inet_server_port()') -and $r.Saida.Contains('sistema.vencimentos@auneron.core')) $r.Saida
     $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular', '-Executavel', 'x.exe') + $comuns)
     Verificar 'nenhum parametro escolhe executavel, SQL ou modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
     $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular', '-Sql', 'select 1') + $comuns)
     Verificar '-Sql recusado como parametro desconhecido' ($r.Codigo -ne 0 -and $r.Saida -match 'Sql')
 
     $padraoEscrita = '(?i)\b(insert|update|delete|drop|alter|create|truncate|grant)\b'
-    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo))) {
+    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo), @('sistema', $script:SqlConsultaSistema))) {
         $nomeSql = [string]$par[0]
         $txtSql = [string]$par[1]
         $linhasSql = @($txtSql -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
@@ -375,6 +397,10 @@ sys.exit(2)
     }
     Verificar 'SQL pagamento usa a variavel :conta e nenhum numero literal de conta' ($script:SqlConsultaPagamento.Contains('= :conta') -and $script:SqlConsultaPagamento -notmatch '(?i)(account_id|target_account_id|a\.id)\s*=\s*[0-9]')
     Verificar 'SQL catalogo nao usa variaveis' ($script:SqlConsultaCatalogo -notmatch ':conta')
+    $sqlSis = $script:SqlConsultaSistema
+    Verificar 'SQL sistema: nao usa variaveis' ($sqlSis -notmatch ':conta')
+    Verificar 'SQL sistema: contem exatamente as duas consultas' ($sqlSis.Contains('SELECT current_database() AS banco, inet_server_port() AS porta_interna;') -and $sqlSis.Contains("SELECT email, role, active FROM users WHERE email = 'sistema.vencimentos@auneron.core';") -and ([regex]::Matches($sqlSis, '(?im)^\s*SELECT\b')).Count -eq 2)
+    Verificar 'SQL sistema: nao referencia password_hash' ($sqlSis -notmatch '(?i)password')
 
     $ast = [Management.Automation.Language.Parser]::ParseFile($alvoScript, [ref]$null, [ref]$null)
     $nomesParam = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
@@ -384,7 +410,7 @@ sys.exit(2)
     Verificar 'parametros: apenas os existentes mais -Relatorio e -Conta' ($extras.Count -eq 0 -and $faltam.Count -eq 0) (($extras + $faltam) -join ',')
     $pRel = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Relatorio' })[0]
     $vsRel = @($pRel.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
-    Verificar '-Relatorio: ValidateSet(pagamento, catalogo)' (($vsRel -join ',') -eq 'pagamento,catalogo') ($vsRel -join ',')
+    Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema') ($vsRel -join ',')
     $pCon = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Conta' })[0]
     $vrCon = @($pCon.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateRange' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
     Verificar '-Conta: [int] com ValidateRange(1, 2147483647)' ((($vrCon -join ',') -eq '1,2147483647') -and ($pCon.StaticType.Name -eq 'Int32')) ($vrCon -join ',')
@@ -437,6 +463,14 @@ sys.exit(2)
     $mDet = [regex]::Match($codigo, '(?s)function Cmd-DetectarVencidos \{.*?\r?\n\}\r?\n')
     Verificar 'detectar-vencidos: script e literal fixo, ambiente so com a chave, sem Rodar-RegistroDeAcao' ($mDet.Success -and $mDet.Value.Contains("'backend\scripts\scheduled_detect_overdue.py'") -and $mDet.Value.Contains("Montar-Ambiente 'varredura'") -and $mDet.Value -notmatch 'Rodar-RegistroDeAcao')
     Verificar 'ValidateSet de -Comando contem detectar-vencidos' ($vsCmd -contains 'detectar-vencidos') ($vsCmd -join ',')
+    Verificar 'ValidateSet de -Comando contem provisionar-deteccao-vencidos' ($vsCmd -contains 'provisionar-deteccao-vencidos') ($vsCmd -join ',')
+    $mProv = [regex]::Match($codigo, '(?s)function Cmd-ProvisionarDeteccaoVencidos \{.*?\r?\n\}\r?\n')
+    Verificar 'provisionar: script e modulo literais fixos, ambiente do backend, sem Rodar-RegistroDeAcao' ($mProv.Success -and $mProv.Value.Contains("'backend\scripts\create_system_principal.py'") -and $mProv.Value.Contains("@('-m', 'scripts.create_system_principal')") -and $mProv.Value.Contains("Montar-Ambiente 'backend'") -and $mProv.Value -notmatch 'Rodar-RegistroDeAcao')
+    $posConf = if ($mProv.Success) { $mProv.Value.IndexOf('$script:Ctx.Confirmar') } else { -1 }
+    $posRun = if ($mProv.Success) { $mProv.Value.IndexOf('Invoke-Filho') } else { -1 }
+    Verificar 'provisionar: checagem de -Confirmar/-Simular vem antes de qualquer execucao' ($posConf -ge 0 -and $posRun -gt $posConf -and $mProv.Value.Contains('$script:Ctx.Simular'))
+    $pyProv = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_system_principal.py'))
+    Verificar 'create_system_principal.py: e-mail so da constante, banco esperado fixo, sem print de senha/hash' ($pyProv.Contains('SYSTEM_PRINCIPAL_CANONICAL_EMAIL') -and $pyProv -notmatch '@auneron\.core' -and $pyProv.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyProv -notmatch 'print\([^)]*(password|hash)')
     $mVar = [regex]::Match($codigo, "(?s)elseif \(\`$Alvo -eq 'varredura'\) \{.*?\r?\n    \}\r?\n")
     Verificar 'ambiente da varredura: apenas API_KEY (e PYTHONUTF8)' ($mVar.Success -and $mVar.Value -notmatch 'DATABASE_URL' -and $mVar.Value.Contains("`$amb['API_KEY']"))
     $pyVar = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'scheduled_detect_overdue.py'))
