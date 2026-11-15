@@ -317,6 +317,56 @@ try {
     $r = Rodar-Script (@('provisionar-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Executavel', 'x.exe') + $comuns)
     Verificar 'provisionar: nenhum parametro escolhe o executavel' ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
 
+    Write-Host '== vincular-deteccao-vencidos / desvincular-deteccao-vencidos =='
+    $pastaBind = Join-Path $tmp 'checkout-bind'
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaBind 'backend\scripts'))
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaBind 'frontend'))
+    Set-Content -LiteralPath (Join-Path $pastaBind 'backend\alembic.ini') -Value '' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $pastaBind 'frontend\package.json') -Value '{}' -Encoding ASCII
+    foreach ($cmdBind in @('vincular-deteccao-vencidos', 'desvincular-deteccao-vencidos')) {
+        $r = Rodar-Script (@($cmdBind, '-Simular', '-SemSondagem') + $comuns)
+        Verificar ($cmdBind + ': aceito no ValidateSet (recusa por falta de -Pasta)') ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta' -and $r.Saida -notmatch 'ValidateSet') $r.Saida
+        $r = Rodar-Script (@($cmdBind, '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+        Verificar ($cmdBind + ' sem o .py no checkout: recusa') ($r.Codigo -ne 0 -and $r.Saida -match 'create_overdue_detection_binding') $r.Saida
+    }
+    Set-Content -LiteralPath (Join-Path $pastaBind 'backend\scripts\create_overdue_detection_binding.py') -Value '' -Encoding ASCII
+    $r = Rodar-Script (@('vincular-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+    $saidas['vincular-simular'] = $r.Saida
+    Verificar 'vincular -Simular: exit 0, modulo fixo com modo literal, nada gravado' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('-m scripts.create_overdue_detection_binding vincular') -and $r.Saida.Contains('auneron_neon_synthetic')) $r.Saida
+    $r = Rodar-Script (@('desvincular-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+    $saidas['desvincular-simular'] = $r.Saida
+    Verificar 'desvincular -Simular: exit 0, modulo fixo com modo literal, nunca apaga' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('-m scripts.create_overdue_detection_binding desvincular') -and $r.Saida -match 'nunca apaga') $r.Saida
+    foreach ($cmdBind in @('vincular-deteccao-vencidos', 'desvincular-deteccao-vencidos')) {
+        $r = Rodar-Script (@($cmdBind, '-Pasta', $pastaBind) + $comuns)
+        $saidas[$cmdBind + '-sem-confirmar'] = $r.Saida
+        Verificar ($cmdBind + ' sem -Confirmar: exit 0, mostra o que faria e nao grava') ($r.Codigo -eq 0 -and $r.Saida -match 'Nada foi gravado' -and $r.Saida -match '-Confirmar' -and $r.Saida.Contains('-m scripts.create_overdue_detection_binding')) $r.Saida
+        $r = Rodar-Script (@($cmdBind, '-Simular', '-SemSondagem', '-Pasta', $pastaBind, '-Modulo', 'os') + $comuns)
+        Verificar ($cmdBind + ': nenhum parametro escolhe o modulo') ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
+        $r = Rodar-Script (@($cmdBind, '-Simular', '-SemSondagem', '-Pasta', $pastaBind, '-Modo', 'x') + $comuns)
+        Verificar ($cmdBind + ': nenhum parametro escolhe o modo') ($r.Codigo -ne 0 -and $r.Saida -match 'Modo')
+        $r = Rodar-Script (@($cmdBind, '-Simular', '-SemSondagem', '-Pasta', $pastaBind, '-Executavel', 'x.exe') + $comuns)
+        Verificar ($cmdBind + ': nenhum parametro escolhe o executavel') ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
+    }
+
+    # Execucao real com um "script" FALSO: confere que o modo literal chega como argumento e que
+    # o codigo de saida do script e repassado (nenhum banco envolvido).
+    $falsoBind = @'
+import sys
+print("modo=" + ",".join(sys.argv[1:]))
+sys.exit(5)
+'@
+    Set-Content -LiteralPath (Join-Path $pastaBind 'backend\scripts\create_overdue_detection_binding.py') -Value $falsoBind -Encoding ASCII
+    $r = Rodar-Script (@('vincular-deteccao-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+    Verificar 'vincular -Simular com .py falso: nao executa o script' ($r.Codigo -eq 0 -and $r.Saida -notmatch 'modo=')
+    $r = Rodar-Script (@('vincular-deteccao-vencidos', '-Pasta', $pastaBind) + $comuns)
+    Verificar 'vincular sem -Confirmar com .py falso: nao executa o script' ($r.Codigo -eq 0 -and $r.Saida -notmatch 'modo=')
+    $r = Rodar-Script (@('desvincular-deteccao-vencidos', '-Pasta', $pastaBind, '-Confirmar') + $comuns)
+    $saidas['desvincular-real'] = $r.Saida
+    Verificar 'desvincular -Confirmar: repassa o exit code do script (5) e o modo literal' ($r.Codigo -eq 5 -and $r.Saida.Contains('modo=desvincular')) ('codigo=' + $r.Codigo + ' ' + $r.Saida)
+    $r = Rodar-Script (@('vincular-deteccao-vencidos', '-Pasta', $pastaBind, '-Confirmar') + $comuns)
+    Verificar 'vincular -Confirmar: repassa o exit code do script (5) e o modo literal' ($r.Codigo -eq 5 -and $r.Saida.Contains('modo=vincular')) ('codigo=' + $r.Codigo + ' ' + $r.Saida)
+    Set-Content -LiteralPath (Join-Path $pastaBind 'backend\scripts\create_overdue_detection_binding.py') -Value '' -Encoding ASCII
+
     Write-Host '== detectar-vencidos =='
     $pastaVarr = Join-Path $tmp 'checkout-varredura'
     [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaVarr 'backend\scripts'))
@@ -379,13 +429,18 @@ sys.exit(2)
     $r = Rodar-Script (@('consultar', '-Relatorio', 'sistema', '-Simular') + $comuns)
     $saidas['consultar-sistema-simular'] = $r.Saida
     Verificar 'consultar sistema -Simular: exit 0, mostra BEGIN READ ONLY, ROLLBACK e as duas consultas' ($r.Codigo -eq 0 -and $r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida.Contains('inet_server_port()') -and $r.Saida.Contains('sistema.vencimentos@auneron.core')) $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'deteccao', '-Conta', '5', '-Simular') + $comuns)
+    Verificar 'deteccao com -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'deteccao', '-Simular') + $comuns)
+    $saidas['consultar-deteccao-simular'] = $r.Saida
+    Verificar 'consultar deteccao -Simular: exit 0, BEGIN READ ONLY, ROLLBACK, tabelas e sem variavel' ($r.Codigo -eq 0 -and $r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida.Contains('agent_skill_bindings') -and $r.Saida.Contains('policy_authority_grants') -and $r.Saida.Contains('current_database()') -and $r.Saida -notmatch '-v conta=') $r.Saida
     $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular', '-Executavel', 'x.exe') + $comuns)
     Verificar 'nenhum parametro escolhe executavel, SQL ou modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
     $r = Rodar-Script (@('consultar', '-Relatorio', 'catalogo', '-Simular', '-Sql', 'select 1') + $comuns)
     Verificar '-Sql recusado como parametro desconhecido' ($r.Codigo -ne 0 -and $r.Saida -match 'Sql')
 
     $padraoEscrita = '(?i)\b(insert|update|delete|drop|alter|create|truncate|grant)\b'
-    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo), @('sistema', $script:SqlConsultaSistema))) {
+    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo), @('sistema', $script:SqlConsultaSistema), @('deteccao', $script:SqlConsultaDeteccao))) {
         $nomeSql = [string]$par[0]
         $txtSql = [string]$par[1]
         $linhasSql = @($txtSql -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
@@ -402,6 +457,12 @@ sys.exit(2)
     Verificar 'SQL sistema: contem exatamente as duas consultas' ($sqlSis.Contains('SELECT current_database() AS banco, inet_server_port() AS porta_interna;') -and $sqlSis.Contains("SELECT email, role, active FROM users WHERE email = 'sistema.vencimentos@auneron.core';") -and ([regex]::Matches($sqlSis, '(?im)^\s*SELECT\b')).Count -eq 2)
     Verificar 'SQL sistema: nao referencia password_hash' ($sqlSis -notmatch '(?i)password')
 
+    $sqlDet = $script:SqlConsultaDeteccao
+    Verificar 'SQL deteccao: nao usa variaveis do psql' ($sqlDet -notmatch '(?<!:):[A-Za-z_]')
+    Verificar 'SQL deteccao: so le as tabelas esperadas' (@([regex]::Matches($sqlDet, '(?im)\b(?:FROM|JOIN)\s+(\w+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique) -join ',' -eq 'accounts,agent_skill_bindings,policy_authority_grants,skill_versions,skills')
+    Verificar 'SQL deteccao: nao referencia colunas sensiveis dos grants' ($sqlDet -notmatch '(?i)granted_by|revoked_by|password|configuration')
+    Verificar 'SQL deteccao: lista de contas limitada a 20' ($sqlDet -match '(?im)^LIMIT 20;$')
+
     $ast = [Management.Automation.Language.Parser]::ParseFile($alvoScript, [ref]$null, [ref]$null)
     $nomesParam = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
     $esperados = @('Comando', 'Pasta', 'Cofre', 'Base', 'Destino', 'ConfirmarBackup', 'Relatorio', 'Conta', 'Confirmar', 'Simular', 'SemSondagem', 'CarregarFuncoes')
@@ -410,7 +471,7 @@ sys.exit(2)
     Verificar 'parametros: apenas os existentes mais -Relatorio e -Conta' ($extras.Count -eq 0 -and $faltam.Count -eq 0) (($extras + $faltam) -join ',')
     $pRel = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Relatorio' })[0]
     $vsRel = @($pRel.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
-    Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema') ($vsRel -join ',')
+    Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema, deteccao)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema,deteccao') ($vsRel -join ',')
     $pCon = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Conta' })[0]
     $vrCon = @($pCon.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateRange' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
     Verificar '-Conta: [int] com ValidateRange(1, 2147483647)' ((($vrCon -join ',') -eq '1,2147483647') -and ($pCon.StaticType.Name -eq 'Int32')) ($vrCon -join ',')
@@ -471,6 +532,18 @@ sys.exit(2)
     Verificar 'provisionar: checagem de -Confirmar/-Simular vem antes de qualquer execucao' ($posConf -ge 0 -and $posRun -gt $posConf -and $mProv.Value.Contains('$script:Ctx.Simular'))
     $pyProv = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_system_principal.py'))
     Verificar 'create_system_principal.py: e-mail so da constante, banco esperado fixo, sem print de senha/hash' ($pyProv.Contains('SYSTEM_PRINCIPAL_CANONICAL_EMAIL') -and $pyProv -notmatch '@auneron\.core' -and $pyProv.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyProv -notmatch 'print\([^)]*(password|hash)')
+    Verificar 'ValidateSet de -Comando contem vincular e desvincular-deteccao-vencidos' (($vsCmd -contains 'vincular-deteccao-vencidos') -and ($vsCmd -contains 'desvincular-deteccao-vencidos')) ($vsCmd -join ',')
+    $mBind = [regex]::Match($codigo, '(?s)function Rodar-BindingDeteccao \{.*?\r?\n\}\r?\n')
+    Verificar 'binding: script e modulo literais fixos, modo vai como argumento, ambiente do backend' ($mBind.Success -and $mBind.Value.Contains("'backend\scripts\create_overdue_detection_binding.py'") -and $mBind.Value.Contains("@('-m', 'scripts.create_overdue_detection_binding', `$Modo)") -and $mBind.Value.Contains("Montar-Ambiente 'backend'") -and $mBind.Value -notmatch 'Rodar-RegistroDeAcao')
+    Verificar 'binding: modo restrito a vincular/desvincular antes de qualquer execucao' ($mBind.Success -and $mBind.Value.IndexOf("'Modo interno invalido.'") -ge 0 -and $mBind.Value.IndexOf("'Modo interno invalido.'") -lt $mBind.Value.IndexOf('Invoke-Filho'))
+    $posConfB = if ($mBind.Success) { $mBind.Value.IndexOf('$script:Ctx.Confirmar') } else { -1 }
+    $posRunB = if ($mBind.Success) { $mBind.Value.IndexOf('Invoke-Filho') } else { -1 }
+    Verificar 'binding: checagem de -Confirmar/-Simular vem antes de qualquer execucao' ($posConfB -ge 0 -and $posRunB -gt $posConfB -and $mBind.Value.Contains('$script:Ctx.Simular'))
+    $chBind = [regex]::Matches($codigo, 'Rodar-BindingDeteccao\s+-Modo\s+(\S+)')
+    Verificar 'Rodar-BindingDeteccao so e chamado com literal vincular ou desvincular' ($chBind.Count -eq 2 -and @($chBind | Where-Object { $_.Groups[1].Value -match "^'(vincular|desvincular)'" }).Count -eq 2) ([string]$chBind.Count)
+    Verificar 'nao existe parametro -Modo no script' ($nomesParam -notcontains 'Modo')
+    $pyBind = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_overdue_detection_binding.py'))
+    Verificar 'create_overdue_detection_binding.py: banco esperado fixo, nunca apaga binding, sem print de senha/hash' ($pyBind.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyBind -notmatch '(?i)\.delete\(' -and $pyBind -notmatch '(?i)\bDELETE\b\s+FROM' -and $pyBind -notmatch 'print\([^)]*(password|hash)')
     $mVar = [regex]::Match($codigo, "(?s)elseif \(\`$Alvo -eq 'varredura'\) \{.*?\r?\n    \}\r?\n")
     Verificar 'ambiente da varredura: apenas API_KEY (e PYTHONUTF8)' ($mVar.Success -and $mVar.Value -notmatch 'DATABASE_URL' -and $mVar.Value.Contains("`$amb['API_KEY']"))
     $pyVar = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'scheduled_detect_overdue.py'))
