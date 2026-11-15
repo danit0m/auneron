@@ -15,7 +15,20 @@ function load(rel) {
   return mod.exports;
 }
 
-const { podeDecidirPedido, usuarioEhSolicitante } = load('lib/aprovacoes.ts');
+const { podeDecidirPedido, usuarioEhSolicitante, paramsListaAprovacoes } = load('lib/aprovacoes.ts');
+
+test('paramsListaAprovacoes: todos nao envia status', () => {
+  const p = paramsListaAprovacoes('todos');
+  assert.equal('status' in p, false);
+  assert.equal(p.limit, 100);
+});
+
+test('paramsListaAprovacoes: status e string, nao lista', () => {
+  const p = paramsListaAprovacoes('pending');
+  assert.equal(p.status, 'pending');
+  assert.equal(typeof p.status, 'string');
+  assert.equal(new URLSearchParams(p).toString(), 'status=pending&limit=100');
+});
 
 const pedido = (extra = {}) => ({
   status: 'pending',
