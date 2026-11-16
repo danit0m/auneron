@@ -8,10 +8,12 @@ from app.intelligence.gateway.errors import GatewayErrorCode
 from app.intelligence.gateway.pricing import PRICE_TABLE
 
 
-# Providers the gateway knows how to build in this phase. Real
+# Providers the gateway knows how to build in this phase. Paid/remote
 # providers are NOT here: adding one needs a new gate, a new adapter
-# module, a new DB CHECK migration and PO approval.
-KNOWN_PROVIDERS: Final[frozenset[str]] = frozenset({"fake"})
+# module, a new DB CHECK migration and PO approval. "ollama" is the
+# loopback-only local runtime (S1); like every profile it is usable
+# only in shadow mode with SYNTHETIC data (gateway preflight).
+KNOWN_PROVIDERS: Final[frozenset[str]] = frozenset({"fake", "ollama"})
 FAKE_PROVIDER_KEY: Final[str] = "fake"
 
 
@@ -132,6 +134,26 @@ LAB_PROFILES: Final[tuple[ModelProfile, ...]] = (
         max_output_tokens_cap=1024,
     ),
 )
+
+
+LOCAL_OLLAMA_PROVIDER_KEY: Final[str] = "ollama"
+LOCAL_QWEN3_4B_PROFILE_NAME: Final[str] = "local-qwen3-4b"
+
+
+def build_local_ollama_profile(
+    *,
+    name: str = LOCAL_QWEN3_4B_PROFILE_NAME,
+    model_id: str = "qwen3:4b",
+    max_output_tokens_cap: int = 1024,
+) -> ModelProfile:
+    """Configurable local-model profile (zero price, no fallback)."""
+    return ModelProfile(
+        name=name,
+        provider=LOCAL_OLLAMA_PROVIDER_KEY,
+        model_id=model_id,
+        price_key="local-zero",
+        max_output_tokens_cap=max_output_tokens_cap,
+    )
 
 
 def build_lab_registry() -> ProfileRegistry:

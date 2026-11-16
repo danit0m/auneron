@@ -102,6 +102,12 @@ class ProviderResponse:
     input_tokens: int
     output_tokens: int
     request_id: str | None = None
+    # Local-runtime identification (S1). Optional: the fake leaves them
+    # None, so its behavior and equality semantics are unchanged.
+    reported_model: str | None = None
+    model_digest: str | None = None
+    runtime_version: str | None = None
+    latency_ms: int | None = None
 
 
 @dataclass(frozen=True)

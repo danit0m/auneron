@@ -26,6 +26,11 @@ PRICE_TABLE: Final[dict[str, PriceEntry]] = {
         input_micro_per_mtok=5_000_000,
         output_micro_per_mtok=20_000_000,
     ),
+    # Local model on the operator's own machine: no per-token charge.
+    "local-zero": PriceEntry(
+        input_micro_per_mtok=0,
+        output_micro_per_mtok=0,
+    ),
 }
 
 
