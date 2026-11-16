@@ -10,7 +10,36 @@
     Comandos: configurar, status, versao-banco, pendentes, backup, ensaiar, migrar,
               registrar-acao-pagamento, registrar-acao-atraso, detectar-vencidos, consultar,
               provisionar-deteccao-vencidos, vincular-deteccao-vencidos, desvincular-deteccao-vencidos,
+              provisionar-orcamento-shadow, provisionar-conta-vencida-sintetica,
               subir-backend, parar-backend, subir-frontend, parar-frontend
+
+    provisionar-orcamento-shadow: cria UM orcamento de implantacao (deployment_period, 7 dias) para a
+      rodada S5 do shadow de vencidos, via backend\scripts\create_shadow_budget.py (modulo fixo). O limite
+      de TOKENS e a reserva de pior caso de uma unica chamada do perfil local-qwen3-4b (preco zero: o
+      limite de dinheiro nao restringe chamadas). Idempotente (informa "ja provisionado" e o id). Recusa
+      se o banco nao for auneron_neon_synthetic (4). Sem -Confirmar apenas mostra o que faria. Exige -Pasta.
+      Codigos: 0 ok/ja provisionado, 3 existente divergente ou periodo vencido, 4 banco errado.
+
+    provisionar-conta-vencida-sintetica: cria UMA conta (cliente "SINTETICO S5 SHADOW", s5.shadow@example.com,
+      valor 10.00, aberto, vencimento = hoje no BUSINESS_TIMEZONE - 10 dias), via
+      backend\scripts\create_shadow_synthetic_account.py (modulo fixo). Idempotente pelo email. Nada mais e
+      criado. Recusa se o banco nao for auneron_neon_synthetic (4). Sem -Confirmar apenas mostra o que faria.
+      Exige -Pasta. Recusa (codigo 9) se a porta 8000 estiver ocupada: o backend deve estar PARADO, pois a
+      deteccao roda sozinha no backend (~60 s) e, sem -Shadow, criaria o pedido sem o shadow observar.
+      Codigos: 0 ok/ja provisionada, 3 existente divergente, 4 banco errado, 9 backend no ar.
+
+    subir-backend -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id>: sobe o backend com o shadow do
+      agente de vencidos ligado (INTELLIGENCE_MODE=shadow, OVERDUE_SHADOW_*, 1 conta por rodada,
+      INTELLIGENCE_MAX_ATTEMPTS=1, INTELLIGENCE_CALL_TIMEOUT_SECONDS=120). So com -Confirmar (ou -Simular, que
+      mostra tudo sem subir). Antes de subir: memoria fisica livre >= 14 GiB (senao codigo 6) e, por GET em
+      loopback (sem inferencia) em http://127.0.0.1:11434/api/version e /api/tags, qwen3:4b presente com
+      digest igual a -DigestModelo (senao codigo 7 = Ollama/modelo ausente, 8 = digest diferente). Sem -Shadow
+      nada muda (INTELLIGENCE_MODE=off continua o padrao). Recusa APP_ENV=production.
+      Veja backend\docs\operations\S5_SHADOW_RUNBOOK.md.
+
+    consultar -Relatorio shadow: orcamentos de inteligencia, chamadas de modelo e contagens/ultimos registros
+      do dominio governado (contas SINTETICO, eventos, pedidos, decisoes, consumos, propostas) para comparar
+      antes/depois da rodada. Somente leitura.
 
     provisionar-deteccao-vencidos: cria a conta de sistema sistema.vencimentos@auneron.core
       (role=system, active) se ela nao existir, via backend\scripts\create_system_principal.py
@@ -44,6 +73,11 @@
       .\homologacao.ps1 consultar -Relatorio sistema   (banco/porta e usuario de sistema, somente leitura)
       .\homologacao.ps1 consultar -Relatorio deteccao   (skill, binding, autoridade L3 e contas vencidas, somente leitura)
       .\homologacao.ps1 vincular-deteccao-vencidos -Pasta C:\auneron -Confirmar
+      .\homologacao.ps1 provisionar-orcamento-shadow -Pasta C:\auneron -Confirmar
+      .\homologacao.ps1 provisionar-conta-vencida-sintetica -Pasta C:\auneron -Confirmar
+      .\homologacao.ps1 consultar -Relatorio shadow   (somente leitura)
+      .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Simular
+      .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Confirmar
       .\homologacao.ps1 parar-backend -Confirmar
 
     Nao existe downgrade neste script. Veja backend/docs/DEPLOYMENT.md.
@@ -56,6 +90,7 @@ param(
         'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
         'registrar-acao-pagamento', 'registrar-acao-atraso', 'detectar-vencidos', 'consultar',
         'provisionar-deteccao-vencidos', 'vincular-deteccao-vencidos', 'desvincular-deteccao-vencidos',
+        'provisionar-orcamento-shadow', 'provisionar-conta-vencida-sintetica',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend'
     )]
     [string]$Comando,
@@ -71,9 +106,13 @@ param(
     # Dump existente, criado ha menos de 24 h (ensaiar, migrar).
     [Parameter(ParameterSetName = 'Normal')][string]$ConfirmarBackup,
     # Relatorio fixo de somente leitura (consultar).
-    [Parameter(ParameterSetName = 'Normal')][ValidateSet('pagamento', 'catalogo', 'sistema', 'deteccao')][string]$Relatorio,
+    [Parameter(ParameterSetName = 'Normal')][ValidateSet('pagamento', 'catalogo', 'sistema', 'deteccao', 'shadow')][string]$Relatorio,
     # Id da conta (consultar -Relatorio pagamento); inteiro positivo, passado como variavel do psql.
     [Parameter(ParameterSetName = 'Normal')][ValidateRange(1, 2147483647)][int]$Conta,
+    # Shadow do agente de vencidos (somente subir-backend): liga o shadow com o digest e o orcamento abaixo.
+    [Parameter(ParameterSetName = 'Normal')][switch]$Shadow,
+    [Parameter(ParameterSetName = 'Normal')][string]$DigestModelo,
+    [Parameter(ParameterSetName = 'Normal')][ValidateRange(1, 2147483647)][int]$OrcamentoShadow,
     [Parameter(ParameterSetName = 'Normal')][switch]$Confirmar,
     [Parameter(ParameterSetName = 'Normal')][switch]$Simular,
     # Nao consulta portas/HTTP (so com status ou -Simular; usado no autoteste).
@@ -106,10 +145,33 @@ $script:ConfigPadrao = [ordered]@{
     'INTELLIGENCE_MODE'  = 'off'
 }
 
+# Shadow do agente de vencidos (rodada S5). Valores FIXOS; so -DigestModelo e -OrcamentoShadow variam.
+# Timeout de chamada: o primeiro carregamento do modelo local pode demorar; 120 s e o MAXIMO aceito por
+# INTELLIGENCE_CALL_TIMEOUT_SECONDS (config.py, le=120). Tentativas: 1 (sem retry, para a chamada unica).
+$script:ShadowFixo = [ordered]@{
+    'INTELLIGENCE_MODE'                    = 'shadow'
+    'OVERDUE_SHADOW_ENABLED'               = 'true'
+    'OVERDUE_SHADOW_DATA_CLASSIFICATION'   = 'synthetic'
+    'OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN'  = '1'
+    'OVERDUE_SHADOW_MODEL_ID'              = 'qwen3:4b'
+    'INTELLIGENCE_CALL_TIMEOUT_SECONDS'    = '120'
+    'INTELLIGENCE_MAX_ATTEMPTS'            = '1'
+}
+$script:ShadowModeloId = 'qwen3:4b'
+$script:ShadowMemoriaMinimaKb = 14 * 1024 * 1024   # 14 GiB em KB (FreePhysicalMemory e em KB)
+$script:OllamaUrlVersao = 'http://127.0.0.1:11434/api/version'
+$script:OllamaUrlTags = 'http://127.0.0.1:11434/api/tags'
+# Codigos de saida proprios do pre-voo do shadow.
+$script:CodigoShadowMemoria = 6
+$script:CodigoShadowOllama = 7
+$script:CodigoShadowDigest = 8
+$script:CodigoBackendAtivo = 9
+
 $script:Ctx = @{
     Base = ''; Cofre = ''; Pasta = ''
     Simular = $false; Confirmar = $false; SemSondagem = $false
     Relatorio = ''; Conta = 0
+    Shadow = $false; DigestModelo = ''; OrcamentoShadow = 0
 }
 $script:Conhecidos = New-Object System.Collections.ArrayList
 
@@ -221,6 +283,61 @@ FROM accounts a
 WHERE a.status = 'aberto' AND a.vencimento < CURRENT_DATE
 ORDER BY a.vencimento, a.id
 LIMIT 20;
+ROLLBACK;
+'@
+
+# Relatorio do shadow (S5): orcamentos, chamadas de modelo e dominio governado antes/depois da rodada.
+# Nenhuma coluna sensivel: so ids, chaves, digests, estados, contagens e a conta SINTETICO.
+$script:SqlConsultaShadow = @'
+BEGIN READ ONLY;
+\echo == Banco ==
+SELECT current_database() AS banco;
+\echo == Orcamentos de inteligencia (intelligence_budgets) ==
+SELECT b.id, b.scope_kind, b.scope_ref, b.period_start, b.period_end, b.limit_micro, b.limit_tokens, b.reserved_micro, b.reserved_tokens, b.settled_micro, b.settled_tokens, b.unknown_micro, b.unknown_tokens, b.overrun_micro, b.overrun_tokens, b.version, b.updated_at
+FROM intelligence_budgets b
+ORDER BY b.id;
+\echo == Chamadas de modelo por estado (intelligence_model_calls) ==
+SELECT c.state, count(*) AS chamadas
+FROM intelligence_model_calls c
+GROUP BY c.state
+ORDER BY c.state;
+\echo == Chamadas de modelo (ate 20 mais recentes; criada_em = reserved_at) ==
+SELECT c.id, c.call_key, c.provider, c.model_profile, c.model_id, c.model_digest, c.provider_reported_model, c.runtime_version, c.latency_ms, c.state, c.error_class, c.release_basis, c.evidence_ref, c.reserved_tokens, c.actual_tokens, c.reserved_at AS criada_em, c.sent_at, c.settled_at
+FROM intelligence_model_calls c
+ORDER BY c.id DESC
+LIMIT 20;
+\echo == Contagens do dominio governado ==
+SELECT (SELECT count(*) FROM accounts) AS accounts, (SELECT count(*) FROM account_events) AS account_events, (SELECT count(*) FROM approval_requests) AS approval_requests, (SELECT count(*) FROM approval_decisions) AS approval_decisions, (SELECT count(*) FROM approval_consumptions) AS approval_consumptions, (SELECT count(*) FROM authenticated_advisory_proposals) AS advisory_proposals;
+\echo == Contas SINTETICO (accounts) ==
+SELECT a.id, a.cliente, a.status, a.vencimento
+FROM accounts a
+WHERE a.cliente LIKE 'SINTETICO%'
+ORDER BY a.id;
+\echo == Eventos de conta (account_events; ultimos 10) ==
+SELECT e.id, e.account_id, e.event_type, e.previous_status, e.new_status, e.actor_type, e.occurred_at
+FROM account_events e
+ORDER BY e.id DESC
+LIMIT 10;
+\echo == Pedidos de aprovacao (approval_requests; ultimos 10) ==
+SELECT r.id, r.status, r.target_account_id, r.requester_actor_type, r.created_at, r.resolved_at
+FROM approval_requests r
+ORDER BY r.id DESC
+LIMIT 10;
+\echo == Decisoes de aprovacao (approval_decisions; ultimas 10) ==
+SELECT d.id, d.approval_request_id, d.decision, d.created_at
+FROM approval_decisions d
+ORDER BY d.id DESC
+LIMIT 10;
+\echo == Consumos de aprovacao (approval_consumptions; ultimos 10) ==
+SELECT c.id, c.approval_request_id, c.status, c.error_code, c.reserved_at, c.finalized_at
+FROM approval_consumptions c
+ORDER BY c.id DESC
+LIMIT 10;
+\echo == Propostas consultivas (authenticated_advisory_proposals; ultimas 10) ==
+SELECT p.id, p.idempotency_key, p.snapshot_digest, p.created_at
+FROM authenticated_advisory_proposals p
+ORDER BY p.id DESC
+LIMIT 10;
 ROLLBACK;
 '@
 
@@ -1160,7 +1277,7 @@ function Cmd-Consultar {
     # (PGOPTIONS no ambiente do filho e BEGIN READ ONLY / ROLLBACK no proprio SQL).
     $rel = [string]$script:Ctx.Relatorio
     $conta = [int]$script:Ctx.Conta
-    if (-not $rel) { Falhar 'consultar exige -Relatorio pagamento|catalogo|sistema|deteccao.' }
+    if (-not $rel) { Falhar 'consultar exige -Relatorio pagamento|catalogo|sistema|deteccao|shadow.' }
     if ($rel -eq 'pagamento') {
         if ($conta -lt 1) { Falhar 'consultar -Relatorio pagamento exige -Conta <id inteiro positivo>.' }
         $sql = $script:SqlConsultaPagamento
@@ -1176,6 +1293,10 @@ function Cmd-Consultar {
     elseif ($rel -eq 'deteccao') {
         if ($conta -ne 0) { Falhar '-Conta so vale com -Relatorio pagamento.' }
         $sql = $script:SqlConsultaDeteccao
+    }
+    elseif ($rel -eq 'shadow') {
+        if ($conta -ne 0) { Falhar '-Conta so vale com -Relatorio pagamento.' }
+        $sql = $script:SqlConsultaShadow
     }
     else { Falhar 'Relatorio desconhecido.' }
     $cofre = Ler-Cofre
@@ -1431,7 +1552,7 @@ function Mostrar-FimDoLog {
 }
 
 function Iniciar-Servico {
-    param([string]$Alvo, [int]$Porta, [string]$Exe, [string[]]$Args3, [string]$Dir, [string]$Raiz)
+    param([string]$Alvo, [int]$Porta, [string]$Exe, [string[]]$Args3, [string]$Dir, [string]$Raiz, [hashtable]$AmbienteExtra = @{})
     $logs = Join-Path (Get-BaseDir) 'logs'
     $carimbo = (Get-Date).ToString('yyyyMMdd-HHmmss')
     $logOut = Join-Path $logs ($Alvo + '-' + $carimbo + '.out.log')
@@ -1450,6 +1571,8 @@ function Iniciar-Servico {
     $entrada = Join-Path (Get-BaseDir) 'entrada-vazia.txt'
     if (-not (Test-Path -LiteralPath $entrada)) { Set-Content -LiteralPath $entrada -Value '' -Encoding ASCII }
     $amb = Montar-Ambiente $Alvo
+    # Extras (shadow): sobrescrevem o padrao so no ambiente do filho; nunca contem segredos.
+    foreach ($k in @($AmbienteExtra.Keys)) { $amb[$k] = $AmbienteExtra[$k] }
     $salvo = Aplicar-Ambiente $amb
     $proc = $null
     try {
@@ -1482,6 +1605,117 @@ function Iniciar-Servico {
     Info ('Logs: {0} | {1}' -f $logOut, $logErr)
 }
 
+# ---------------------------------------------------------------------------
+# Shadow (S5): funcoes puras e pre-voo
+# ---------------------------------------------------------------------------
+function Normalizar-DigestModelo {
+    # Funcao pura: 64 hex (aceita prefixo sha256:) em minusculas, ou '' se invalido.
+    param([string]$Digest)
+    if ([string]::IsNullOrWhiteSpace($Digest)) { return '' }
+    $d = $Digest.Trim().ToLowerInvariant()
+    if ($d.StartsWith('sha256:')) { $d = $d.Substring(7) }
+    if ($d -cnotmatch '^[0-9a-f]{64}\z') { return '' }
+    return $d
+}
+
+function Test-MemoriaLivreSuficiente {
+    # Funcao pura: memoria fisica livre (KB, como em FreePhysicalMemory) >= minimo (padrao 14 GiB)?
+    param([double]$LivreKb, [double]$MinimoKb = $script:ShadowMemoriaMinimaKb)
+    return ($LivreKb -ge $MinimoKb)
+}
+
+function Format-GiB {
+    param([double]$Kb)
+    return ('{0:N2} GiB' -f ($Kb / 1048576))
+}
+
+function Avaliar-TagsOllama {
+    # Funcao pura sobre o corpo JSON de /api/tags. Devolve @{ Codigo; Motivo; DigestEncontrado }.
+    # Codigo: 0 ok, 7 modelo ausente/resposta ilegivel, 8 digest diferente do aprovado.
+    param([string]$CorpoJson, [string]$Modelo, [string]$DigestEsperado)
+    $r = @{ Codigo = 0; Motivo = ''; DigestEncontrado = '' }
+    $o = $null
+    try { $o = $CorpoJson | ConvertFrom-Json } catch { }
+    if ($null -eq $o -or $null -eq $o.models) {
+        $r.Codigo = $script:CodigoShadowOllama
+        $r.Motivo = 'resposta de /api/tags ilegivel.'
+        return $r
+    }
+    $m = @($o.models | Where-Object { [string]$_.name -eq $Modelo })
+    if ($m.Count -eq 0) {
+        $r.Codigo = $script:CodigoShadowOllama
+        $r.Motivo = ('o modelo {0} nao esta presente no Ollama.' -f $Modelo)
+        return $r
+    }
+    $achado = Normalizar-DigestModelo ([string]$m[0].digest)
+    $r.DigestEncontrado = $achado
+    if ($achado -eq '' -or $achado -ne $DigestEsperado) {
+        $r.Codigo = $script:CodigoShadowDigest
+        $r.Motivo = ('o digest de {0} no Ollama ({1}) difere do aprovado em -DigestModelo ({2}).' -f $Modelo, $(if ($achado) { $achado } else { '(ilegivel)' }), $DigestEsperado)
+        return $r
+    }
+    return $r
+}
+
+function Obter-MemoriaLivreKb {
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+    return [double]$os.FreePhysicalMemory
+}
+
+function Get-JsonOllama {
+    # GET somente leitura em loopback (URL fixa; nenhuma inferencia). Devolve o corpo ou $null.
+    param([string]$Url)
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5
+        return [string]$r.Content
+    }
+    catch { return $null }
+}
+
+function Montar-AmbienteShadow {
+    # Funcao pura: variaveis do shadow para o filho (nenhum segredo). Valida o digest e o orcamento.
+    param([string]$Digest, [int]$OrcamentoId)
+    $d = Normalizar-DigestModelo $Digest
+    if ($d -eq '') { Falhar '-DigestModelo deve ter 64 caracteres hexadecimais (digest aprovado de qwen3:4b).' }
+    if ($OrcamentoId -lt 1) { Falhar '-OrcamentoShadow deve ser o id (inteiro positivo) do orcamento provisionado.' }
+    if ([string]$script:ConfigPadrao['APP_ENV'] -eq 'production') { Falhar 'O shadow e recusado com APP_ENV=production.' }
+    $amb = @{}
+    foreach ($k in $script:ShadowFixo.Keys) { $amb[$k] = $script:ShadowFixo[$k] }
+    $amb['OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID'] = [string]$OrcamentoId
+    $amb['OVERDUE_SHADOW_MODEL_DIGEST'] = $d
+    return $amb
+}
+
+function Verificar-PreVooShadow {
+    # Memoria e Ollama (so leitura). Em falha, define o codigo de saida proprio e lanca.
+    param([string]$Digest)
+    if ($script:Ctx.SemSondagem) {
+        Info '(pre-voo do shadow nao verificado: -SemSondagem)'
+        return
+    }
+    $livre = Obter-MemoriaLivreKb
+    Info ('Memoria fisica livre: {0} (minimo {1})' -f (Format-GiB $livre), (Format-GiB $script:ShadowMemoriaMinimaKb))
+    if (-not (Test-MemoriaLivreSuficiente $livre)) {
+        $script:Codigo = $script:CodigoShadowMemoria
+        Falhar ('Memoria fisica livre insuficiente ({0}); o shadow exige pelo menos {1}. Nada foi iniciado.' -f (Format-GiB $livre), (Format-GiB $script:ShadowMemoriaMinimaKb))
+    }
+    $v = Get-JsonOllama $script:OllamaUrlVersao
+    $t = Get-JsonOllama $script:OllamaUrlTags
+    if ($null -eq $v -or $null -eq $t) {
+        $script:Codigo = $script:CodigoShadowOllama
+        Falhar 'O Ollama nao respondeu em 127.0.0.1:11434 (/api/version e /api/tags). Nada foi iniciado.'
+    }
+    $versao = ''
+    try { $versao = [string](($v | ConvertFrom-Json).version) } catch { }
+    $av = Avaliar-TagsOllama $t $script:ShadowModeloId $Digest
+    if ($av.Codigo -ne 0) {
+        $script:Codigo = $av.Codigo
+        Falhar ('Pre-voo do shadow recusado: ' + $av.Motivo + ' Nada foi iniciado.')
+    }
+    Info ('Ollama versao        : ' + $(if ($versao) { $versao } else { '(nao informada)' }))
+    Info ('Modelo {0} digest : {1} (igual ao aprovado)' -f $script:ShadowModeloId, $av.DigestEncontrado)
+}
+
 function Cmd-SubirBackend {
     $raiz = Resolver-Pasta
     $py = Resolver-Python $raiz
@@ -1489,7 +1723,58 @@ function Cmd-SubirBackend {
     Exigir-Segredos $cofre $script:NomesSegredos
     Exigir-PortaLivre $script:PortaBackend
     $args3 = @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', [string]$script:PortaBackend)
-    Iniciar-Servico -Alvo 'backend' -Porta $script:PortaBackend -Exe $py -Args3 $args3 -Dir (Join-Path $raiz 'backend') -Raiz $raiz
+    $extra = @{}
+    if ($script:Ctx.Shadow) {
+        $extra = Montar-AmbienteShadow $script:Ctx.DigestModelo $script:Ctx.OrcamentoShadow
+        Info '== Shadow do agente de vencidos (rodada S5; dados sinteticos; sem producao) =='
+        Info ('APP_ENV             : ' + $script:ConfigPadrao['APP_ENV'])
+        Info ('Variaveis do shadow : ' + ((@($extra.Keys | Sort-Object) | ForEach-Object { '{0}={1}' -f $_, $extra[$_] }) -join '; '))
+        Verificar-PreVooShadow (Normalizar-DigestModelo $script:Ctx.DigestModelo)
+        if ((-not $script:Ctx.Simular) -and (-not $script:Ctx.Confirmar)) {
+            Info 'Nada foi iniciado. Repita com -Confirmar para subir o backend com o shadow (ou -Simular).'
+            return
+        }
+    }
+    Iniciar-Servico -Alvo 'backend' -Porta $script:PortaBackend -Exe $py -Args3 $args3 -Dir (Join-Path $raiz 'backend') -Raiz $raiz -AmbienteExtra $extra
+}
+
+function Rodar-ProvisionamentoShadow {
+    # Provisiona (orcamento ou conta sintetica). Modulo e arquivo sao literais internos; nenhum parametro
+    # do usuario escolhe executavel, modulo ou SQL. O script Python recusa banco diferente do esperado (4).
+    param([string]$Modulo, [string]$Arquivo, [string]$Efeito, [switch]$ExigirBackendParado)
+    $raiz = Resolver-Pasta
+    $arqPy = Join-Path $raiz ('backend\scripts\' + $Arquivo)
+    if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
+        Falhar ('Nao existe backend\scripts\' + $Arquivo + ' no checkout informado.')
+    }
+    $py = Resolver-Python $raiz
+    if ($script:Ctx.Simular -or (-not $script:Ctx.Confirmar)) {
+        if ($script:Ctx.Simular) { Info 'SIMULACAO: nada sera feito.' }
+        else { Info 'Nada foi gravado. Repita com -Confirmar para executar.' }
+        Info ('Faria, em {0}\backend: {1} -m {2}' -f $raiz, $py, $Modulo)
+        Info ('Efeito: ' + $Efeito)
+        Info ('Ambiente do filho (nomes): ' + (Nomes-Do-Ambiente 'backend'))
+        return
+    }
+    if ($ExigirBackendParado -and (-not $script:Ctx.SemSondagem) -and (@(Get-Escutando $script:PortaBackend).Count -gt 0)) {
+        $script:Codigo = $script:CodigoBackendAtivo
+        Falhar ('A porta {0} esta ocupada: o backend esta no ar. A conta sintetica so pode ser criada com o backend PARADO; com o backend ligado sem -Shadow, a deteccao (a cada ~60 s) criaria o pedido de aprovacao sem o shadow observar. Rode parar-backend -Confirmar e repita. Nada foi gravado.' -f $script:PortaBackend)
+    }
+    $amb = Montar-Ambiente 'backend'
+    $res = Invoke-Filho -Exe $py -Argumentos @('-m', $Modulo) -DiretorioTrabalho (Join-Path $raiz 'backend') -Ambiente $amb
+    if ($res.Saida) { Info $res.Saida }
+    if ($res.Codigo -ne 0) {
+        $script:Codigo = $res.Codigo
+        Falhar ('{0} terminou com codigo {1} (3 = existente divergente, 4 = banco diferente do esperado).' -f $Modulo, $res.Codigo)
+    }
+}
+
+function Cmd-ProvisionarOrcamentoShadow {
+    Rodar-ProvisionamentoShadow -Modulo 'scripts.create_shadow_budget' -Arquivo 'create_shadow_budget.py' -Efeito 'cria UM orcamento deployment_period (7 dias, scope_ref s5-shadow-overdue-synthetic) com limit_tokens = reserva de pior caso de UMA chamada local-qwen3-4b (preco zero; o limite de tokens e o que garante uma chamada) e limit_micro = 1; idempotente; recusa se o banco nao for auneron_neon_synthetic.'
+}
+
+function Cmd-ProvisionarContaVencidaSintetica {
+    Rodar-ProvisionamentoShadow -Modulo 'scripts.create_shadow_synthetic_account' -Arquivo 'create_shadow_synthetic_account.py' -Efeito 'cria UMA conta (cliente SINTETICO S5 SHADOW, s5.shadow@example.com, valor 10.00, aberto, vencimento = hoje no BUSINESS_TIMEZONE - 10 dias); idempotente pelo email; nada mais e criado; recusa se o banco nao for auneron_neon_synthetic e (codigo 9) se a porta 8000 estiver ocupada: o backend deve estar PARADO.' -ExigirBackendParado
 }
 
 function Cmd-SubirFrontend {
@@ -1554,8 +1839,20 @@ function Principal {
         $script:Ctx.ConfirmarBackup = $ConfirmarBackup
         $script:Ctx.Relatorio = $Relatorio
         $script:Ctx.Conta = $Conta
+        $script:Ctx.Shadow = [bool]$Shadow
+        $script:Ctx.DigestModelo = $DigestModelo
+        $script:Ctx.OrcamentoShadow = $OrcamentoShadow
         if (($Relatorio -or $Conta) -and ($Comando -ne 'consultar')) {
             Falhar '-Relatorio e -Conta so valem com consultar.'
+        }
+        if (($Shadow -or $DigestModelo -or $OrcamentoShadow) -and ($Comando -ne 'subir-backend')) {
+            Falhar '-Shadow, -DigestModelo e -OrcamentoShadow so valem com subir-backend.'
+        }
+        if (($DigestModelo -or $OrcamentoShadow) -and (-not $Shadow)) {
+            Falhar '-DigestModelo e -OrcamentoShadow so valem com -Shadow.'
+        }
+        if ($Shadow -and ((-not $DigestModelo) -or (-not $OrcamentoShadow))) {
+            Falhar '-Shadow exige -DigestModelo <64 hex> e -OrcamentoShadow <id>.'
         }
         if ($SemSondagem -and ($Comando -ne 'status') -and (-not $Simular)) {
             Falhar '-SemSondagem so vale com status ou -Simular.'
@@ -1575,6 +1872,8 @@ function Principal {
             'provisionar-deteccao-vencidos' { Cmd-ProvisionarDeteccaoVencidos }
             'vincular-deteccao-vencidos' { Cmd-VincularDeteccaoVencidos }
             'desvincular-deteccao-vencidos' { Cmd-DesvincularDeteccaoVencidos }
+            'provisionar-orcamento-shadow' { Cmd-ProvisionarOrcamentoShadow }
+            'provisionar-conta-vencida-sintetica' { Cmd-ProvisionarContaVencidaSintetica }
             'subir-backend'  { Cmd-SubirBackend }
             'parar-backend'  { Cmd-Parar 'backend' $script:PortaBackend }
             'subir-frontend' { Cmd-SubirFrontend }

@@ -440,7 +440,7 @@ sys.exit(2)
     Verificar '-Sql recusado como parametro desconhecido' ($r.Codigo -ne 0 -and $r.Saida -match 'Sql')
 
     $padraoEscrita = '(?i)\b(insert|update|delete|drop|alter|create|truncate|grant)\b'
-    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo), @('sistema', $script:SqlConsultaSistema), @('deteccao', $script:SqlConsultaDeteccao))) {
+    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo), @('sistema', $script:SqlConsultaSistema), @('deteccao', $script:SqlConsultaDeteccao), @('shadow', $script:SqlConsultaShadow))) {
         $nomeSql = [string]$par[0]
         $txtSql = [string]$par[1]
         $linhasSql = @($txtSql -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
@@ -465,13 +465,13 @@ sys.exit(2)
 
     $ast = [Management.Automation.Language.Parser]::ParseFile($alvoScript, [ref]$null, [ref]$null)
     $nomesParam = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-    $esperados = @('Comando', 'Pasta', 'Cofre', 'Base', 'Destino', 'ConfirmarBackup', 'Relatorio', 'Conta', 'Confirmar', 'Simular', 'SemSondagem', 'CarregarFuncoes')
+    $esperados = @('Comando', 'Pasta', 'Cofre', 'Base', 'Destino', 'ConfirmarBackup', 'Relatorio', 'Conta', 'Shadow', 'DigestModelo', 'OrcamentoShadow', 'Confirmar', 'Simular', 'SemSondagem', 'CarregarFuncoes')
     $extras = @($nomesParam | Where-Object { $esperados -notcontains $_ })
     $faltam = @($esperados | Where-Object { $nomesParam -notcontains $_ })
     Verificar 'parametros: apenas os existentes mais -Relatorio e -Conta' ($extras.Count -eq 0 -and $faltam.Count -eq 0) (($extras + $faltam) -join ',')
     $pRel = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Relatorio' })[0]
     $vsRel = @($pRel.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
-    Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema, deteccao)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema,deteccao') ($vsRel -join ',')
+    Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema, deteccao, shadow)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema,deteccao,shadow') ($vsRel -join ',')
     $pCon = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Conta' })[0]
     $vrCon = @($pCon.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateRange' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
     Verificar '-Conta: [int] com ValidateRange(1, 2147483647)' ((($vrCon -join ',') -eq '1,2147483647') -and ($pCon.StaticType.Name -eq 'Int32')) ($vrCon -join ',')
@@ -481,6 +481,88 @@ sys.exit(2)
     Verificar 'consultar: conta passada como -v conta=<int> e SQL por stdin (-f -)' ($mCons.Success -and $mCons.Value.Contains("('conta=' + `$conta)") -and $mCons.Value.Contains("'-f', '-'") -and $mCons.Value.Contains('-Entrada $sql'))
     Verificar 'consultar: -X, ON_ERROR_STOP e pager desligado' ($mCons.Success -and $mCons.Value.Contains("'-X'") -and $mCons.Value.Contains("'ON_ERROR_STOP=1'") -and $mCons.Value.Contains("'pager=off'"))
     Verificar 'consultar: PGPASSWORD so no ambiente' ($mCons.Success -and $mCons.Value.Contains("'PGPASSWORD' =") -and $mCons.Value -cnotmatch "'-W'")
+
+    Write-Host '== Shadow S5: provisionamento, relatorio e subir-backend -Shadow (offline) =='
+    $dig = ('ab12' * 16)
+    foreach ($par in @(@('provisionar-orcamento-shadow', 'create_shadow_budget', 'scripts.create_shadow_budget'), @('provisionar-conta-vencida-sintetica', 'create_shadow_synthetic_account', 'scripts.create_shadow_synthetic_account'))) {
+        $cmdSh = [string]$par[0]; $arqSh = [string]$par[1]; $modSh = [string]$par[2]
+        $r = Rodar-Script (@($cmdSh, '-Simular', '-SemSondagem') + $comuns)
+        Verificar ($cmdSh + ': aceito no ValidateSet (recusa por falta de -Pasta)') ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta' -and $r.Saida -notmatch 'ValidateSet') $r.Saida
+        $r = Rodar-Script (@($cmdSh, '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+        Verificar ($cmdSh + ' sem o .py no checkout: recusa') ($r.Codigo -ne 0 -and $r.Saida -match $arqSh) $r.Saida
+        Set-Content -LiteralPath (Join-Path $pastaBind ('backend\scripts\' + $arqSh + '.py')) -Value '' -Encoding ASCII
+        $r = Rodar-Script (@($cmdSh, '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+        $saidas[$cmdSh + '-simular'] = $r.Saida
+        Verificar ($cmdSh + ' -Simular: exit 0, modulo fixo, nada gravado') ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('-m ' + $modSh) -and $r.Saida.Contains('auneron_neon_synthetic')) $r.Saida
+        $r = Rodar-Script (@($cmdSh, '-Pasta', $pastaBind) + $comuns)
+        $saidas[$cmdSh + '-sem-confirmar'] = $r.Saida
+        Verificar ($cmdSh + ' sem -Confirmar: exit 0, mostra o que faria e nao grava') ($r.Codigo -eq 0 -and $r.Saida -match 'Nada foi gravado' -and $r.Saida -match '-Confirmar' -and $r.Saida.Contains('-m ' + $modSh)) $r.Saida
+        $r = Rodar-Script (@($cmdSh, '-Simular', '-SemSondagem', '-Pasta', $pastaBind, '-Modulo', 'os') + $comuns)
+        Verificar ($cmdSh + ': nenhum parametro escolhe o modulo') ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
+    }
+
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'shadow', '-Conta', '5', '-Simular') + $comuns)
+    Verificar 'shadow com -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'shadow', '-Simular') + $comuns)
+    $saidas['consultar-shadow-simular'] = $r.Saida
+    Verificar 'consultar shadow -Simular: exit 0, BEGIN READ ONLY, ROLLBACK e as tabelas do relatorio' ($r.Codigo -eq 0 -and $r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida.Contains('intelligence_budgets') -and $r.Saida.Contains('intelligence_model_calls') -and $r.Saida.Contains('authenticated_advisory_proposals') -and $r.Saida.Contains('approval_consumptions') -and $r.Saida.Contains('model_digest')) $r.Saida
+    $sqlSh = $script:SqlConsultaShadow
+    Verificar 'SQL shadow: nao usa variaveis do psql' ($sqlSh -notmatch '(?<!:):[A-Za-z_]')
+    Verificar 'SQL shadow: nao le payload de snapshot, senha nem email' ($sqlSh -notmatch '(?i)snapshot_payload|password|email|whatsapp')
+    Verificar 'SQL shadow: listas limitadas' ([regex]::Matches($sqlSh, '(?im)^LIMIT \d+;$').Count -ge 6)
+
+    # subir-backend: sem -Shadow nada muda; com -Shadow valida parametros e mostra o plano.
+    $r = Rodar-Script (@('subir-backend', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comuns)
+    Verificar 'subir-backend -Simular sem -Shadow: sem variaveis de shadow' ($r.Codigo -eq 0 -and $r.Saida -notmatch 'SHADOW' -and $r.Saida -notmatch 'INTELLIGENCE_MODE=shadow') $r.Saida
+    $r = Rodar-Script (@('subir-backend', '-Pasta', $pasta, '-DigestModelo', $dig) + $comuns)
+    Verificar '-DigestModelo sem -Shadow: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'so valem com -Shadow') $r.Saida
+    $r = Rodar-Script (@('status', '-SemSondagem', '-Shadow') + $comuns)
+    Verificar '-Shadow fora de subir-backend: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'so valem com subir-backend') $r.Saida
+    $r = Rodar-Script (@('subir-backend', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Shadow') + $comuns)
+    Verificar '-Shadow sem digest e orcamento: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'exige -DigestModelo') $r.Saida
+    $r = Rodar-Script (@('subir-backend', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Shadow', '-DigestModelo', 'zz', '-OrcamentoShadow', '7') + $comuns)
+    Verificar '-Shadow com digest invalido: recusa e nao mostra plano de subida' ($r.Codigo -ne 0 -and $r.Saida -match '64 caracteres' -and $r.Saida -notmatch 'Executaria') $r.Saida
+    $r = Rodar-Script (@('subir-backend', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Shadow', '-DigestModelo', $dig, '-OrcamentoShadow', '0') + $comuns)
+    Verificar '-OrcamentoShadow 0: recusa (ValidateRange)' ($r.Codigo -ne 0) $r.Saida
+    $r = Rodar-Script (@('subir-backend', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Shadow', '-DigestModelo', $dig, '-OrcamentoShadow', '7') + $comuns)
+    $saidas['subir-backend-shadow-simular'] = $r.Saida
+    Verificar 'subir-backend -Shadow -Simular: exit 0 e todas as variaveis do shadow' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('INTELLIGENCE_MODE=shadow') -and $r.Saida.Contains('OVERDUE_SHADOW_ENABLED=true') -and $r.Saida.Contains('OVERDUE_SHADOW_DATA_CLASSIFICATION=synthetic') -and $r.Saida.Contains('OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN=1') -and $r.Saida.Contains('OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID=7') -and $r.Saida.Contains('OVERDUE_SHADOW_MODEL_ID=qwen3:4b') -and $r.Saida.Contains('OVERDUE_SHADOW_MODEL_DIGEST=' + $dig) -and $r.Saida.Contains('INTELLIGENCE_CALL_TIMEOUT_SECONDS=120') -and $r.Saida.Contains('INTELLIGENCE_MAX_ATTEMPTS=1') -and $r.Saida.Contains('APP_ENV             : development')) $r.Saida
+
+    # Funcoes puras do pre-voo (dados falsos; nenhuma chamada ao Ollama).
+    Verificar 'digest: 64 hex aceito e normalizado' ((Normalizar-DigestModelo ('AB12' * 16)) -ceq $dig -and (Normalizar-DigestModelo ('sha256:' + $dig)) -ceq $dig)
+    Verificar 'digest: curto, nao hex e vazio recusados' ((Normalizar-DigestModelo 'abc') -eq '' -and (Normalizar-DigestModelo ('g' * 64)) -eq '' -and (Normalizar-DigestModelo '') -eq '' -and (Normalizar-DigestModelo ('a' * 65)) -eq '')
+    Verificar 'memoria: 14 GiB exatos passam; abaixo recusa' ((Test-MemoriaLivreSuficiente (14 * 1024 * 1024)) -and -not (Test-MemoriaLivreSuficiente ((14 * 1024 * 1024) - 1)) -and -not (Test-MemoriaLivreSuficiente 0))
+    $tagsOk = '{"models":[{"name":"llama3:8b","digest":"' + ('c' * 64) + '"},{"name":"qwen3:4b","digest":"' + $dig + '"}]}'
+    $av = Avaliar-TagsOllama $tagsOk 'qwen3:4b' $dig
+    Verificar 'tags: modelo presente com digest igual: ok' ($av.Codigo -eq 0 -and $av.DigestEncontrado -ceq $dig)
+    $av = Avaliar-TagsOllama $tagsOk 'qwen3:4b' ('f' * 64)
+    Verificar 'tags: digest diferente: codigo 8' ($av.Codigo -eq 8 -and $av.Motivo -match 'difere')
+    $av = Avaliar-TagsOllama '{"models":[{"name":"llama3:8b","digest":"x"}]}' 'qwen3:4b' $dig
+    Verificar 'tags: modelo ausente: codigo 7' ($av.Codigo -eq 7 -and $av.Motivo -match 'nao esta presente')
+    $av = Avaliar-TagsOllama 'isto nao e json' 'qwen3:4b' $dig
+    Verificar 'tags: resposta ilegivel: codigo 7' ($av.Codigo -eq 7)
+    $avSemDigest = Avaliar-TagsOllama '{"models":[{"name":"qwen3:4b"}]}' 'qwen3:4b' $dig
+    Verificar 'tags: modelo sem digest: recusado (codigo 8)' ($avSemDigest.Codigo -eq 8)
+    $ambSh = Montar-AmbienteShadow $dig 7
+    Verificar 'ambiente do shadow: exatamente as 9 variaveis esperadas, sem segredos' (($ambSh.Keys | Sort-Object) -join ',' -eq 'INTELLIGENCE_CALL_TIMEOUT_SECONDS,INTELLIGENCE_MAX_ATTEMPTS,INTELLIGENCE_MODE,OVERDUE_SHADOW_DATA_CLASSIFICATION,OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID,OVERDUE_SHADOW_ENABLED,OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN,OVERDUE_SHADOW_MODEL_DIGEST,OVERDUE_SHADOW_MODEL_ID') (($ambSh.Keys | Sort-Object) -join ',')
+    Verificar 'ambiente do shadow: timeout dentro do limite do config (<= 120) e tentativa unica' ([int]$ambSh['INTELLIGENCE_CALL_TIMEOUT_SECONDS'] -le 120 -and [int]$ambSh['INTELLIGENCE_MAX_ATTEMPTS'] -eq 1)
+    Verificar 'ambiente do shadow: APP_ENV padrao nao e production' ($script:ConfigPadrao['APP_ENV'] -ne 'production' -and $script:ConfigPadrao['INTELLIGENCE_MODE'] -eq 'off')
+
+    $codSh = [IO.File]::ReadAllText($alvoScript)
+    $mSub = [regex]::Match($codSh, '(?s)function Cmd-SubirBackend \{.*?\r?\n\}\r?\n')
+    Verificar 'subir-backend: so injeta o shadow dentro de if (Ctx.Shadow); padrao continua off' ($mSub.Success -and $mSub.Value.Contains('if ($script:Ctx.Shadow)') -and $mSub.Value.Contains('$extra = @{}'))
+    Verificar 'subir-backend -Shadow: pre-voo e recusa sem -Confirmar/-Simular vem antes de Iniciar-Servico' ($mSub.Success -and $mSub.Value.IndexOf('Verificar-PreVooShadow') -ge 0 -and $mSub.Value.IndexOf('Verificar-PreVooShadow') -lt $mSub.Value.IndexOf('Nada foi iniciado') -and $mSub.Value.IndexOf('Nada foi iniciado') -lt $mSub.Value.IndexOf('Iniciar-Servico') -and $mSub.Value.Contains('(-not $script:Ctx.Simular) -and (-not $script:Ctx.Confirmar)'))
+    $mPre = [regex]::Match($codSh, '(?s)function Get-JsonOllama \{.*?\r?\n\}\r?\n')
+    Verificar 'Ollama: so GET em URL loopback fixa (sem POST/inferencia)' ($mPre.Success -and $mPre.Value -notmatch '(?i)-Method|POST|generate|chat' -and $script:OllamaUrlVersao -eq 'http://127.0.0.1:11434/api/version' -and $script:OllamaUrlTags -eq 'http://127.0.0.1:11434/api/tags')
+    $mProvSh = [regex]::Match($codSh, '(?s)function Rodar-ProvisionamentoShadow \{.*?\r?\n\}\r?\n')
+    $posConfSh = if ($mProvSh.Success) { $mProvSh.Value.IndexOf('$script:Ctx.Confirmar') } else { -1 }
+    $posRunSh = if ($mProvSh.Success) { $mProvSh.Value.IndexOf('Invoke-Filho') } else { -1 }
+    Verificar 'provisionamento shadow: checagem de -Confirmar/-Simular antes de executar; ambiente do backend' ($posConfSh -ge 0 -and $posRunSh -gt $posConfSh -and $mProvSh.Value.Contains("Montar-Ambiente 'backend'") -and $mProvSh.Value.Contains("@('-m', `$Modulo)"))
+    $chSh = [regex]::Matches($codSh, 'Rodar-ProvisionamentoShadow\s+-Modulo\s+(\S+)\s+-Arquivo\s+(\S+)')
+    Verificar 'Rodar-ProvisionamentoShadow so e chamado com literais fixos' ($chSh.Count -eq 2 -and @($chSh | Where-Object { $_.Groups[1].Value -match "^'scripts\.create_shadow_(budget|synthetic_account)'$" -and $_.Groups[2].Value -match "^'create_shadow_(budget|synthetic_account)\.py'$" }).Count -eq 2) ([string]$chSh.Count)
+    $pyOrc = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_shadow_budget.py'))
+    $pyCta = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_shadow_synthetic_account.py'))
+    Verificar 'create_shadow_budget.py e create_shadow_synthetic_account.py: banco esperado fixo e sem DELETE' ($pyOrc.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyCta.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyOrc -notmatch '(?i)\.delete\(|\bDELETE\b\s+FROM' -and $pyCta -notmatch '(?i)\.delete\(|\bDELETE\b\s+FROM')
 
     Write-Host '== Varredura de vazamento =='
     foreach ($k in $saidas.Keys) {
