@@ -426,6 +426,7 @@ def test_l3_origin_does_not_consult_the_model(
     )
     db_session.add(account)
     db_session.commit()
+    account_id = account.id  # read before release() detaches it
 
     release(db_session)  # the trigger runs on its own connections
 
@@ -433,4 +434,4 @@ def test_l3_origin_does_not_consult_the_model(
 
     assert result.executions_succeeded == 1
     db_session.expire_all()
-    assert db_session.get(Account, account.id).status == "atrasado"
+    assert db_session.get(Account, account_id).status == "atrasado"
