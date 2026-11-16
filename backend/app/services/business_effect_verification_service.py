@@ -26,6 +26,18 @@ from app.models.skill import SkillVersion
 from app.repositories.business_effect_verification_repository import (
     BusinessEffectVerificationRepository,
 )
+from app.services.account_mark_overdue_execution_service import (
+    AccountMarkOverdueExecutionService,
+)
+from app.services.human_account_mark_overdue_execution_service import (
+    CONSUMER_ACTOR_TYPE as HUMAN_MARK_OVERDUE_CONSUMER_ACTOR_TYPE,
+)
+from app.services.human_account_mark_overdue_execution_service import (
+    CONSUMER_REFERENCE as HUMAN_MARK_OVERDUE_CONSUMER_REFERENCE,
+)
+from app.services.human_account_mark_overdue_execution_service import (
+    HumanAccountMarkOverdueExecutionService,
+)
 
 
 class BusinessEffectVerificationError(Exception):
@@ -38,10 +50,46 @@ class SkillEffectContract(NamedTuple):
 
 
 def _mark_overdue_event_key(approval_request_id: int) -> str:
-    return (
-        "account_event:effect:human_account_mark_overdue:"
-        f"approval:{approval_request_id}"
+    # Caminho humano (chave gravada por
+    # HumanAccountMarkOverdueExecutionService).
+    return "account_event:" + (
+        HumanAccountMarkOverdueExecutionService._receipt_key(
+            approval_request_id
+        )
     )
+
+
+def _agent_mark_overdue_event_key(
+    approval_request_id: int,
+) -> str:
+    # Caminho do agente (chave gravada por
+    # AccountMarkOverdueExecutionService).
+    return "account_event:" + (
+        AccountMarkOverdueExecutionService._receipt_key(
+            approval_request_id
+        )
+    )
+
+
+def _resolve_mark_overdue_event_key(
+    consumption: ApprovalConsumption,
+    approval_request_id: int,
+) -> str | None:
+    """
+    Escolhe a chave do AccountEvent de mark_overdue pela ORIGEM do
+    consumo. Retorna None quando a origem nao e reconhecida (nunca
+    adivinha).
+    """
+    if consumption.consumer_actor_type == "agent":
+        return _agent_mark_overdue_event_key(approval_request_id)
+    if (
+        consumption.consumer_actor_type
+        == HUMAN_MARK_OVERDUE_CONSUMER_ACTOR_TYPE
+        and consumption.consumer_reference
+        == HUMAN_MARK_OVERDUE_CONSUMER_REFERENCE
+    ):
+        return _mark_overdue_event_key(approval_request_id)
+    return None
 
 
 def _policy_mark_overdue_event_key(episode_scope_key: str) -> str:
@@ -224,20 +272,45 @@ class BusinessEffectVerificationService:
             )
 
         expected_status = contract.expected_status
-        event_key = contract.build_event_key(
-            request.id
-        )
         target_account_id = request.target_account_id
 
-        (
-            result,
-            account_status_observed,
-            account_event_id,
-        ) = self._evaluate_effect(
-            target_account_id=target_account_id,
-            expected_status=expected_status,
-            event_key=event_key,
-        )
+        if skill.skill_key == "account.mark_overdue":
+            resolved_key = _resolve_mark_overdue_event_key(
+                consumption, request.id
+            )
+        else:
+            resolved_key = contract.build_event_key(request.id)
+
+        if resolved_key is None:
+            # Origem de consumo desconhecida: nao adivinhar a chave.
+            # A coluna e NOT NULL/nao-vazia, entao grava-se um marcador
+            # explicito (nunca uma chave real de AccountEvent).
+            event_key = (
+                "unresolved:mark_overdue_origin:"
+                f"{consumption.consumer_actor_type}:"
+                f"{consumption.consumer_reference}"
+            )[:255]
+            result = "unverifiable"
+            account_status_observed = None
+            account_event_id = None
+            account = (
+                self.db.get(Account, target_account_id)
+                if target_account_id is not None
+                else None
+            )
+            if account is not None:
+                account_status_observed = account.status
+        else:
+            event_key = resolved_key
+            (
+                result,
+                account_status_observed,
+                account_event_id,
+            ) = self._evaluate_effect(
+                target_account_id=target_account_id,
+                expected_status=expected_status,
+                event_key=event_key,
+            )
 
         checked_at = (
             None if result == "pending" else _utc_now()
