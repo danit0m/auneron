@@ -149,8 +149,13 @@ class IntelligenceModelCall(Base):
     Somente digests (SHA-256) do pedido/resposta sao persistidos;
     nunca o conteudo. data_classification e restrito a 'synthetic'
     por CHECK (dados reais exigem migracao futura aprovada). provider
-    e restrito a 'fake' por CHECK (adaptadores reais exigem migracao
-    futura aprovada).
+    e restrito a 'fake' e 'ollama' (runtime local, S1/S2) por CHECK;
+    outros adaptadores exigem migracao futura aprovada.
+
+    S2: model_digest (64 hex minusculos, sem prefixo "sha256:"),
+    provider_reported_model, runtime_version e latency_ms identificam
+    a chamada ao modelo local; NULL para o fake e para chamadas que
+    falham antes da resposta.
 
     objective_id/plan_id nao tem FK: as tabelas alvo ainda nao
     existem.
@@ -171,7 +176,7 @@ class IntelligenceModelCall(Base):
             name="ck_intelligence_model_calls_synthetic_only",
         ),
         CheckConstraint(
-            "provider IN ('fake')",
+            "provider IN ('fake', 'ollama')",
             name="ck_intelligence_model_calls_provider_valid",
         ),
         CheckConstraint(
@@ -209,6 +214,29 @@ class IntelligenceModelCall(Base):
             "AND (response_digest IS NULL "
             "OR response_digest ~ '^[0-9a-f]{64}$')",
             name="ck_intelligence_model_calls_digest_format",
+        ),
+        CheckConstraint(
+            "(model_digest IS NULL "
+            "OR model_digest ~ '^[0-9a-f]{64}$') "
+            "AND (latency_ms IS NULL OR latency_ms >= 0) "
+            "AND (runtime_version IS NULL "
+            "OR char_length(btrim(runtime_version)) >= 1) "
+            "AND (provider_reported_model IS NULL "
+            "OR char_length(btrim(provider_reported_model)) >= 1)",
+            name=(
+                "ck_intelligence_model_calls_"
+                "model_identification_format"
+            ),
+        ),
+        CheckConstraint(
+            "NOT (provider = 'ollama' AND state = 'settled' "
+            "AND reconciled_at IS NULL) "
+            "OR (model_digest IS NOT NULL "
+            "AND runtime_version IS NOT NULL)",
+            name=(
+                "ck_intelligence_model_calls_"
+                "ollama_settled_identified"
+            ),
         ),
         CheckConstraint(
             "(state = 'reserved' AND sent_at IS NULL "
@@ -353,6 +381,11 @@ class IntelligenceModelCall(Base):
     error_class = Column(String(64), nullable=True)
     request_digest = Column(String(64), nullable=True)
     response_digest = Column(String(64), nullable=True)
+
+    model_digest = Column(String(64), nullable=True)
+    provider_reported_model = Column(String(128), nullable=True)
+    runtime_version = Column(String(64), nullable=True)
+    latency_ms = Column(Integer, nullable=True)
 
     reserved_at = Column(
         DateTime(timezone=True),
