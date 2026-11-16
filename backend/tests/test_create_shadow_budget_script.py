@@ -184,7 +184,15 @@ def test_budget_admits_one_call_and_refuses_the_second(db_session):
     ledger.mark_in_flight(first, timeout_seconds=30)
     # Liquida com consumo real plausivel (entrada + saida): nao devolve o
     # limite ao saldo, pois consumo liquidado (S) permanece.
-    ledger.settle(first, actual_micro=0, actual_tokens=300)
+    ledger.settle(
+        first,
+        actual_micro=0,
+        actual_tokens=300,
+        provider_reported_model="qwen3:4b",
+        model_digest="ab12" * 16,
+        runtime_version="0.0.0-test",
+        latency_ms=1234,
+    )
 
     with pytest.raises(GatewayError) as after_settle:
         _reserve(ledger, budget_id, "s5-test:3", real)
