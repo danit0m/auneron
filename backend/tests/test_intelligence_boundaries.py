@@ -63,7 +63,7 @@ ALLOWED_ENV_KEYS = {"APP_ENV"}
 # modules (stdlib HTTP client; the adapter itself restricts every
 # connection to loopback hosts/peers). Any other file, or any other
 # import in this file, is still a violation. Nothing else in app/ may
-# import the intelligence layer (that is S3, not authorised).
+# import the intelligence layer except the single S3 exception below.
 NETWORK_EXCEPTION = {
     "gateway/adapters/ollama.py": frozenset({"http.client"}),
 }
@@ -74,7 +74,15 @@ OLLAMA_NAME_FILES = {
     "gateway/profiles.py",
 }
 
+# S3 -- the ONLY application module outside app/intelligence allowed to
+# import the intelligence layer, approved by the director: the shadow
+# observer of the overdue detection agent, by exact path. It may only
+# observe (see tests/test_overdue_detection_shadow.py for the AST proofs
+# that it imports no execution service and writes no Account/Approval).
+SHADOW_OBSERVER_EXCEPTION = "app/services/overdue_detection_shadow.py"
+
 APP_FILES_ALLOWED_TO_MENTION_INTELLIGENCE = {
+    SHADOW_OBSERVER_EXCEPTION,
     "app/core/config.py",
     "app/core/observability.py",
     "app/models/__init__.py",
@@ -312,6 +320,7 @@ def test_outside_intelligence_nothing_imports_the_ollama_adapter() -> None:
         if not path.relative_to(BACKEND).as_posix().startswith(
             "app/intelligence/"
         )
+        and path.relative_to(BACKEND).as_posix() != SHADOW_OBSERVER_EXCEPTION
         and pattern.search(path.read_text(encoding="utf-8"))
     ]
     inside = [
