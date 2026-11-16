@@ -582,6 +582,167 @@ def test_missing_account_event_yields_pending_then_verified(
 # --- contradicted -------------------------------------------------------
 
 
+def _as_agent_execution(
+    db_session: Session,
+    account: Account,
+    consumption_id: int,
+    *,
+    keep_event: bool = True,
+) -> int:
+    """
+    Converte uma execucao humana real na forma gravada pelo caminho do
+    agente (AccountMarkOverdueExecutionService): consumo com
+    consumer_actor_type="agent" e AccountEvent com a chave do agente.
+    Devolve o approval_request_id.
+    """
+    consumption = db_session.get(
+        ApprovalConsumption, consumption_id
+    )
+    consumption.consumer_actor_type = "agent"
+    consumption.consumer_reference = "agent:OverdueDetectionAgent"
+    approval_request_id = consumption.approval_request_id
+    event_row = _only_account_event(db_session, account.id)
+    if keep_event:
+        event_row.idempotency_key = (
+            "account_event:effect:account.mark_overdue:"
+            f"approval:{approval_request_id}"
+        )
+    else:
+        db_session.delete(event_row)
+    db_session.commit()
+    return approval_request_id
+
+
+def test_agent_mark_overdue_effect_is_verified(
+    client: TestClient, db_session: Session
+) -> None:
+    account, consumption_id = _execute_mark_overdue(
+        client, db_session, email="overdue.agent@example.com"
+    )
+    request_id = _as_agent_execution(
+        db_session, account, consumption_id
+    )
+
+    outcome = BusinessEffectVerificationService(
+        db_session
+    ).verify(consumption_id)
+
+    assert outcome.verification.result == "verified"
+    assert outcome.verification.account_event_id is not None
+    assert outcome.verification.account_event_key_searched == (
+        "account_event:effect:account.mark_overdue:"
+        f"approval:{request_id}"
+    )
+
+
+def test_human_mark_overdue_searched_key_is_human_key(
+    client: TestClient, db_session: Session
+) -> None:
+    account, consumption_id = _execute_mark_overdue(
+        client, db_session, email="overdue.human.key@example.com"
+    )
+    request_id = db_session.get(
+        ApprovalConsumption, consumption_id
+    ).approval_request_id
+
+    outcome = BusinessEffectVerificationService(
+        db_session
+    ).verify(consumption_id)
+
+    assert outcome.verification.result == "verified"
+    assert outcome.verification.account_event_key_searched == (
+        "account_event:effect:human_account_mark_overdue:"
+        f"approval:{request_id}"
+    )
+
+
+def test_agent_mark_overdue_missing_event_is_pending(
+    client: TestClient, db_session: Session
+) -> None:
+    account, consumption_id = _execute_mark_overdue(
+        client, db_session, email="overdue.agent.pending@example.com"
+    )
+    request_id = _as_agent_execution(
+        db_session, account, consumption_id, keep_event=False
+    )
+
+    outcome = BusinessEffectVerificationService(
+        db_session
+    ).verify(consumption_id)
+
+    assert outcome.verification.result == "pending"
+    assert outcome.verification.account_event_key_searched == (
+        "account_event:effect:account.mark_overdue:"
+        f"approval:{request_id}"
+    )
+
+
+def test_unknown_mark_overdue_origin_is_unverifiable(
+    client: TestClient, db_session: Session
+) -> None:
+    account, consumption_id = _execute_mark_overdue(
+        client, db_session, email="overdue.unknown@example.com"
+    )
+    consumption = db_session.get(
+        ApprovalConsumption, consumption_id
+    )
+    consumption.consumer_actor_type = "system"
+    consumption.consumer_reference = "system:something_else"
+    db_session.commit()
+
+    outcome = BusinessEffectVerificationService(
+        db_session
+    ).verify(consumption_id)
+
+    assert outcome.verification.result == "unverifiable"
+    assert outcome.verification.account_event_id is None
+    assert outcome.verification.checked_at is not None
+    assert outcome.verification.account_event_key_searched.startswith(
+        "unresolved:mark_overdue_origin:"
+    )
+
+
+def test_preexisting_pending_with_old_key_becomes_verified(
+    client: TestClient, db_session: Session
+) -> None:
+    account, consumption_id = _execute_mark_overdue(
+        client, db_session, email="overdue.agent.legacy@example.com"
+    )
+    request_id = _as_agent_execution(
+        db_session, account, consumption_id
+    )
+    old_key = (
+        "account_event:effect:human_account_mark_overdue:"
+        f"approval:{request_id}"
+    )
+    legacy = BusinessEffectVerification(
+        approval_consumption_id=consumption_id,
+        skill_key="account.mark_overdue",
+        target_account_id=account.id,
+        expected_status="atrasado",
+        account_event_id=None,
+        account_event_key_searched=old_key,
+        account_status_observed="atrasado",
+        result="pending",
+        checked_at=None,
+    )
+    db_session.add(legacy)
+    db_session.commit()
+    legacy_id = legacy.id
+
+    outcome = BusinessEffectVerificationService(
+        db_session
+    ).verify(consumption_id)
+
+    assert outcome.duplicate is False
+    assert outcome.verification.id == legacy_id
+    assert outcome.verification.result == "verified"
+    assert outcome.verification.account_event_key_searched == (
+        "account_event:effect:account.mark_overdue:"
+        f"approval:{request_id}"
+    )
+
+
 def test_account_status_diverges_yields_contradicted(
     client: TestClient, db_session: Session
 ) -> None:
