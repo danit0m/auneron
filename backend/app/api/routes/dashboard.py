@@ -187,6 +187,10 @@ def governed_operations_summary(
         eligible_accounts_identified=result.eligible_accounts_identified,
         autonomous_dispositions=result.autonomous_dispositions,
         human_governed_dispositions=result.human_governed_dispositions,
+        manual_human_dispositions=result.manual_human_dispositions,
+        agent_initiated_human_approved_dispositions=(
+            result.agent_initiated_human_approved_dispositions
+        ),
         autonomous_disposition_rate=result.autonomous_disposition_rate,
         autonomous_effect_verification=(
             AutonomousEffectVerificationSummary(

@@ -65,6 +65,8 @@ export interface GovernedOperationsSummary {
   eligible_accounts_identified: number;
   autonomous_dispositions: number;
   human_governed_dispositions: number;
+  manual_human_dispositions: number;
+  agent_initiated_human_approved_dispositions: number;
   autonomous_disposition_rate: number | null;
   autonomous_effect_verification: AutonomousEffectVerificationSummary;
   pending_overdue_accounts_now: number;

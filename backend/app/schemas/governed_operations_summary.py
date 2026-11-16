@@ -29,6 +29,8 @@ class GovernedOperationsSummaryResponse(BaseModel):
     eligible_accounts_identified: int
     autonomous_dispositions: int
     human_governed_dispositions: int
+    manual_human_dispositions: int
+    agent_initiated_human_approved_dispositions: int
     autonomous_disposition_rate: float | None
     autonomous_effect_verification: AutonomousEffectVerificationSummary
     pending_overdue_accounts_now: int
