@@ -31,6 +31,7 @@ dropped, call held as unknown).
 import http.client
 import ipaddress
 import json
+import re
 import time
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -61,6 +62,7 @@ VERSION_PATH: Final[str] = "/api/version"
 MAX_BODY_BYTES: Final[int] = 4_000_000
 IDENTIFICATION_TIMEOUT_CAP_S: Final[float] = 10.0
 _READ_SLICE_BYTES: Final[int] = 65_536
+_DIGEST_RE: Final = re.compile(r"[0-9a-f]{64}")
 
 # (method, path, body or None, timeout_s) -> (http_status, body_bytes)
 # Raises TimeoutError on deadline, OSError on connection failure.
@@ -205,6 +207,13 @@ class OllamaProvider(ProviderAdapter):
 
             if not model_id or normalized is None:
                 raise ValueError("Approved digest must be non-empty.")
+
+            # S2: the ledger stores exactly 64 lowercase hex (CHECK).
+            if _DIGEST_RE.fullmatch(normalized) is None:
+                raise ValueError(
+                    "Approved digest must be 64 lowercase hex "
+                    "characters."
+                )
 
             self._approved[model_id] = normalized
 

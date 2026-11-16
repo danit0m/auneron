@@ -608,6 +608,10 @@ class Gateway:
                 actual_micro=actual_micro,
                 actual_tokens=actual_tokens,
                 response_digest=response_digest,
+                provider_reported_model=response.reported_model,
+                model_digest=response.model_digest,
+                runtime_version=response.runtime_version,
+                latency_ms=response.latency_ms,
             )
             final_state = "settled"
         except GatewayError as error:
@@ -624,6 +628,10 @@ class Gateway:
                     f"late_response:{response.request_id or 'n/a'}"
                 ),
                 reconciled_by_reference="system:gateway",
+                provider_reported_model=response.reported_model,
+                model_digest=response.model_digest,
+                runtime_version=response.runtime_version,
+                latency_ms=response.latency_ms,
             )
             final_state = "settled"
 

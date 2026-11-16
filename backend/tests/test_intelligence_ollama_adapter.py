@@ -380,6 +380,19 @@ def test_adapter_requires_a_nonempty_approved_digest() -> None:
         OllamaProvider(approved_digests={MODEL: " "})
 
 
+@pytest.mark.parametrize(
+    "digest",
+    ["a" * 63, "a" * 65, "g" * 64, "not-a-digest", "sha256:" + "a" * 63],
+)
+def test_approved_digest_must_be_64_hex_after_normalization(digest) -> None:
+    with pytest.raises(ValueError):
+        OllamaProvider(approved_digests={MODEL: digest})
+
+
+def test_approved_digest_with_prefix_and_upper_case_is_accepted() -> None:
+    OllamaProvider(approved_digests={MODEL: "SHA256:" + "AB" * 32})
+
+
 def test_injected_transport_is_used_instead_of_the_network() -> None:
     calls = []
 

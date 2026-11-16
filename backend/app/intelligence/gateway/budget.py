@@ -527,6 +527,10 @@ class BudgetLedger:
         actual_micro: int,
         actual_tokens: int,
         response_digest: str | None = None,
+        provider_reported_model: str | None = None,
+        model_digest: str | None = None,
+        runtime_version: str | None = None,
+        latency_ms: int | None = None,
     ) -> None:
         if actual_micro < 0 or actual_tokens < 0:
             raise GatewayError(
@@ -562,7 +566,34 @@ class BudgetLedger:
             call.actual_tokens = actual_tokens
             call.settled_at = now
             call.response_digest = response_digest
+            self._record_identification(
+                call,
+                provider_reported_model,
+                model_digest,
+                runtime_version,
+                latency_ms,
+            )
             repo.db.flush()
+
+    @staticmethod
+    def _record_identification(
+        call: IntelligenceModelCall,
+        provider_reported_model: str | None,
+        model_digest: str | None,
+        runtime_version: str | None,
+        latency_ms: int | None,
+    ) -> None:
+        """S2: exact local-model identification (all optional)."""
+        call.provider_reported_model = (
+            provider_reported_model[:128]
+            if provider_reported_model
+            else None
+        )
+        call.model_digest = model_digest or None
+        call.runtime_version = (
+            runtime_version[:64] if runtime_version else None
+        )
+        call.latency_ms = latency_ms
 
     # ------------------------------------------------------------------
     # T4  in_flight -> unknown
@@ -719,6 +750,10 @@ class BudgetLedger:
         actual_tokens: int,
         evidence_ref: str,
         reconciled_by_reference: str,
+        provider_reported_model: str | None = None,
+        model_digest: str | None = None,
+        runtime_version: str | None = None,
+        latency_ms: int | None = None,
     ) -> None:
         self._require_reconciliation_evidence(
             evidence_ref, reconciled_by_reference
@@ -757,6 +792,13 @@ class BudgetLedger:
             call.actual_micro = actual_micro
             call.actual_tokens = actual_tokens
             call.settled_at = now
+            self._record_identification(
+                call,
+                provider_reported_model,
+                model_digest,
+                runtime_version,
+                latency_ms,
+            )
             call.evidence_ref = evidence_ref[:256]
             call.reconciled_by_reference = reconciled_by_reference[:128]
             call.reconciled_at = now
