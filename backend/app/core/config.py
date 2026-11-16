@@ -448,6 +448,39 @@ class Settings(BaseSettings):
         le=3600,
     )
 
+    # S3: modo shadow do agente de vencidos (excecao de isolamento
+    # limitada). Desligado por padrao. Ativar exige
+    # INTELLIGENCE_MODE=shadow, classificacao explicita "synthetic",
+    # orcamento de implantacao e digest aprovado do modelo local; e
+    # recusado em production. Nunca dado real.
+    overdue_shadow_enabled: bool = Field(
+        default=False,
+        validation_alias="OVERDUE_SHADOW_ENABLED",
+    )
+    overdue_shadow_data_classification: str = Field(
+        default="",
+        validation_alias="OVERDUE_SHADOW_DATA_CLASSIFICATION",
+    )
+    overdue_shadow_max_accounts_per_run: int = Field(
+        default=3,
+        validation_alias="OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN",
+        ge=1,
+        le=20,
+    )
+    overdue_shadow_deployment_budget_id: int | None = Field(
+        default=None,
+        validation_alias="OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID",
+        ge=1,
+    )
+    overdue_shadow_model_id: str = Field(
+        default="qwen3:4b",
+        validation_alias="OVERDUE_SHADOW_MODEL_ID",
+    )
+    overdue_shadow_model_digest: str = Field(
+        default="",
+        validation_alias="OVERDUE_SHADOW_MODEL_DIGEST",
+    )
+
     log_level: Literal[
         "DEBUG",
         "INFO",
@@ -711,6 +744,53 @@ class Settings(BaseSettings):
             raise ValueError(
                 "O banco auneron_test exige APP_ENV=test."
             )
+
+        if self.overdue_shadow_enabled:
+            if self.environment == "production":
+                raise ValueError(
+                    "OVERDUE_SHADOW_ENABLED deve ser false "
+                    "em production."
+                )
+
+            if self.intelligence_mode != "shadow":
+                raise ValueError(
+                    "OVERDUE_SHADOW_ENABLED exige "
+                    "INTELLIGENCE_MODE=shadow."
+                )
+
+            if (
+                self.overdue_shadow_data_classification.strip().lower()
+                != "synthetic"
+            ):
+                raise ValueError(
+                    "OVERDUE_SHADOW_ENABLED exige "
+                    "OVERDUE_SHADOW_DATA_CLASSIFICATION=synthetic "
+                    "explicito."
+                )
+
+            if self.overdue_shadow_deployment_budget_id is None:
+                raise ValueError(
+                    "OVERDUE_SHADOW_ENABLED exige "
+                    "OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID."
+                )
+
+            if not self.overdue_shadow_model_id.strip():
+                raise ValueError(
+                    "OVERDUE_SHADOW_MODEL_ID nao pode ser vazio."
+                )
+
+            digest = self.overdue_shadow_model_digest.strip().lower()
+
+            if digest.startswith("sha256:"):
+                digest = digest[len("sha256:"):]
+
+            if len(digest) != 64 or any(
+                c not in "0123456789abcdef" for c in digest
+            ):
+                raise ValueError(
+                    "OVERDUE_SHADOW_MODEL_DIGEST deve ter 64 "
+                    "caracteres hexadecimais minusculos."
+                )
 
         # MVP-FIN-IMPORT-01: o flag de confirmacao e exclusivo do sandbox
         # de teste; fora de APP_ENV=test o startup falha, nunca ignora.

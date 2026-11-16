@@ -11,6 +11,44 @@ from app.services.overdue_detection_service import OverdueDetectionService
 
 logger = logging.getLogger("auneron.overdue_detection")
 
+_shadow_observer = None
+_shadow_observer_built = False
+
+
+def _resolve_shadow_observer():
+    """
+    S3: the shadow observer is built only when the dedicated flag is on
+    (default off => None => behavior identical to before). Any build
+    failure degrades to "no observer"; it never blocks detection.
+    The module is imported lazily so the intelligence layer is not even
+    loaded while the flag is off.
+    """
+    global _shadow_observer, _shadow_observer_built
+
+    if not settings.overdue_shadow_enabled:
+        return None
+
+    if not _shadow_observer_built:
+        _shadow_observer_built = True
+
+        try:
+            from app.services.overdue_detection_shadow import (
+                build_overdue_shadow_observer,
+            )
+
+            _shadow_observer = build_overdue_shadow_observer(settings)
+        except Exception as error:
+            _shadow_observer = None
+            logger.warning(
+                "overdue_shadow_build_failed",
+                extra={
+                    "event": "overdue.shadow.build_failed",
+                    "error_type": type(error).__name__,
+                },
+            )
+
+    return _shadow_observer
+
 
 def run_overdue_detection() -> OverdueDetectionRunResult:
     """
@@ -21,7 +59,9 @@ def run_overdue_detection() -> OverdueDetectionRunResult:
     but never mutates Account.status or executes the mutating Skill directly.
     """
     with SessionLocal() as db:
-        result = OverdueDetectionService(db).run_scan()
+        result = OverdueDetectionService(
+            db, shadow_observer=_resolve_shadow_observer()
+        ).run_scan()
         logger.info(
             "overdue_detection_completed",
             extra={

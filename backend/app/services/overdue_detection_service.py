@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import date
 from datetime import datetime
 from datetime import timezone
+from typing import Protocol
 
 from sqlalchemy.orm import Session
 
@@ -82,6 +85,34 @@ class OverdueDetectionRunResult:
         }
 
 
+@dataclass(frozen=True)
+class OverdueShadowObservation:
+    """
+    Plain, immutable, synthetic-safe snapshot handed to the optional
+    shadow observer AFTER the deterministic decision. It carries no
+    ORM object, no customer name and no contact data, so the observer
+    can neither reach the detection session nor leak personal data.
+    """
+
+    account_id: int
+    approval_request_id: int
+    due_date: str
+    status: str
+    business_date: str
+    deterministic_decision: str = "mark_overdue"
+
+
+class OverdueShadowObserver(Protocol):
+    """
+    Optional S3 observer. It returns nothing to the detection flow: its
+    output never reaches the proposal, the Approval or the counters.
+    """
+
+    def observe_run(
+        self, observations: Sequence[OverdueShadowObservation]
+    ) -> None: ...
+
+
 @dataclass
 class _RunCounters:
     proposals_created: int = 0
@@ -91,6 +122,10 @@ class _RunCounters:
     attempts_advanced: int = 0
     failures: int = 0
     legacy_active_blocked: int = 0
+    shadow_pending: list[OverdueShadowObservation] = field(
+        default_factory=list
+    )
+    business_date: str = ""
 
 
 class OverdueDetectionService:
@@ -103,8 +138,17 @@ class OverdueDetectionService:
     governed execution path.
     """
 
-    def __init__(self, db: Session) -> None:
+    # Class-level default keeps instances built without __init__ (stub
+    # tests) identical to "no observer".
+    shadow_observer: OverdueShadowObserver | None = None
+
+    def __init__(
+        self,
+        db: Session,
+        shadow_observer: OverdueShadowObserver | None = None,
+    ) -> None:
         self.db = db
+        self.shadow_observer = shadow_observer
         self.proposals = AuthenticatedAdvisoryProposalRepository(db)
         self.approvals = ApprovalRepository(db)
         self.approval_service = ApprovalService(db)
@@ -160,9 +204,10 @@ class OverdueDetectionService:
             .all()
         )
 
-        counters = _RunCounters()
+        counters = _RunCounters(business_date=effective_today.isoformat())
 
         for account in overdue_accounts:
+            shadow_mark = len(counters.shadow_pending)
             # Capture before rollback: attributes expire afterwards.
             failed_account_id = getattr(account, "id", None)
             failed_due_date = str(getattr(account, "vencimento", None))
@@ -175,6 +220,8 @@ class OverdueDetectionService:
                 )
             except Exception as exc:
                 self.db.rollback()
+                # A failed account is not an observed decision.
+                del counters.shadow_pending[shadow_mark:]
                 counters.failures += 1
                 logging.getLogger("auneron.overdue_detection").warning(
                     "overdue_detection_account_failed",
@@ -187,6 +234,10 @@ class OverdueDetectionService:
                     },
                 )
 
+        # Counters are final; shadow observation (if any) runs after
+        # the deterministic work and can no longer influence it.
+        self._run_shadow_observer(counters.shadow_pending)
+
         return OverdueDetectionRunResult(
             accounts_checked=len(overdue_accounts),
             proposals_created=counters.proposals_created,
@@ -197,6 +248,37 @@ class OverdueDetectionService:
             failures=counters.failures,
             legacy_active_blocked=counters.legacy_active_blocked,
         )
+
+    def _run_shadow_observer(
+        self, pending: list[OverdueShadowObservation]
+    ) -> None:
+        """
+        S3 exception hook. Total try/except: nothing the observer does
+        or raises can alter the scan. The detection session is released
+        first (when it holds no pending write) so no detection
+        transaction is open while a model call is in flight; the
+        observer uses its own sessions for the ledger.
+        """
+        observer = self.shadow_observer
+
+        if observer is None or not pending:
+            return
+
+        try:
+            if not (self.db.new or self.db.dirty or self.db.deleted):
+                self.db.rollback()
+            observer.observe_run(tuple(pending))
+        except Exception as exc:
+            try:
+                logging.getLogger("auneron.overdue_detection").warning(
+                    "overdue_shadow_observer_failed",
+                    extra={
+                        "event": "overdue.shadow.observer_failed",
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            except Exception:
+                pass
 
     def _process_account(
         self,
@@ -453,6 +535,17 @@ class OverdueDetectionService:
             counters.approvals_reused += 1
         else:
             counters.approvals_requested += 1
+
+        # Plain values only; consumed after the scan. Never read back.
+        counters.shadow_pending.append(
+            OverdueShadowObservation(
+                account_id=account.id,
+                approval_request_id=result.approval_request_id,
+                due_date=str(account.vencimento),
+                status=str(account.status),
+                business_date=counters.business_date,
+            )
+        )
 
     def _validate_plan(self, plan) -> AdvisorySkillBinding:
         mutating: list[AdvisorySkillBinding] = []
