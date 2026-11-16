@@ -58,6 +58,22 @@ IMPORTS_GATEWAY = re.compile(
 FORBIDDEN_CALLS = {"eval", "exec", "__import__", "compile", "open"}
 ALLOWED_ENV_KEYS = {"APP_ENV"}
 
+# S1 -- the ONLY network exception in app/intelligence, approved by the
+# director: one module, by exact path, may import exactly these
+# modules (stdlib HTTP client; the adapter itself restricts every
+# connection to loopback hosts/peers). Any other file, or any other
+# import in this file, is still a violation. Nothing else in app/ may
+# import the intelligence layer (that is S3, not authorised).
+NETWORK_EXCEPTION = {
+    "gateway/adapters/ollama.py": frozenset({"http.client"}),
+}
+# Files that may NAME the local provider "ollama". Paid provider names
+# (openai/anthropic) and every credential word stay forbidden everywhere.
+OLLAMA_NAME_FILES = {
+    "gateway/adapters/ollama.py",
+    "gateway/profiles.py",
+}
+
 APP_FILES_ALLOWED_TO_MENTION_INTELLIGENCE = {
     "app/core/config.py",
     "app/core/observability.py",
@@ -71,8 +87,13 @@ def python_files(root: Path):
     return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
 
 
-def scan_source(source: str) -> list[str]:
-    """Returns violations found in a module's source."""
+def scan_source(
+    source: str, allowed_imports: frozenset[str] = frozenset()
+) -> list[str]:
+    """
+    Returns violations found in a module's source. allowed_imports is
+    the nominal per-file exception (exact module names) and nothing else.
+    """
     problems: list[str] = []
     tree = ast.parse(source)
 
@@ -85,6 +106,9 @@ def scan_source(source: str) -> list[str]:
             names = []
 
         for name in names:
+            if name in allowed_imports:
+                continue
+
             if name.split(".")[0] in FORBIDDEN_IMPORT_ROOTS:
                 problems.append(f"forbidden import {name}")
 
@@ -149,6 +173,7 @@ GATEWAY_FILES = [
     "gateway/adapters/__init__.py",
     "gateway/adapters/base.py",
     "gateway/adapters/fake.py",
+    "gateway/adapters/ollama.py",
     "gateway/budget.py",
     "gateway/circuit_breaker.py",
     "gateway/concurrency.py",
@@ -186,11 +211,14 @@ def test_gateway_modules_import_nothing_that_can_reach_the_network() -> None:
     files = python_files(GATEWAY_DIR)
     assert sorted(p.relative_to(GATEWAY_DIR).as_posix() for p in files) == sorted(
         ["__init__.py"] + GATEWAY_FILES + PLANNING_FILES + PROPOSAL_FILES
-    )  # exactly the approved file sets; no real adapter module exists
+    )  # exactly the approved file sets; the only real adapter is ollama
 
     violations = {
         str(path.relative_to(BACKEND)): scan_source(
-            path.read_text(encoding="utf-8")
+            path.read_text(encoding="utf-8"),
+            NETWORK_EXCEPTION.get(
+                path.relative_to(GATEWAY_DIR).as_posix(), frozenset()
+            ),
         )
         for path in files
     }
@@ -227,6 +255,77 @@ def test_sensitivity_scanner_flags_synthetic_violations(snippet, expected) -> No
     assert expected in scan_source(snippet)
 
 
+def test_network_exception_is_nominal_exact_and_limited() -> None:
+    assert NETWORK_EXCEPTION == {
+        "gateway/adapters/ollama.py": frozenset({"http.client"})
+    }
+    assert OLLAMA_NAME_FILES == {
+        "gateway/adapters/ollama.py",
+        "gateway/profiles.py",
+    }
+    exception = NETWORK_EXCEPTION["gateway/adapters/ollama.py"]
+
+    # Allowed only for the exact module name, only in that file.
+    assert scan_source("import http.client", exception) == []
+    assert scan_source("import http.client") != []
+
+    for snippet in (
+        "import socket",
+        "import urllib.request",
+        "import urllib.parse",
+        "import ssl",
+        "import requests",
+        "import httpx",
+        "from http import client",
+        "from http.server import HTTPServer",
+        "import subprocess",
+    ):
+        assert scan_source(snippet, exception) != [], snippet
+
+
+def test_only_the_named_module_uses_http_client() -> None:
+    users = []
+
+    for path in python_files(GATEWAY_DIR):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+
+            if any(
+                name.split(".")[0] in {"http", "socket", "urllib", "ssl"}
+                for name in names
+            ):
+                users.append(path.relative_to(GATEWAY_DIR).as_posix())
+
+    assert sorted(set(users)) == ["gateway/adapters/ollama.py"]
+
+
+def test_outside_intelligence_nothing_imports_the_ollama_adapter() -> None:
+    pattern = re.compile(r"adapters\.ollama|adapters\s+import\s+ollama")
+    offenders = [
+        path.relative_to(BACKEND).as_posix()
+        for path in python_files(APP)
+        if not path.relative_to(BACKEND).as_posix().startswith(
+            "app/intelligence/"
+        )
+        and pattern.search(path.read_text(encoding="utf-8"))
+    ]
+    inside = [
+        path.relative_to(GATEWAY_DIR).as_posix()
+        for path in python_files(GATEWAY_DIR)
+        if path.relative_to(GATEWAY_DIR).as_posix()
+        != "gateway/adapters/ollama.py"
+        and pattern.search(path.read_text(encoding="utf-8"))
+    ]
+
+    assert offenders == []
+    assert inside == []  # the adapter is injected, never auto-imported
+
+
 def test_scanner_allows_the_single_sanctioned_environment_read() -> None:
     assert scan_source("import os\nos.environ.get('APP_ENV', '')") == []
 
@@ -257,8 +356,12 @@ def test_no_credential_or_provider_names_are_referenced_by_the_gateway() -> None
             path.read_text(encoding="utf-8").splitlines(), 1
         ):
             code = line.split("#", 1)[0]
+            found = {m.group(0).lower() for m in pattern.finditer(code)}
 
-            if pattern.search(code):
+            if path.relative_to(GATEWAY_DIR).as_posix() in OLLAMA_NAME_FILES:
+                found.discard("ollama")
+
+            if found:
                 hits.append(f"{path.name}:{number}: {line.strip()}")
 
     assert hits == []

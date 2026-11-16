@@ -68,6 +68,17 @@ class ProviderNotSentError(ProviderError):
         self.evidence = evidence
 
 
+class ProviderModelNotApprovedError(ProviderNotSentError):
+    """
+    Model identity check failed BEFORE the prompt was transmitted
+    (unknown model, digest differs from the approved one, version
+    unreadable). Nothing of the request reached the model: released.
+    """
+
+    def __init__(self, reason: str = "model_not_approved"):
+        super().__init__(f"adapter_attested:{reason}")
+
+
 class ProviderTimeoutError(ProviderError):
     """Request may have been sent and processed: charge unknown (T4)."""
 
@@ -78,6 +89,21 @@ class ProviderTransportError(ProviderError):
     """Connection failure after the request may have been sent (T4)."""
 
     transient = True
+
+
+class ProviderModelMismatchError(ProviderTransportError):
+    """
+    The answer names a model other than the requested one. The prompt
+    was sent, so the call is held as unknown and the output is dropped.
+    """
+
+
+class ProviderInvalidResponseError(ProviderError):
+    """
+    Transport-level answer that is not a usable provider envelope
+    (invalid JSON, wrong shape, error object). The prompt was sent:
+    held as unknown; the content is never used.
+    """
 
 
 class ProviderHTTPError(ProviderError):

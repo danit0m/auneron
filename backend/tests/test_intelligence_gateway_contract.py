@@ -568,7 +568,10 @@ def test_registry_rejects_duplicates_unknown_fallbacks_and_providers() -> None:
         )
     assert caught.value.code is GatewayErrorCode.UNKNOWN_PROFILE
 
-    for provider in ("openai", "anthropic", "ollama"):
+    # S1: "ollama" (loopback-only local runtime) became a known
+    # provider by explicit PO/director decision; paid providers stay
+    # unknown. See test_intelligence_ollama_adapter.py.
+    for provider in ("openai", "anthropic"):
         with pytest.raises(GatewayError) as caught:
             ProfileRegistry(
                 [
