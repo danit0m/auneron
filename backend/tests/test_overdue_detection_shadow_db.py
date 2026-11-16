@@ -95,10 +95,32 @@ def seed(db_session, *, accounts=1):
     return made
 
 
-def governed_state(db_session):
+def release(db_session):
+    """
+    End the session's transaction and drop its identity map. Reads keep
+    an open transaction (and its locks) until this runs; TRUNCATE in
+    _clean_database() uses another connection and would wait forever on
+    them (LockNotAvailable in CI).
+    """
     db_session.rollback()
     db_session.expire_all()
+    db_session.close()
 
+
+def governed_state(db_session):
+    release(db_session)
+    state = _collect_state(db_session)
+    release(db_session)
+    return state
+
+
+def _collect_state(db_session):
+    # Ids are comparable across worlds: _clean_database() truncates with
+    # RESTART IDENTITY (accounts, users, skills, approvals, proposals),
+    # and fingerprint/digests derive only from those ids, the manifest
+    # digest and the account fields (no clock/uuid in the proposal
+    # snapshot, approval fingerprint or input digest). expires_at /
+    # created_at are the only time-based columns and are NOT compared.
     return {
         "accounts": [
             (a.id, a.status, str(a.vencimento))
@@ -143,15 +165,20 @@ def governed_state(db_session):
     }
 
 
-def run_world(db_session, observer):
+def run_world(db_session, make_observer_fn=None):
+    """
+    The observer is built AFTER the truncate: its budget row lives in
+    intelligence_budgets, which _clean_database() wipes.
+    """
+    release(db_session)
     _clean_database()
-    db_session.rollback()
-    db_session.expire_all()
+    observer = make_observer_fn() if make_observer_fn else None
     seed(db_session)
     result = OverdueDetectionService(
         db_session, shadow_observer=observer
     ).run_scan()
-    return result.as_dict(), governed_state(db_session)
+    counts = result.as_dict()
+    return counts, governed_state(db_session)
 
 
 SCENARIOS = {
@@ -169,8 +196,14 @@ def test_governed_state_is_identical_with_and_without_shadow(
     db_session, name
 ) -> None:
     baseline_counts, baseline_state = run_world(db_session, None)
-    observer, provider = make_observer(SCENARIOS[name])
-    shadow_counts, shadow_state = run_world(db_session, observer)
+    made = {}
+
+    def factory():
+        made["observer"], made["provider"] = make_observer(SCENARIOS[name])
+        return made["observer"]
+
+    shadow_counts, shadow_state = run_world(db_session, factory)
+    provider = made["provider"]
 
     assert len(provider.calls) == 1  # the model really was consulted
     assert shadow_counts == baseline_counts
@@ -183,15 +216,17 @@ def test_governed_state_is_identical_with_and_without_shadow(
 
 def test_observer_exception_changes_nothing(db_session) -> None:
     baseline_counts, baseline_state = run_world(db_session, None)
-    shadow_counts, shadow_state = run_world(db_session, RaisingObserver())
+    shadow_counts, shadow_state = run_world(db_session, RaisingObserver)
 
     assert shadow_counts == baseline_counts
     assert shadow_state == baseline_state
 
 
 def test_agent_origin_keeps_requester_and_idempotency(db_session) -> None:
-    observer, _ = make_observer(SCENARIOS["valid_agree"])
-    counts, state = run_world(db_session, observer)
+    counts, state = run_world(
+        db_session,
+        lambda: make_observer(SCENARIOS["valid_agree"])[0],
+    )
 
     (request,) = state["requests"]
     (proposal,) = state["proposals"]
@@ -216,10 +251,11 @@ def test_agent_origin_keeps_requester_and_idempotency(db_session) -> None:
 def test_valid_answer_is_recorded_in_ledger_and_log(
     db_session, caplog
 ) -> None:
-    observer, _ = make_observer(SCENARIOS["valid_diverge"])
-
     with caplog.at_level(logging.INFO, logger="auneron.overdue_shadow"):
-        run_world(db_session, observer)
+        run_world(
+            db_session,
+            lambda: make_observer(SCENARIOS["valid_diverge"])[0],
+        )
 
     (record,) = [
         r
@@ -242,8 +278,8 @@ def test_valid_answer_is_recorded_in_ledger_and_log(
 
 
 def test_account_limit_per_run_with_real_ledger(db_session) -> None:
+    release(db_session)
     _clean_database()
-    db_session.rollback()
     seed(db_session, accounts=5)
     answer = ok({"decision": "mark_overdue", "reason": "x"})
     observer, provider = make_observer([answer] * 5, limit=2)
@@ -261,8 +297,8 @@ def test_account_limit_per_run_with_real_ledger(db_session) -> None:
 
 
 def test_rescan_does_not_consult_the_model_again(db_session) -> None:
+    release(db_session)
     _clean_database()
-    db_session.rollback()
     seed(db_session)
     observer, provider = make_observer(
         [ok({"decision": "mark_overdue", "reason": "x"})] * 3
@@ -280,8 +316,8 @@ def test_rescan_does_not_consult_the_model_again(db_session) -> None:
 def test_detection_session_is_released_before_the_model_call(
     db_session,
 ) -> None:
+    release(db_session)
     _clean_database()
-    db_session.rollback()
     seen = {}
 
     class Spy:
@@ -327,8 +363,8 @@ def test_manual_origin_does_not_consult_the_model(
     db_session, model_is_forbidden
 ) -> None:
     # What POST /accounts/detect-overdue builds: no observer.
+    release(db_session)
     _clean_database()
-    db_session.rollback()
     seed(db_session)
 
     result = OverdueDetectionService(db_session).run_scan()
@@ -363,8 +399,8 @@ def test_l3_origin_does_not_consult_the_model(
         main as register_account_mark_overdue_skill,
     )
 
+    release(db_session)
     _clean_database()
-    db_session.rollback()
     register_account_mark_overdue_skill()
     granter = User(
         name="Shadow L3 Granter",
@@ -390,6 +426,8 @@ def test_l3_origin_does_not_consult_the_model(
     )
     db_session.add(account)
     db_session.commit()
+
+    release(db_session)  # the trigger runs on its own connections
 
     result = run_policy_account_mark_overdue_trigger()
 
