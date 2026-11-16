@@ -369,49 +369,6 @@ def test_kpi2_kpi3_classify_by_idempotency_prefix(
     assert result.autonomous_disposition_rate == 0.5
 
 
-def test_kpi3_counts_agent_approved_event_once_without_double_count(
-    db_session: Session,
-) -> None:
-    now = datetime.now(timezone.utc)
-    human_account = _account(
-        db_session,
-        email="kpi3-agent-human@example.com",
-        vencimento=date.today() - timedelta(days=5),
-        status="atrasado",
-    )
-    _governed_event(
-        db_session,
-        account=human_account,
-        idempotency_key=(
-            "account_event:effect:human_account_mark_overdue:"
-            "approval:970"
-        ),
-        occurred_at=now - timedelta(days=1),
-    )
-    agent_account = _account(
-        db_session,
-        email="kpi3-agent@example.com",
-        vencimento=date.today() - timedelta(days=5),
-        status="atrasado",
-    )
-    _governed_event(
-        db_session,
-        account=agent_account,
-        idempotency_key=(
-            "account_event:effect:account.mark_overdue:"
-            "approval:971"
-        ),
-        occurred_at=now - timedelta(days=1),
-    )
-
-    result = GovernedOperationsSummaryService(db_session).compute(
-        period_days=30,
-    )
-
-    assert result.autonomous_dispositions == 0
-    assert result.human_governed_dispositions == 2
-
-
 def test_kpi2_kpi3_exclude_out_of_scope_producers(
     db_session: Session,
 ) -> None:

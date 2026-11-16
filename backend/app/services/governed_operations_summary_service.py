@@ -69,11 +69,6 @@ AUTONOMOUS_IDEMPOTENCY_PREFIX = (
 HUMAN_IDEMPOTENCY_PREFIX = (
     "account_event:effect:human_account_mark_overdue:approval:"
 )
-# Execucoes do agente (OverdueDetectionAgent) apos aprovacao humana
-# tambem sao disposicoes governadas por humano.
-AGENT_APPROVED_IDEMPOTENCY_PREFIX = (
-    "account_event:effect:account.mark_overdue:approval:"
-)
 
 GOVERNED_MARK_OVERDUE_SKILL_KEY = "account.mark_overdue"
 
@@ -242,13 +237,8 @@ class GovernedOperationsSummaryService:
                 .label("autonomous"),
                 func.count()
                 .filter(
-                    or_(
-                        AccountEvent.idempotency_key.like(
-                            f"{HUMAN_IDEMPOTENCY_PREFIX}%"
-                        ),
-                        AccountEvent.idempotency_key.like(
-                            f"{AGENT_APPROVED_IDEMPOTENCY_PREFIX}%"
-                        ),
+                    AccountEvent.idempotency_key.like(
+                        f"{HUMAN_IDEMPOTENCY_PREFIX}%"
                     )
                 )
                 .label("human"),
