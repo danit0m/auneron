@@ -41,6 +41,17 @@ REVIEWED_SQL_MIGRATIONS = {
     "e9a4c7d2b135": ("c3a8f1e6d204", "d22031ab97651e98a6a3e986e1996b98e349bc95067b581e264266b3db2f4175"),
 }
 REVIEWED_SQL_OPS = ADDITIVE_MIGRATION_OPS | {"execute"}
+# excecao revisada com conjunto de ops proprio: revisao -> (pai, SHA-256 CRLF->LF, ops exatas do upgrade).
+# Nao amplia ADDITIVE_MIGRATION_OPS nem REVIEWED_SQL_OPS.
+REVIEWED_OPS_MIGRATIONS = {
+    # INTEL-S2: identificacao do modelo local em intelligence_model_calls; autorizado por Daniel em 16/11/2026;
+    # laboratorio SIM segue na imagem congelada (alternativa B adiada)
+    "c8e2a5f1d704": (
+        "d5b8e2f4a671",
+        "3ca385f10a0e93fd15c7350a08f6e0971eae64b3ee1d4d79f24b0a4d15543127",
+        frozenset({"add_column", "create_check_constraint", "drop_constraint"}),
+    ),
+}
 LLM_TOKENS = ("openai", "anthropic", "ollama", "litellm", "langchain", "gemini", "claude_api", "llm_api")
 PROD_DATABASE_URL = "postgresql+psycopg://sim:Zx9qLm4Tn7Vb2Kc8Rw5Yd1@sim-postgres:5432/auneron_sim"
 PROD_API_KEY = "Q7d9R2m8L4x1P6v3N5k0T8z2B9c4W7y1"
@@ -289,6 +300,15 @@ def is_additive_migration(revision: str, parents: tuple[str, ...], path: Path) -
     if ops <= ADDITIVE_MIGRATION_OPS:
         return True
 
+    scoped = REVIEWED_OPS_MIGRATIONS.get(revision)
+
+    if scoped is not None:
+        return (
+            ops == scoped[2]
+            and parents == (scoped[0],)
+            and migration_sha256(path) == scoped[1]
+        )
+
     pinned = REVIEWED_SQL_MIGRATIONS.get(revision)
     return (
         pinned is not None
@@ -482,3 +502,55 @@ def test_the_title_reference_exception_is_pinned_to_its_exact_bytes_and_parent(t
     assert set(REVIEWED_SQL_MIGRATIONS) == {"c3a8f1e6d204", TITLE_REFERENCES_REVISION}
     assert REVIEWED_SQL_OPS == {"create_table", "create_index", "execute"}
     assert ADDITIVE_MIGRATION_OPS == {"create_table", "create_index"}
+
+
+# ---------------------------------------------------------------------------- excecao revisada por ops (INTEL-S2)
+INTEL_S2_REVISION = "c8e2a5f1d704"
+INTEL_S2_OPS = {"add_column", "create_check_constraint", "drop_constraint"}
+
+
+def test_the_intel_s2_migration_is_accepted_with_its_own_ops_only():
+    parents, path = read_revisions()[INTEL_S2_REVISION]
+
+    assert parents == ("d5b8e2f4a671",)
+    assert upgrade_ops(path) == INTEL_S2_OPS
+    assert is_additive_migration(INTEL_S2_REVISION, parents, path)
+    # a excecao nao amplia as listas globais
+    assert not INTEL_S2_OPS <= ADDITIVE_MIGRATION_OPS
+    assert not INTEL_S2_OPS <= REVIEWED_SQL_OPS
+    assert ADDITIVE_MIGRATION_OPS == {"create_table", "create_index"}
+    assert REVIEWED_SQL_OPS == {"create_table", "create_index", "execute"}
+    assert set(REVIEWED_OPS_MIGRATIONS) == {INTEL_S2_REVISION}
+    assert set(REVIEWED_SQL_MIGRATIONS) == {"c3a8f1e6d204", TITLE_REFERENCES_REVISION}
+
+
+def test_the_intel_s2_exception_is_pinned_to_exact_bytes_parent_and_revision(tmp_path):
+    parents, path = read_revisions()[INTEL_S2_REVISION]
+    source = path.read_bytes().replace(b"\r\n", b"\n")
+
+    crlf = tmp_path / "crlf.py"
+    crlf.write_bytes(source.replace(b"\n", b"\r\n"))
+    assert is_additive_migration(INTEL_S2_REVISION, parents, crlf)    # checkout Windows nao falha em falso
+
+    swapped = source.replace(
+        b'sa.Column("latency_ms", sa.Integer(), nullable=True)',
+        b'sa.Column("latency_ms", sa.BigInteger(), nullable=True)',
+    )
+    extra_op = source.replace(
+        b"def upgrade() -> None:\n",
+        b'def upgrade() -> None:\n    op.drop_column("intelligence_model_calls", "state")\n',
+    )
+
+    for altered in (swapped, source + b"\n", extra_op):
+        assert altered != source
+        changed = tmp_path / "changed.py"
+        changed.write_bytes(altered)
+        assert not is_additive_migration(INTEL_S2_REVISION, parents, changed)
+
+    assert upgrade_ops(changed) == INTEL_S2_OPS | {"drop_column"}      # o ultimo caso tambem muda o conjunto de ops
+
+    assert not is_additive_migration(INTEL_S2_REVISION, (FROZEN_LAB_HEAD,), path)    # pai diferente
+    assert not is_additive_migration(INTEL_S2_REVISION, ("d5b8e2f4a671", "x"), path)
+    # os mesmos bytes sob outro id sao recusados
+    assert not is_additive_migration("zz", ("d5b8e2f4a671",), path)
+    assert not is_additive_migration("c3a8f1e6d204", ("d5b8e2f4a671",), path)
