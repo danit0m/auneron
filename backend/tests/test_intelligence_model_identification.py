@@ -8,6 +8,7 @@ import json
 from datetime import timedelta
 
 import pytest
+from sqlalchemy.exc import DataError
 from sqlalchemy.exc import IntegrityError
 
 from app.database.database import SessionLocal
@@ -345,9 +346,14 @@ def _inserts(budget_id: int, **overrides) -> bool:
 def test_checks_reject_malformed_identification() -> None:
     budget_id = make_budget(make_ledger())
     bad = {
-        "digest with prefix": dict(model_digest="sha256:" + DIGEST),
-        "short digest": dict(model_digest="ab" * 31),
+        # every value fits VARCHAR(64) so the CHECK (not the column
+        # length) is what rejects it
+        "digest with prefix, 64 chars": dict(
+            model_digest="sha256:" + "ab" * 28 + "a"
+        ),
+        "short digest (63)": dict(model_digest="a" * 63),
         "upper-case digest": dict(model_digest=DIGEST.upper()),
+        "non-hex digest (64)": dict(model_digest="g" * 64),
         "negative latency": dict(latency_ms=-1),
         "blank runtime version": dict(runtime_version="  "),
         "blank reported model": dict(provider_reported_model=" "),
@@ -364,6 +370,24 @@ def test_checks_reject_malformed_identification() -> None:
         provider_reported_model=MODEL,
         latency_ms=0,
     )
+
+
+def test_oversized_digest_with_prefix_is_rejected_by_the_column() -> None:
+    budget_id = make_budget(make_ledger())
+    session = SessionLocal()
+
+    try:
+        session.add(
+            IntelligenceModelCall(
+                **_row(budget_id, model_digest="sha256:" + DIGEST)
+            )
+        )
+
+        with pytest.raises(DataError):
+            session.flush()
+    finally:
+        session.rollback()
+        session.close()
 
 
 def test_ollama_settled_rows_must_carry_digest_and_version() -> None:
