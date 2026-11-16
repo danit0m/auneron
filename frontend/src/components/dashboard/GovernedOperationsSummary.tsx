@@ -97,6 +97,8 @@ export function GovernedOperationsSummary() {
     eligible_accounts_identified,
     autonomous_dispositions,
     human_governed_dispositions,
+    manual_human_dispositions,
+    agent_initiated_human_approved_dispositions,
     autonomous_disposition_rate,
     autonomous_effect_verification,
     pending_overdue_accounts_now,
@@ -158,7 +160,11 @@ export function GovernedOperationsSummary() {
             <div className="governed-summary-card-content">
               <span>Tratadas por decisão humana</span>
               <strong>{human_governed_dispositions}</strong>
-              <small>Corredor governado de aprovação</small>
+              <small>
+                {manual_human_dispositions} manuais ·{" "}
+                {agent_initiated_human_approved_dispositions} iniciadas
+                pelo agente, aprovadas por pessoa
+              </small>
             </div>
           </article>
 

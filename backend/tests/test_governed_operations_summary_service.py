@@ -401,27 +401,138 @@ def test_kpi2_kpi3_exclude_out_of_scope_producers(
         new_status="pago",
     )
 
-    legacy_agent_account = _account(
-        db_session,
-        email="kpi23-legacy-agent@example.com",
-        vencimento=date.today() - timedelta(days=5),
-        status="atrasado",
-    )
-    _governed_event(
-        db_session,
-        account=legacy_agent_account,
-        idempotency_key=(
-            "account_event:effect:account.mark_overdue:approval:996"
-        ),
-        occurred_at=now - timedelta(days=1),
-    )
-
     result = GovernedOperationsSummaryService(db_session).compute(
         period_days=30,
     )
 
     assert result.autonomous_dispositions == 0
     assert result.human_governed_dispositions == 0
+
+
+AGENT_KEY = "account_event:effect:account.mark_overdue:approval:"
+MANUAL_KEY = "account_event:effect:human_account_mark_overdue:approval:"
+L3_KEY = (
+    "account_event:effect:policy_account_mark_overdue:"
+    "account_mark_overdue:v1:"
+)
+
+
+def _overdue_with_key(
+    db_session: Session,
+    *,
+    tag: str,
+    key: str | None,
+    status: str = "atrasado",
+    new_status: str = "atrasado",
+) -> None:
+    account = _account(
+        db_session,
+        email=f"kpi23-{tag}@example.com",
+        vencimento=date.today() - timedelta(days=5),
+        status=status,
+    )
+    _governed_event(
+        db_session,
+        account=account,
+        idempotency_key=key,
+        occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+        new_status=new_status,
+    )
+
+
+def _compute(db_session: Session):
+    return GovernedOperationsSummaryService(db_session).compute(
+        period_days=30,
+    )
+
+
+def test_origin_manual_human_counts_only_as_manual(
+    db_session: Session,
+) -> None:
+    _overdue_with_key(db_session, tag="o-manual", key=f"{MANUAL_KEY}801")
+
+    result = _compute(db_session)
+
+    assert result.manual_human_dispositions == 1
+    assert result.agent_initiated_human_approved_dispositions == 0
+    assert result.human_governed_dispositions == 1
+    assert result.autonomous_dispositions == 0
+    assert result.autonomous_disposition_rate == 0.0
+
+
+def test_origin_agent_with_human_approval_counts_as_human_governed(
+    db_session: Session,
+) -> None:
+    _overdue_with_key(db_session, tag="o-agent", key=f"{AGENT_KEY}802")
+
+    result = _compute(db_session)
+
+    assert result.agent_initiated_human_approved_dispositions == 1
+    assert result.manual_human_dispositions == 0
+    assert result.human_governed_dispositions == 1
+    assert result.autonomous_dispositions == 0
+    assert result.autonomous_disposition_rate == 0.0
+
+
+def test_origin_autonomous_l3_is_unchanged_and_not_human(
+    db_session: Session,
+) -> None:
+    _overdue_with_key(db_session, tag="o-l3", key=f"{L3_KEY}803")
+
+    result = _compute(db_session)
+
+    assert result.autonomous_dispositions == 1
+    assert result.human_governed_dispositions == 0
+    assert result.manual_human_dispositions == 0
+    assert result.agent_initiated_human_approved_dispositions == 0
+    assert result.autonomous_disposition_rate == 1.0
+
+
+def test_origin_out_of_scope_counts_nowhere(db_session: Session) -> None:
+    _overdue_with_key(db_session, tag="o-none", key=None)
+    _overdue_with_key(
+        db_session,
+        tag="o-paid",
+        key="account_event:approval:804",
+        status="pago",
+        new_status="pago",
+    )
+    _overdue_with_key(
+        db_session,
+        tag="o-other",
+        key="account_event:effect:account.mark_paid:approval:805",
+    )
+
+    result = _compute(db_session)
+
+    assert result.autonomous_dispositions == 0
+    assert result.human_governed_dispositions == 0
+    assert result.manual_human_dispositions == 0
+    assert result.agent_initiated_human_approved_dispositions == 0
+    assert result.autonomous_disposition_rate is None
+
+
+def test_origins_combined_without_double_counting(
+    db_session: Session,
+) -> None:
+    _overdue_with_key(db_session, tag="c-l3", key=f"{L3_KEY}811")
+    _overdue_with_key(db_session, tag="c-m1", key=f"{MANUAL_KEY}812")
+    _overdue_with_key(db_session, tag="c-m2", key=f"{MANUAL_KEY}813")
+    _overdue_with_key(db_session, tag="c-a1", key=f"{AGENT_KEY}814")
+    _overdue_with_key(db_session, tag="c-none", key=None)
+
+    result = _compute(db_session)
+
+    assert result.autonomous_dispositions == 1
+    assert result.manual_human_dispositions == 2
+    assert result.agent_initiated_human_approved_dispositions == 1
+    assert result.human_governed_dispositions == 3
+    assert (
+        result.human_governed_dispositions
+        == result.manual_human_dispositions
+        + result.agent_initiated_human_approved_dispositions
+    )
+    assert result.autonomous_disposition_rate == 0.25
 
 
 def test_period_window_is_half_open(db_session: Session) -> None:

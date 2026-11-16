@@ -41,6 +41,8 @@ def test_governed_operations_summary_returns_200_and_schema(
         "eligible_accounts_identified",
         "autonomous_dispositions",
         "human_governed_dispositions",
+        "manual_human_dispositions",
+        "agent_initiated_human_approved_dispositions",
         "autonomous_disposition_rate",
         "autonomous_effect_verification",
         "pending_overdue_accounts_now",
@@ -69,6 +71,8 @@ def test_governed_operations_summary_zeros_and_nulls(
 
     assert payload["autonomous_dispositions"] == 0
     assert payload["human_governed_dispositions"] == 0
+    assert payload["manual_human_dispositions"] == 0
+    assert payload["agent_initiated_human_approved_dispositions"] == 0
     assert payload["autonomous_disposition_rate"] is None
     assert payload["autonomous_effect_verification"]["total"] == 0
     assert (

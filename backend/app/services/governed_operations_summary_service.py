@@ -20,9 +20,19 @@ V1 -- 0 edicoes existem no dado real ate o momento do design freeze).
 KPI-2/KPI-3 (autonomous_dispositions / human_governed_dispositions):
 classificados pelo prefixo de AccountEvent.idempotency_key -- nunca
 reconciliando PolicyAuthorityConsumption/ApprovalConsumption entre
-corredores. Exclui deliberadamente: PUT administrativo (idempotency_key
-NULL), account.mark_paid (prefixo distinto) e o corredor agente legado
-dormant (prefixo distinto).
+corredores. Tres origens, sempre distinguiveis:
+  - autonomous_dispositions: L3 autonoma (prefixo policy_...).
+  - manual_human_dispositions: humano por conta propria (prefixo
+    human_...:approval:).
+  - agent_initiated_human_approved_dispositions: o agente
+    (OverdueDetectionAgent) pediu, um humano aprovou e o dispatch
+    executou (prefixo account.mark_overdue:approval:).
+human_governed_dispositions = manual + agente-aprovado-por-humano (o
+agente nunca executa sem aprovacao humana). A taxa autonoma e
+autonomous / (autonomous + human_governed), logo disposicoes do agente
+entram no denominador. Exclui deliberadamente: PUT administrativo
+(idempotency_key NULL), account.mark_paid e demais produtores
+(prefixos distintos).
 
 KPI-4 (autonomous_effect_verification): PolicyAuthorityConsumption
 LEFT JOIN BusinessEffectVerification, restrito a
@@ -70,6 +80,10 @@ HUMAN_IDEMPOTENCY_PREFIX = (
     "account_event:effect:human_account_mark_overdue:approval:"
 )
 
+AGENT_APPROVED_IDEMPOTENCY_PREFIX = (
+    "account_event:effect:account.mark_overdue:approval:"
+)
+
 GOVERNED_MARK_OVERDUE_SKILL_KEY = "account.mark_overdue"
 
 
@@ -81,6 +95,8 @@ class GovernedOperationsSummaryResult:
     eligible_accounts_identified: int
     autonomous_dispositions: int
     human_governed_dispositions: int
+    manual_human_dispositions: int
+    agent_initiated_human_approved_dispositions: int
     autonomous_disposition_rate: float | None
     verification_verified: int
     verification_checked_other: int
@@ -114,7 +130,11 @@ class GovernedOperationsSummaryService:
             vencimento_end=vencimento_end,
         )
 
-        autonomous, human = self._compute_kpi2_kpi3(
+        (
+            autonomous,
+            manual_human,
+            agent_approved,
+        ) = self._compute_kpi2_kpi3(
             period_start=period_start,
             period_end=period_end,
         )
@@ -140,6 +160,8 @@ class GovernedOperationsSummaryService:
                 },
             )
 
+        human = manual_human + agent_approved
+
         disposition_denominator = autonomous + human
         autonomous_disposition_rate = (
             autonomous / disposition_denominator
@@ -164,6 +186,8 @@ class GovernedOperationsSummaryService:
             eligible_accounts_identified=eligible_accounts_identified,
             autonomous_dispositions=autonomous,
             human_governed_dispositions=human,
+            manual_human_dispositions=manual_human,
+            agent_initiated_human_approved_dispositions=agent_approved,
             autonomous_disposition_rate=autonomous_disposition_rate,
             verification_verified=verified,
             verification_checked_other=checked_other,
@@ -225,7 +249,7 @@ class GovernedOperationsSummaryService:
         *,
         period_start: datetime,
         period_end: datetime,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         row = (
             self.db.query(
                 func.count()
@@ -241,7 +265,14 @@ class GovernedOperationsSummaryService:
                         f"{HUMAN_IDEMPOTENCY_PREFIX}%"
                     )
                 )
-                .label("human"),
+                .label("manual_human"),
+                func.count()
+                .filter(
+                    AccountEvent.idempotency_key.like(
+                        f"{AGENT_APPROVED_IDEMPOTENCY_PREFIX}%"
+                    )
+                )
+                .label("agent_approved"),
             )
             .filter(AccountEvent.new_status == "atrasado")
             .filter(
@@ -251,7 +282,11 @@ class GovernedOperationsSummaryService:
             .one()
         )
 
-        return (row.autonomous or 0, row.human or 0)
+        return (
+            row.autonomous or 0,
+            row.manual_human or 0,
+            row.agent_approved or 0,
+        )
 
     def _compute_kpi4(
         self,
