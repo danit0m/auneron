@@ -14,6 +14,8 @@ export interface EtapaDoFunil {
   chave: EtapaFunil;
   rotulo: string;
   valor: number;
+  /** Texto complementar opcional (ex.: divisão por origem). */
+  detalhe?: string;
   /** Largura relativa (0 a 100) da barra, proporcional à maior etapa. */
   percentual: number;
 }
@@ -40,6 +42,16 @@ function tempo(iso: string | null | undefined): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
+/** "X manuais · Y iniciadas pelo agente, aprovadas por pessoa"; null se faltar campo. */
+export function descreverOrigemHumana(
+  resumo: Partial<GovernedOperationsSummary> | null | undefined,
+): string | null {
+  const manuais = inteiro(resumo?.manual_human_dispositions);
+  const agente = inteiro(resumo?.agent_initiated_human_approved_dispositions);
+  if (manuais === null || agente === null) return null;
+  return `${manuais} manuais · ${agente} iniciadas pelo agente, aprovadas por pessoa`;
+}
+
 /**
  * Funil a partir do resumo de operações governadas. Etapa cujo campo não
  * existe (ou não é número válido) é omitida; nunca se inventa valor.
@@ -52,14 +64,16 @@ export function montarFunil(
     { chave: "identificadas", rotulo: "Identificadas", valor: inteiro(resumo.eligible_accounts_identified) },
     { chave: "autonomas", rotulo: "Tratadas de forma autônoma", valor: inteiro(resumo.autonomous_dispositions) },
     { chave: "humanas", rotulo: "Encaminhadas para decisão humana", valor: inteiro(resumo.human_governed_dispositions) },
-    { chave: "verificadas", rotulo: "Verificadas", valor: inteiro(resumo.autonomous_effect_verification?.verified) },
+    { chave: "verificadas", rotulo: "Autônomas verificadas", valor: inteiro(resumo.autonomous_effect_verification?.verified) },
   ];
   const etapas = brutas.filter(
     (e): e is { chave: EtapaFunil; rotulo: string; valor: number } => e.valor !== null,
   );
   const maior = Math.max(0, ...etapas.map((e) => e.valor));
+  const detalheHumanas = descreverOrigemHumana(resumo);
   return etapas.map((e) => ({
     ...e,
+    ...(e.chave === "humanas" && detalheHumanas ? { detalhe: detalheHumanas } : {}),
     percentual: maior > 0 ? (e.valor / maior) * 100 : 0,
   }));
 }

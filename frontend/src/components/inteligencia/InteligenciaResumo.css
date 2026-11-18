@@ -55,6 +55,13 @@
   --etapa-cor: var(--color-warning-500);
 }
 
+.inteligencia-etapa-detalhe {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
 .inteligencia-etapa-verificadas {
   --etapa-cor: var(--color-success-500);
 }

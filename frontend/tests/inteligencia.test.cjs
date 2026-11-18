@@ -20,6 +20,7 @@ const lib = load('lib/inteligencia.ts', (id) => {
 });
 const {
   montarFunil,
+  descreverOrigemHumana,
   calcularTaxaAcerto,
   calcularMetricas,
   formatarDuracao,
@@ -51,6 +52,20 @@ test('funil: completo, com larguras proporcionais', () => {
   ]);
   assert.equal(f[0].percentual, 100);
   assert.equal(f[1].percentual, 60);
+});
+
+test('origem humana: divisão na etapa humanas e rótulo explícito', () => {
+  const r = resumo({ manual_human_dispositions: 2, agent_initiated_human_approved_dispositions: 1 });
+  const f = montarFunil(r);
+  assert.equal(f.find((e) => e.chave === 'humanas').detalhe, '2 manuais · 1 iniciadas pelo agente, aprovadas por pessoa');
+  assert.equal(f.find((e) => e.chave === 'verificadas').rotulo, 'Autônomas verificadas');
+  assert.equal(f.find((e) => e.chave === 'identificadas').detalhe, undefined);
+});
+
+test('origem humana: sem campos não inventa divisão', () => {
+  assert.equal(descreverOrigemHumana({ manual_human_dispositions: 2 }), null);
+  assert.equal(descreverOrigemHumana(null), null);
+  assert.equal(montarFunil(resumo()).find((e) => e.chave === 'humanas').detalhe, undefined);
 });
 
 test('funil: vazio e nulo', () => {
