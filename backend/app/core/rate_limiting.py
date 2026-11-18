@@ -285,3 +285,55 @@ def elevation_rate_limit_targets(
             ),
         ),
     )
+
+
+def password_change_rate_limit_targets(
+    request: Request,
+    user_id: int,
+) -> tuple[
+    RateLimitTarget,
+    RateLimitTarget,
+]:
+    # Mesmas regras da elevacao (senha atual errada e o mesmo tipo de
+    # tentativa); escopos proprios para nao misturar contadores.
+    client_identity = _client_identity(
+        request
+    )
+
+    rule_user = RateLimitRule(
+        max_failures=(
+            settings
+            .auth_elevation_user_max_failures
+        ),
+        window_seconds=(
+            settings
+            .auth_elevation_window_seconds
+        ),
+    )
+    rule_ip = RateLimitRule(
+        max_failures=(
+            settings
+            .auth_elevation_ip_max_failures
+        ),
+        window_seconds=(
+            settings
+            .auth_elevation_window_seconds
+        ),
+    )
+
+    return (
+        RateLimitTarget(
+            scope="password_change_user",
+            key_hash=_hash_identity(
+                str(user_id)
+            ),
+            rule=rule_user,
+        ),
+        RateLimitTarget(
+            scope="password_change_ip",
+            key_hash=_hash_identity(
+                client_identity
+            ),
+            rule=rule_ip,
+        ),
+    )

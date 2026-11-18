@@ -9,10 +9,18 @@ from fastapi import status
 from sqlalchemy.orm import Session
 
 from app.core.authentication import AuthenticatedSession
+from app.core.authentication import TEMP_PASSWORD_EXPIRED_MESSAGE
 from app.core.authentication import authenticate_user
 from app.core.authentication import create_session
 from app.core.authentication import elevate_session
+from app.core.authentication import hash_password
+from app.core.authentication import is_temp_password_expired
 from app.core.authentication import require_user_session
+from app.core.authentication import (
+    require_user_session_allow_password_change,
+)
+from app.core.authentication import revoke_user_sessions
+from app.core.authentication import utc_now
 from app.core.authentication import revoke_elevation
 from app.core.authentication import revoke_session
 from app.core.authentication import verify_password
@@ -21,9 +29,11 @@ from app.core.observability import get_request_id
 from app.core.rate_limiting import auth_rate_limiter
 from app.core.rate_limiting import elevation_rate_limit_targets
 from app.core.rate_limiting import login_rate_limit_targets
+from app.core.rate_limiting import password_change_rate_limit_targets
 from app.database.database import get_db
 from app.schemas.auth import AuthSessionResponse
 from app.schemas.auth import AuthUserResponse
+from app.schemas.auth import ChangePasswordRequest
 from app.schemas.auth import ElevationRequest
 from app.schemas.auth import ElevationResponse
 from app.schemas.auth import LoginRequest
@@ -187,6 +197,27 @@ def login(
         scopes={"login_account"},
     )
 
+    if is_temp_password_expired(user):
+        security_logger.warning(
+            "auth_login_temp_password_expired",
+            extra={
+                "event": (
+                    "auth.login.temp_password_expired"
+                ),
+                "request_id": get_request_id(),
+                "user_id": user.id,
+            },
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=TEMP_PASSWORD_EXPIRED_MESSAGE,
+            headers={
+                "WWW-Authenticate": "Session",
+                "Cache-Control": "no-store",
+            },
+        )
+
     raw_token, auth_session = (
         create_session(
             db,
@@ -234,7 +265,7 @@ def login(
 def me(
     response: Response,
     authenticated: AuthenticatedSession = Depends(
-        require_user_session
+        require_user_session_allow_password_change
     ),
 ):
     response.headers[
@@ -253,7 +284,7 @@ def me(
 def logout(
     response: Response,
     authenticated: AuthenticatedSession = Depends(
-        require_user_session
+        require_user_session_allow_password_change
     ),
     db: Session = Depends(get_db),
 ):
@@ -401,5 +432,117 @@ def revoke_current_elevation(
             "event": "auth.elevation.revoked",
             "request_id": get_request_id(),
             "user_id": authenticated.user.id,
+        },
+    )
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    response: Response,
+    authenticated: AuthenticatedSession = Depends(
+        require_user_session_allow_password_change
+    ),
+    db: Session = Depends(get_db),
+):
+    user = authenticated.user
+
+    targets = password_change_rate_limit_targets(
+        request,
+        user.id,
+    )
+
+    retry_after = (
+        auth_rate_limiter.retry_after(
+            targets
+        )
+    )
+
+    if retry_after is not None:
+        _raise_rate_limited(
+            area="password_change",
+            retry_after=retry_after,
+        )
+
+    if not verify_password(
+        payload.current_password,
+        user.password_hash,
+    ):
+        retry_after = (
+            auth_rate_limiter.record_failure(
+                targets
+            )
+        )
+
+        security_logger.warning(
+            "auth_password_change_failed",
+            extra={
+                "event": "auth.password_change.failed",
+                "request_id": get_request_id(),
+                "user_id": user.id,
+                "reason": "invalid_credentials",
+            },
+        )
+
+        if retry_after is not None:
+            _raise_rate_limited(
+                area="password_change",
+                retry_after=retry_after,
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Senha atual inválida.",
+            headers={
+                "Cache-Control": "no-store",
+            },
+        )
+
+    if payload.new_password == payload.current_password:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "A nova senha precisa ser diferente "
+                "da senha atual."
+            ),
+            headers={
+                "Cache-Control": "no-store",
+            },
+        )
+
+    auth_rate_limiter.clear(
+        targets,
+        scopes={"password_change_user"},
+    )
+
+    user.password_hash = hash_password(
+        payload.new_password
+    )
+    user.must_change_password = False
+    user.temp_password_expires_at = None
+    user.password_changed_at = utc_now()
+
+    revoke_user_sessions(
+        db,
+        user.id,
+        except_session_id=authenticated.session.id,
+    )
+
+    db.commit()
+
+    response.headers[
+        "Cache-Control"
+    ] = "no-store"
+
+    security_logger.info(
+        "auth_password_changed",
+        extra={
+            "event": "auth.password_changed",
+            "request_id": get_request_id(),
+            "user_id": user.id,
         },
     )

@@ -10,7 +10,7 @@
     Comandos: configurar, status, versao-banco, pendentes, backup, ensaiar, migrar,
               registrar-acao-pagamento, registrar-acao-atraso, detectar-vencidos, consultar,
               provisionar-deteccao-vencidos, vincular-deteccao-vencidos, desvincular-deteccao-vencidos,
-              provisionar-orcamento-shadow, provisionar-conta-vencida-sintetica,
+              provisionar-orcamento-shadow, provisionar-conta-vencida-sintetica, redefinir-senha,
               subir-backend, parar-backend, subir-frontend, parar-frontend
 
     provisionar-orcamento-shadow: cria UM orcamento de implantacao (deployment_period, 7 dias) para a
@@ -27,6 +27,15 @@
       Exige -Pasta. Recusa (codigo 9) se a porta 8000 estiver ocupada: o backend deve estar PARADO, pois a
       deteccao roda sozinha no backend (~60 s) e, sem -Shadow, criaria o pedido sem o shadow observar.
       Codigos: 0 ok/ja provisionada, 3 existente divergente, 4 banco errado, 9 backend no ar.
+
+    redefinir-senha -Email <email> [-PermitirUltimoAdmin]: recuperacao manual de senha. Executa o modulo fixo
+      scripts.reset_user_password (backend\scripts\reset_user_password.py): gera senha TEMPORARIA forte,
+      grava o hash, exige troca no primeiro acesso, vence em 30 min e REVOGA todas as sessoes do usuario na
+      mesma transacao. A senha temporaria aparece UMA vez, na saida deste comando (nao e gravada em log nem no
+      cofre). Recusa usuario inexistente (3), banco diferente de auneron_neon_synthetic (4), conta role=system
+      (5) e o UNICO administrador ativo sem -PermitirUltimoAdmin (6). Sem -Confirmar (ou com -Simular) apenas
+      mostra o que faria. Exige -Pasta e -Email. O backend pode estar no ar.
+      Codigos: 0 ok, 2 uso/e-mail invalido, 3 inexistente, 4 banco errado, 5 system, 6 ultimo admin.
 
     subir-backend -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id>: sobe o backend com o shadow do
       agente de vencidos ligado (INTELLIGENCE_MODE=shadow, OVERDUE_SHADOW_*, 1 conta por rodada,
@@ -76,6 +85,8 @@
       .\homologacao.ps1 provisionar-orcamento-shadow -Pasta C:\auneron -Confirmar
       .\homologacao.ps1 provisionar-conta-vencida-sintetica -Pasta C:\auneron -Confirmar
       .\homologacao.ps1 consultar -Relatorio shadow   (somente leitura)
+      .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -Simular
+      .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -Confirmar
       .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Simular
       .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Confirmar
       .\homologacao.ps1 parar-backend -Confirmar
@@ -90,7 +101,7 @@ param(
         'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
         'registrar-acao-pagamento', 'registrar-acao-atraso', 'detectar-vencidos', 'consultar',
         'provisionar-deteccao-vencidos', 'vincular-deteccao-vencidos', 'desvincular-deteccao-vencidos',
-        'provisionar-orcamento-shadow', 'provisionar-conta-vencida-sintetica',
+        'provisionar-orcamento-shadow', 'provisionar-conta-vencida-sintetica', 'redefinir-senha',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend'
     )]
     [string]$Comando,
@@ -113,6 +124,10 @@ param(
     [Parameter(ParameterSetName = 'Normal')][switch]$Shadow,
     [Parameter(ParameterSetName = 'Normal')][string]$DigestModelo,
     [Parameter(ParameterSetName = 'Normal')][ValidateRange(1, 2147483647)][int]$OrcamentoShadow,
+    # E-mail do usuario (somente redefinir-senha); validado por regex antes de ir como argumento do filho.
+    [Parameter(ParameterSetName = 'Normal')][string]$Email,
+    # Permite redefinir o UNICO administrador ativo (somente redefinir-senha).
+    [Parameter(ParameterSetName = 'Normal')][switch]$PermitirUltimoAdmin,
     [Parameter(ParameterSetName = 'Normal')][switch]$Confirmar,
     [Parameter(ParameterSetName = 'Normal')][switch]$Simular,
     # Nao consulta portas/HTTP (so com status ou -Simular; usado no autoteste).
@@ -172,6 +187,7 @@ $script:Ctx = @{
     Simular = $false; Confirmar = $false; SemSondagem = $false
     Relatorio = ''; Conta = 0
     Shadow = $false; DigestModelo = ''; OrcamentoShadow = 0
+    Email = ''; PermitirUltimoAdmin = $false
 }
 $script:Conhecidos = New-Object System.Collections.ArrayList
 
@@ -1777,6 +1793,41 @@ function Cmd-ProvisionarContaVencidaSintetica {
     Rodar-ProvisionamentoShadow -Modulo 'scripts.create_shadow_synthetic_account' -Arquivo 'create_shadow_synthetic_account.py' -Efeito 'cria UMA conta (cliente SINTETICO S5 SHADOW, s5.shadow@example.com, valor 10.00, aberto, vencimento = hoje no BUSINESS_TIMEZONE - 10 dias); idempotente pelo email; nada mais e criado; recusa se o banco nao for auneron_neon_synthetic e (codigo 9) se a porta 8000 estiver ocupada: o backend deve estar PARADO.' -ExigirBackendParado
 }
 
+function Cmd-RedefinirSenha {
+    # Recuperacao manual de senha. Modulo e arquivo sao literais fixos; o e-mail e validado por regex
+    # (nunca comeca com '-') e vai como argumento. Nenhum segredo do cofre vai por argumento; o filho
+    # recebe o ambiente do backend. A senha temporaria sai UMA vez na saida do filho.
+    $email = ([string]$script:Ctx.Email).Trim()
+    if (-not $email) { Falhar 'redefinir-senha exige -Email <e-mail do usuario>.' }
+    if ($email -notmatch '^[A-Za-z0-9._%+][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' -or $email.Length -gt 254) {
+        $script:Codigo = 2
+        Falhar '-Email invalido.'
+    }
+    $raiz = Resolver-Pasta
+    $arqPy = Join-Path $raiz 'backend\scripts\reset_user_password.py'
+    if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
+        Falhar 'Nao existe backend\scripts\reset_user_password.py no checkout informado.'
+    }
+    $py = Resolver-Python $raiz
+    $argsFilho = @('-m', 'scripts.reset_user_password', $email)
+    if ($script:Ctx.PermitirUltimoAdmin) { $argsFilho += '--permitir-ultimo-admin' }
+    if ($script:Ctx.Simular -or (-not $script:Ctx.Confirmar)) {
+        if ($script:Ctx.Simular) { Info 'SIMULACAO: nada sera feito.' }
+        else { Info 'Nada foi gravado. Repita com -Confirmar para executar.' }
+        Info ('Faria, em {0}\backend: {1} {2}' -f $raiz, $py, ($argsFilho -join ' '))
+        Info ('Efeito: gera senha temporaria (30 min), exige troca no primeiro acesso e revoga TODAS as sessoes de ' + $email + '; recusa banco diferente de auneron_neon_synthetic, usuario inexistente, conta system e o unico administrador ativo (sem -PermitirUltimoAdmin).')
+        Info ('Ambiente do filho (nomes): ' + (Nomes-Do-Ambiente 'backend'))
+        return
+    }
+    $amb = Montar-Ambiente 'backend'
+    $res = Invoke-Filho -Exe $py -Argumentos $argsFilho -DiretorioTrabalho (Join-Path $raiz 'backend') -Ambiente $amb
+    if ($res.Saida) { Info $res.Saida }
+    if ($res.Codigo -ne 0) {
+        $script:Codigo = $res.Codigo
+        Falhar ('scripts.reset_user_password terminou com codigo {0} (2 = e-mail invalido, 3 = usuario inexistente, 4 = banco diferente do esperado, 5 = conta system, 6 = unico administrador ativo). Nada foi gravado.' -f $res.Codigo)
+    }
+}
+
 function Cmd-SubirFrontend {
     $raiz = Resolver-Pasta
     $vite = Join-Path $raiz 'frontend\node_modules\vite\bin\vite.js'
@@ -1842,6 +1893,8 @@ function Principal {
         $script:Ctx.Shadow = [bool]$Shadow
         $script:Ctx.DigestModelo = $DigestModelo
         $script:Ctx.OrcamentoShadow = $OrcamentoShadow
+        $script:Ctx.Email = $Email
+        $script:Ctx.PermitirUltimoAdmin = [bool]$PermitirUltimoAdmin
         if (($Relatorio -or $Conta) -and ($Comando -ne 'consultar')) {
             Falhar '-Relatorio e -Conta so valem com consultar.'
         }
@@ -1853,6 +1906,9 @@ function Principal {
         }
         if ($Shadow -and ((-not $DigestModelo) -or (-not $OrcamentoShadow))) {
             Falhar '-Shadow exige -DigestModelo <64 hex> e -OrcamentoShadow <id>.'
+        }
+        if (($Email -or $PermitirUltimoAdmin) -and ($Comando -ne 'redefinir-senha')) {
+            Falhar '-Email e -PermitirUltimoAdmin so valem com redefinir-senha.'
         }
         if ($SemSondagem -and ($Comando -ne 'status') -and (-not $Simular)) {
             Falhar '-SemSondagem so vale com status ou -Simular.'
@@ -1874,6 +1930,7 @@ function Principal {
             'desvincular-deteccao-vencidos' { Cmd-DesvincularDeteccaoVencidos }
             'provisionar-orcamento-shadow' { Cmd-ProvisionarOrcamentoShadow }
             'provisionar-conta-vencida-sintetica' { Cmd-ProvisionarContaVencidaSintetica }
+            'redefinir-senha' { Cmd-RedefinirSenha }
             'subir-backend'  { Cmd-SubirBackend }
             'parar-backend'  { Cmd-Parar 'backend' $script:PortaBackend }
             'subir-frontend' { Cmd-SubirFrontend }

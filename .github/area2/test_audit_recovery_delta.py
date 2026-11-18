@@ -425,7 +425,7 @@ class DryPlanTests(unittest.TestCase):
             self.assertEqual(rd.main([], environ={}, popen=boom, connect=boom), 0)
         plan = json.loads(out.getvalue())
         self.assertEqual((plan["mode"], plan["executed"]), ("DRY_PLAN", False))
-        self.assertEqual((plan["head_revision"], plan["tables"]), ("f1b7d3a9c520", 42))
+        self.assertEqual((plan["head_revision"], plan["tables"]), ("a7c4e9b2d618", 42))
         self.assertEqual(plan["reference_table"]["table"], "account_title_references")
         self.assertEqual(plan["cleanup_steps"], ["target_database", "source_audit_row",
                                                  "source_reference_and_account", "temp_files", "final_state"])
@@ -503,7 +503,7 @@ class FlowTests(unittest.TestCase):
         result, out, report, server, fake_run, leftovers = run_main()
         self.assertEqual((result, report["outcome"]), (0, "PASS"), report)
         delta = report["delta"]
-        self.assertEqual((delta["tables"], delta["revision"], delta["columns"]), (42, "f1b7d3a9c520", 24))
+        self.assertEqual((delta["tables"], delta["revision"], delta["columns"]), (42, "a7c4e9b2d618", 24))
         self.assertEqual(len(delta["check_constraints"]), 22)
         self.assertTrue(delta["update_rejected"] and delta["delete_rejected"])
         self.assertEqual(report["target"]["database"], TARGET)
@@ -550,7 +550,7 @@ class FlowTests(unittest.TestCase):
         self.blocked_before_seed(server, expect="server_identity_mismatch")
 
     def test_wrong_head_or_table_count_blocks(self):
-        for key, value, code in (("revision", "c3a8f1e6d204", "source_head_not_f1b7d3a9c520"),
+        for key, value, code in (("revision", "c3a8f1e6d204", "source_head_not_a7c4e9b2d618"),
                                  ("tables", 41, "source_table_count_not_42")):
             with self.subTest(code=code):
                 server = FakeServer()

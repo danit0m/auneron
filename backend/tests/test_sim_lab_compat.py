@@ -51,6 +51,13 @@ REVIEWED_OPS_MIGRATIONS = {
         "3ca385f10a0e93fd15c7350a08f6e0971eae64b3ee1d4d79f24b0a4d15543127",
         frozenset({"add_column", "create_check_constraint", "drop_constraint"}),
     ),
+    # B1: credencial temporaria e troca obrigatoria; autorizado por Daniel em 18/11/2026;
+    # laboratorio SIM segue na imagem congelada
+    "a7c4e9b2d618": (
+        "f1b7d3a9c520",
+        "2f0ada0a28b4e9e96d7be391dc53a9998ae31821611e44058bcd3993aeeaf15a",
+        frozenset({"add_column"}),
+    ),
 }
 LLM_TOKENS = ("openai", "anthropic", "ollama", "litellm", "langchain", "gemini", "claude_api", "llm_api")
 PROD_DATABASE_URL = "postgresql+psycopg://sim:Zx9qLm4Tn7Vb2Kc8Rw5Yd1@sim-postgres:5432/auneron_sim"
@@ -520,7 +527,7 @@ def test_the_intel_s2_migration_is_accepted_with_its_own_ops_only():
     assert not INTEL_S2_OPS <= REVIEWED_SQL_OPS
     assert ADDITIVE_MIGRATION_OPS == {"create_table", "create_index"}
     assert REVIEWED_SQL_OPS == {"create_table", "create_index", "execute"}
-    assert set(REVIEWED_OPS_MIGRATIONS) == {INTEL_S2_REVISION}
+    assert set(REVIEWED_OPS_MIGRATIONS) == {INTEL_S2_REVISION, B1_REVISION}
     assert set(REVIEWED_SQL_MIGRATIONS) == {"c3a8f1e6d204", TITLE_REFERENCES_REVISION}
 
 
@@ -554,3 +561,50 @@ def test_the_intel_s2_exception_is_pinned_to_exact_bytes_parent_and_revision(tmp
     # os mesmos bytes sob outro id sao recusados
     assert not is_additive_migration("zz", ("d5b8e2f4a671",), path)
     assert not is_additive_migration("c3a8f1e6d204", ("d5b8e2f4a671",), path)
+
+
+# ---------------------------------------------------------------------------- excecao revisada por ops (B1)
+B1_REVISION = "a7c4e9b2d618"
+B1_PARENT = "f1b7d3a9c520"
+B1_OPS = {"add_column"}
+
+
+def test_the_b1_migration_is_accepted_with_its_own_ops_only():
+    parents, path = read_revisions()[B1_REVISION]
+
+    assert parents == (B1_PARENT,)
+    assert upgrade_ops(path) == B1_OPS
+    assert is_additive_migration(B1_REVISION, parents, path)
+    assert not B1_OPS <= ADDITIVE_MIGRATION_OPS
+    assert not B1_OPS <= REVIEWED_SQL_OPS
+    assert ADDITIVE_MIGRATION_OPS == {"create_table", "create_index"}
+    assert REVIEWED_SQL_OPS == {"create_table", "create_index", "execute"}
+
+
+def test_the_b1_exception_is_pinned_to_exact_bytes_parent_and_revision(tmp_path):
+    parents, path = read_revisions()[B1_REVISION]
+    source = path.read_bytes().replace(b"\r\n", b"\n")
+
+    crlf = tmp_path / "crlf.py"
+    crlf.write_bytes(source.replace(b"\n", b"\r\n"))
+    assert is_additive_migration(B1_REVISION, parents, crlf)    # checkout Windows nao falha em falso
+
+    swapped = source.replace(b'"temp_password_expires_at"', b'"temp_password_expires_at2"')
+    extra_op = source.replace(
+        b"def upgrade() -> None:\n",
+        b'def upgrade() -> None:\n    op.drop_column("users", "email")\n',
+    )
+
+    for altered in (swapped, source + b"\n", extra_op):
+        assert altered != source
+        changed = tmp_path / "changed.py"
+        changed.write_bytes(altered)
+        assert not is_additive_migration(B1_REVISION, parents, changed)
+
+    assert upgrade_ops(changed) == B1_OPS | {"drop_column"}
+
+    assert not is_additive_migration(B1_REVISION, (FROZEN_LAB_HEAD,), path)    # pai diferente
+    assert not is_additive_migration(B1_REVISION, (B1_PARENT, "x"), path)
+    # os mesmos bytes sob outro id sao recusados
+    assert not is_additive_migration("zz", (B1_PARENT,), path)
+    assert not is_additive_migration(INTEL_S2_REVISION, (B1_PARENT,), path)

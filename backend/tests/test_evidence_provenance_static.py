@@ -201,9 +201,9 @@ def test_migration_is_the_single_head_and_follows_the_previous_head() -> None:
     # add_account_data_entry_audit_events, filha de b428d1a6c903
     # add_import_confirmation_receipts, filha de a7d3e91c4b26
     # add_intelligence_budget_ledger, que por sua vez e filha desta
-    # migracao). As duas asserts acima continuam congelando a identidade
+    # migracao; B1 avancou para a7c4e9b2d618). As duas asserts acima continuam congelando a identidade
     # desta migracao.
-    assert expected_schema_revision() == "f1b7d3a9c520"
+    assert expected_schema_revision() == "a7c4e9b2d618"
 
 
 def test_migration_is_additive_not_valid_and_has_no_backfill() -> None:

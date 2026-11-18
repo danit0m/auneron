@@ -31,6 +31,7 @@ export interface AuthUser {
   email: string;
   role: UserRole;
   active: boolean;
+  must_change_password?: boolean;
 }
 
 export interface AuthSession {
@@ -64,5 +65,9 @@ export interface AuthContextValue {
     credentials: LoginCredentials,
   ) => Promise<AuthSession>;
   signOut: () => Promise<void>;
+  changePassword: (
+    currentPassword: string,
+    newPassword: string,
+  ) => Promise<void>;
   refreshSession: () => Promise<AuthSession | null>;
 }

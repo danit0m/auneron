@@ -18,6 +18,7 @@ import Clientes from "./pages/Clientes";
 import { Cockpit } from "./pages/Cockpit";
 import ExecutiveCenter from "./pages/ExecutiveCenter";
 import Login from "./pages/Login";
+import TrocarSenha from "./pages/TrocarSenha";
 import Recebiveis from "./pages/Recebiveis";
 import Recomendacoes from "./pages/Recomendacoes";
 import { Upload } from "./pages/Upload";
@@ -31,6 +32,11 @@ function App() {
         <Route
           path="/login"
           element={<Login />}
+        />
+
+        <Route
+          path="/trocar-senha"
+          element={<TrocarSenha />}
         />
 
         <Route element={<Layout />}>
