@@ -8,7 +8,7 @@ These are context checks, NOT cryptographic proof of human approval.
 
 It proves ONLY that the table account_data_entry_audit_events (24 columns, 22 named CHECKs),
 its index, its function and enabled trigger, and one synthetic row survive a native
-pg_dump/pg_restore into a newly created database at head f1b7d3a9c520 (42 tables), and that
+pg_dump/pg_restore into a newly created database at head a7c4e9b2d618 (42 tables), and that
 UPDATE/DELETE stay rejected there. TASK054 (TI1, PREPARED, not run) adds the same proof for the side
 table account_title_references (11 columns, 7 named CHECKs, PK/UNIQUE/FK RESTRICT, 3 indexes, function and
 enabled trigger) with ONE owned synthetic account and ONE owned reference: both rows restored exactly,
@@ -58,7 +58,7 @@ from urllib.parse import urlsplit
 
 REPOSITORY = "danit0m/auneron"
 SOURCE_DB = "auneron_test"
-HEAD_REVISION = "f1b7d3a9c520"
+HEAD_REVISION = "a7c4e9b2d618"
 TABLE_COUNT = 42
 PG_IMAGE = "postgres:17"
 TABLE = "account_data_entry_audit_events"
@@ -686,7 +686,7 @@ def drill(ctx, db, run, ledger, report, envs):
     with closing(db.open(SOURCE_DB)) as conn:
         current, revision, tables = one(conn, SQL_IDENTITY)
         block(current == SOURCE_DB, "source_current_database")
-        block(revision == HEAD_REVISION, "source_head_not_f1b7d3a9c520")
+        block(revision == HEAD_REVISION, "source_head_not_a7c4e9b2d618")
         block(tables == TABLE_COUNT, "source_table_count_not_42")
         host_system = one(conn, SQL_SYSTEM_ID)[0]
         counts = one(conn, SQL_COUNTS)

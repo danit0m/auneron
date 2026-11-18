@@ -9,6 +9,9 @@ import {
 import {
   useAuth,
 } from "../hooks/useAuth";
+import {
+  destinoDeRedirecionamento,
+} from "../lib/trocaSenha";
 import type {
   Permission,
 } from "../types/auth";
@@ -31,6 +34,7 @@ export function ProtectedRoute({
   const {
     isAuthenticated,
     isLoading,
+    user,
     hasPermission,
     hasAnyPermission,
     hasAllPermissions,
@@ -52,6 +56,27 @@ export function ProtectedRoute({
     return (
       <Navigate
         to="/login"
+        replace
+        state={{
+          from:
+            location.pathname +
+            location.search,
+        }}
+      />
+    );
+  }
+
+  const destinoTroca =
+    destinoDeRedirecionamento(
+      isAuthenticated,
+      user,
+      location.pathname,
+    );
+
+  if (destinoTroca) {
+    return (
+      <Navigate
+        to={destinoTroca}
         replace
         state={{
           from:

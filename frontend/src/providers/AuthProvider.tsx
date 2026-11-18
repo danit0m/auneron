@@ -242,6 +242,25 @@ export function AuthProvider({
     [],
   );
 
+  const changePassword = useCallback(
+    async (
+      currentPassword: string,
+      newPassword: string,
+    ): Promise<void> => {
+      await api.post(
+        "/auth/change-password",
+        {
+          current_password:
+            currentPassword,
+          new_password: newPassword,
+        },
+      );
+
+      await refreshSession();
+    },
+    [refreshSession],
+  );
+
   const value = useMemo(
     () => ({
       user,
@@ -255,6 +274,7 @@ export function AuthProvider({
       hasAllPermissions,
       signIn,
       signOut,
+      changePassword,
       refreshSession,
     }),
     [
@@ -267,6 +287,7 @@ export function AuthProvider({
       hasAllPermissions,
       signIn,
       signOut,
+      changePassword,
       refreshSession,
     ],
   );

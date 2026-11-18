@@ -134,6 +134,65 @@ def hash_session_token(token: str) -> str:
     ).hexdigest()
 
 
+PASSWORD_CHANGE_REQUIRED_CODE = "password_change_required"
+TEMP_PASSWORD_EXPIRED_CODE = "temp_password_expired"
+TEMP_PASSWORD_EXPIRED_MESSAGE = (
+    "A senha temporária venceu. Peça ao responsável "
+    "uma nova redefinição de senha."
+)
+MIN_PASSWORD_LENGTH = 12
+MAX_PASSWORD_LENGTH = 128
+
+
+def is_temp_password_expired(user: User) -> bool:
+    """
+    Senha temporaria vencida: troca obrigatoria pendente e prazo
+    (temp_password_expires_at) ja passado. Sem prazo gravado nao ha
+    vencimento.
+    """
+
+    expires_at = user.temp_password_expires_at
+
+    return bool(
+        user.must_change_password
+        and expires_at is not None
+        and expires_at < utc_now()
+    )
+
+
+def revoke_user_sessions(
+    db: Session,
+    user_id: int,
+    *,
+    except_session_id: int | None = None,
+) -> int:
+    """
+    Revoga as sessoes ainda nao revogadas do usuario SEM commit: o
+    chamador decide a transacao (o script de redefinicao e a troca de
+    senha gravam hash e revogacao juntos). Devolve quantas revogou.
+    """
+
+    query = db.query(AuthSession).filter(
+        AuthSession.user_id == user_id,
+        AuthSession.revoked_at.is_(None),
+    )
+
+    if except_session_id is not None:
+        query = query.filter(
+            AuthSession.id != except_session_id
+        )
+
+    now = utc_now()
+    count = 0
+
+    for auth_session in query.all():
+        auth_session.revoked_at = now
+        auth_session.elevated_until = None
+        count += 1
+
+    return count
+
+
 class NonInteractivePrincipalError(Exception):
     """
     role=system is a non-interactive principal. It cannot authenticate
@@ -308,12 +367,11 @@ def is_session_elevated(
     )
 
 
-def require_user_session(
-    session_token: str | None = Cookie(
-        default=None,
-        alias=AUTH_COOKIE_NAME,
-    ),
-    db: Session = Depends(get_db),
+def _resolve_user_session(
+    session_token: str | None,
+    db: Session,
+    *,
+    allow_password_change: bool,
 ) -> AuthenticatedSession:
     if not session_token:
         raise HTTPException(
@@ -375,9 +433,64 @@ def require_user_session(
             },
         )
 
+    if user.must_change_password:
+        if is_temp_password_expired(user):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=TEMP_PASSWORD_EXPIRED_MESSAGE,
+                headers={
+                    "WWW-Authenticate": "Session",
+                },
+            )
+
+        if not allow_password_change:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": PASSWORD_CHANGE_REQUIRED_CODE,
+                    "message": (
+                        "É obrigatório trocar a senha "
+                        "temporária antes de continuar."
+                    ),
+                },
+            )
+
     return AuthenticatedSession(
         user=user,
         session=auth_session,
+    )
+
+
+def require_user_session(
+    session_token: str | None = Cookie(
+        default=None,
+        alias=AUTH_COOKIE_NAME,
+    ),
+    db: Session = Depends(get_db),
+) -> AuthenticatedSession:
+    return _resolve_user_session(
+        session_token,
+        db,
+        allow_password_change=False,
+    )
+
+
+def require_user_session_allow_password_change(
+    session_token: str | None = Cookie(
+        default=None,
+        alias=AUTH_COOKIE_NAME,
+    ),
+    db: Session = Depends(get_db),
+) -> AuthenticatedSession:
+    """
+    Unica dependencia que aceita sessao com must_change_password=true:
+    so para GET /auth/me, POST /auth/logout e POST /auth/change-password.
+    """
+
+    return _resolve_user_session(
+        session_token,
+        db,
+        allow_password_change=True,
     )
 
 

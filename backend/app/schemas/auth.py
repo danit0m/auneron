@@ -37,6 +37,17 @@ class ElevationRequest(BaseModel):
     )
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+    new_password: str = Field(
+        min_length=12,
+        max_length=128,
+    )
+
+
 class AuthUserResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True,
@@ -47,6 +58,7 @@ class AuthUserResponse(BaseModel):
     email: str
     role: UserRole
     active: bool
+    must_change_password: bool = False
 
 
 class AuthSessionResponse(BaseModel):

@@ -9,6 +9,11 @@ import type {
   HumanAssessmentRequest,
 } from "../types/escalationObservation";
 
+import {
+  ehErroTrocaObrigatoria,
+  ROTA_TROCAR_SENHA,
+} from "../lib/trocaSenha";
+
 export const REQUEST_ID_HEADER =
   "X-Request-ID";
 
@@ -160,6 +165,32 @@ api.interceptors.request.use(
     }
 
     return config;
+  },
+);
+
+/**
+ * B1 -- 403 password_change_required: a senha e temporaria e a troca e
+ * obrigatoria; leva o usuario a tela de troca (a pagina recarrega o /auth/me).
+ */
+api.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (
+      axios.isAxiosError(error) &&
+      ehErroTrocaObrigatoria(
+        error.response?.status,
+        error.response?.data,
+      ) &&
+      typeof window !== "undefined" &&
+      window.location.pathname !==
+        ROTA_TROCAR_SENHA
+    ) {
+      window.location.assign(
+        ROTA_TROCAR_SENHA,
+      );
+    }
+
+    return Promise.reject(error);
   },
 );
 

@@ -465,10 +465,10 @@ sys.exit(2)
 
     $ast = [Management.Automation.Language.Parser]::ParseFile($alvoScript, [ref]$null, [ref]$null)
     $nomesParam = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-    $esperados = @('Comando', 'Pasta', 'Cofre', 'Base', 'Destino', 'ConfirmarBackup', 'Relatorio', 'Conta', 'Shadow', 'DigestModelo', 'OrcamentoShadow', 'Confirmar', 'Simular', 'SemSondagem', 'CarregarFuncoes')
+    $esperados = @('Comando', 'Pasta', 'Cofre', 'Base', 'Destino', 'ConfirmarBackup', 'Relatorio', 'Conta', 'Shadow', 'DigestModelo', 'OrcamentoShadow', 'Email', 'PermitirUltimoAdmin', 'Confirmar', 'Simular', 'SemSondagem', 'CarregarFuncoes')
     $extras = @($nomesParam | Where-Object { $esperados -notcontains $_ })
     $faltam = @($esperados | Where-Object { $nomesParam -notcontains $_ })
-    Verificar 'parametros: apenas os existentes mais -Relatorio e -Conta' ($extras.Count -eq 0 -and $faltam.Count -eq 0) (($extras + $faltam) -join ',')
+    Verificar 'parametros: apenas os existentes mais -Relatorio, -Conta, -Email e -PermitirUltimoAdmin' ($extras.Count -eq 0 -and $faltam.Count -eq 0) (($extras + $faltam) -join ',')
     $pRel = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Relatorio' })[0]
     $vsRel = @($pRel.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
     Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema, deteccao, shadow)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema,deteccao,shadow') ($vsRel -join ',')
@@ -500,6 +500,39 @@ sys.exit(2)
         $r = Rodar-Script (@($cmdSh, '-Simular', '-SemSondagem', '-Pasta', $pastaBind, '-Modulo', 'os') + $comuns)
         Verificar ($cmdSh + ': nenhum parametro escolhe o modulo') ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
     }
+
+    Write-Host '== redefinir-senha (recuperacao manual; offline) =='
+    $mail = 'pessoa@empresa.com'
+    $r = Rodar-Script (@('redefinir-senha', '-Email', $mail, '-Simular', '-SemSondagem') + $comuns)
+    Verificar 'redefinir-senha: aceito no ValidateSet (recusa por falta de -Pasta)' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta' -and $r.Saida -notmatch 'ValidateSet') $r.Saida
+    $r = Rodar-Script (@('redefinir-senha', '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+    Verificar 'redefinir-senha sem -Email: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Email') $r.Saida
+    foreach ($ruim in @('sem-arroba', '-m', '--x@a.com', 'a b@c.com', 'a@b', 'a@b.com;calc')) {
+        $r = Rodar-Script (@('redefinir-senha', '-Email', $ruim, '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+        Verificar ('redefinir-senha: e-mail recusado [' + $ruim + ']') ($r.Codigo -ne 0 -and $r.Saida -match 'Email') $r.Saida
+    }
+    $r = Rodar-Script (@('redefinir-senha', '-Email', $mail, '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+    Verificar 'redefinir-senha sem o .py no checkout: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'reset_user_password') $r.Saida
+    Set-Content -LiteralPath (Join-Path $pastaBind 'backend\scripts\reset_user_password.py') -Value '' -Encoding ASCII
+    $r = Rodar-Script (@('redefinir-senha', '-Email', $mail, '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+    $saidas['redefinir-senha-simular'] = $r.Saida
+    Verificar 'redefinir-senha -Simular: exit 0, modulo fixo, e-mail como argumento, nada gravado' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('-m scripts.reset_user_password ' + $mail) -and $r.Saida -notmatch '--permitir-ultimo-admin' -and $r.Saida.Contains('auneron_neon_synthetic')) $r.Saida
+    $r = Rodar-Script (@('redefinir-senha', '-Email', $mail, '-Pasta', $pastaBind) + $comuns)
+    $saidas['redefinir-senha-sem-confirmar'] = $r.Saida
+    Verificar 'redefinir-senha sem -Confirmar: exit 0 e nao grava' ($r.Codigo -eq 0 -and $r.Saida -match 'Nada foi gravado' -and $r.Saida -match '-Confirmar') $r.Saida
+    $r = Rodar-Script (@('redefinir-senha', '-Email', $mail, '-PermitirUltimoAdmin', '-Simular', '-SemSondagem', '-Pasta', $pastaBind) + $comuns)
+    Verificar 'redefinir-senha -PermitirUltimoAdmin repassa a flag ao modulo' ($r.Codigo -eq 0 -and $r.Saida.Contains('--permitir-ultimo-admin')) $r.Saida
+    $r = Rodar-Script (@('status', '-SemSondagem', '-Email', $mail) + $comuns)
+    Verificar '-Email fora de redefinir-senha: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'so valem com redefinir-senha') $r.Saida
+    $r = Rodar-Script (@('redefinir-senha', '-Simular', '-SemSondagem', '-Pasta', $pastaBind, '-Modulo', 'os') + $comuns)
+    Verificar 'redefinir-senha: nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
+    $mRed = [regex]::Match([IO.File]::ReadAllText($alvoScript), '(?s)function Cmd-RedefinirSenha \{.*?\r?\n\}\r?\n')
+    Verificar 'redefinir-senha: modulo e arquivo literais fixos, ambiente do backend, e-mail validado antes de executar' ($mRed.Success -and $mRed.Value.Contains("'backend\scripts\reset_user_password.py'") -and $mRed.Value.Contains("'scripts.reset_user_password'") -and $mRed.Value.Contains("Montar-Ambiente 'backend'") -and $mRed.Value.IndexOf('-notmatch') -ge 0 -and $mRed.Value.IndexOf('-notmatch') -lt $mRed.Value.IndexOf('Invoke-Filho'))
+    $posConfR = if ($mRed.Success) { $mRed.Value.IndexOf('$script:Ctx.Confirmar') } else { -1 }
+    $posRunR = if ($mRed.Success) { $mRed.Value.IndexOf('Invoke-Filho') } else { -1 }
+    Verificar 'redefinir-senha: checagem de -Confirmar/-Simular vem antes de qualquer execucao' ($posConfR -ge 0 -and $posRunR -gt $posConfR -and $mRed.Value.Contains('$script:Ctx.Simular'))
+    $pyRed = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'reset_user_password.py'))
+    Verificar 'reset_user_password.py: banco esperado fixo, hash do mesmo utilitario do login, so a senha temporaria e impressa' ($pyRed.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyRed.Contains('from app.core.authentication import hash_password') -and $pyRed -notmatch 'print\([^)]*(password_hash|\.hash)' -and $pyRed -notmatch '(?i)logging|logger')
 
     $r = Rodar-Script (@('consultar', '-Relatorio', 'shadow', '-Conta', '5', '-Simular') + $comuns)
     Verificar 'shadow com -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida

@@ -6,6 +6,7 @@ from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.sql import func
+from sqlalchemy.sql import false
 from sqlalchemy.sql import true
 
 from app.database.database import Base
@@ -86,6 +87,23 @@ class User(Base):
     )
 
     last_login_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    must_change_password = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=false(),
+    )
+
+    temp_password_expires_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    password_changed_at = Column(
         DateTime(timezone=True),
         nullable=True,
     )
