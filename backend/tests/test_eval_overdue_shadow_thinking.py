@@ -67,7 +67,7 @@ def test_empty_content_and_truncation_are_invalid_and_classified(tmp_path):
 
         if index == 1:
             # complete-looking JSON, but cut by the limit: never used
-            return good("mark_overdue", done_reason="length", eval_count=2048)
+            return good("mark_overdue", done_reason="length", eval_count=4096)
 
         return good(rule(payload))
 

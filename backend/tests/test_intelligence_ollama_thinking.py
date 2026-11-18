@@ -127,13 +127,13 @@ def test_profile_has_reasoning_on_with_the_recommended_sampling() -> None:
         profile.sampling.top_k,
         profile.sampling.seed,
     ) == (0.6, 0.95, 20, 0)
-    assert profile.max_output_tokens_cap == 2048
+    assert profile.max_output_tokens_cap == 4096
     assert profile.max_output_tokens_cap == LOCAL_QWEN3_4B_THINK_OUTPUT_TOKENS
     assert profile.price_key == "local-zero"
 
 
 def test_shadow_budget_of_tokens_fits_the_profile_cap() -> None:
-    assert shadow.MAX_OUTPUT_TOKENS == 2048
+    assert shadow.MAX_OUTPUT_TOKENS == 4096
     assert (
         shadow.MAX_OUTPUT_TOKENS
         <= build_local_ollama_profile().max_output_tokens_cap
@@ -177,7 +177,7 @@ def test_chat_body_carries_think_sampling_and_num_predict() -> None:
         "top_p": 0.95,
         "seed": 0,
         "num_ctx": 8192,
-        "num_predict": 2048,
+        "num_predict": 4096,
     }
 
 
@@ -226,11 +226,11 @@ def test_content_with_prose_is_returned_as_is_for_the_gateway_to_refuse() -> Non
 
 def test_truncated_by_length_is_truncated_even_with_json_in_thinking() -> None:
     response, _ = invoke(
-        chat_document(content="", done_reason="length", eval_count=2048)
+        chat_document(content="", done_reason="length", eval_count=4096)
     )
 
     assert response.status is ProviderStatus.TRUNCATED
-    assert response.output_tokens == 2048
+    assert response.output_tokens == 4096
     assert response.thinking_length == len(SECRET_THINKING)
 
 
@@ -314,13 +314,13 @@ def test_gateway_sends_think_true_from_the_profile_and_accepts_content() -> None
     assert result.ok and result.parsed["decision"] == "no_action"
     sent = transport.bodies[0]
     assert sent["think"] is True
-    assert sent["options"]["num_predict"] == 2048
+    assert sent["options"]["num_predict"] == 4096
     assert sent["options"]["temperature"] == 0.6
     assert ledger.reserved[0]["prompt_template_id"] == (
         "overdue-shadow-prompt-v2-think"
     )
-    # one worst-case reservation uses the 2048 output budget
-    assert ledger.reserved[0]["reservation"].tokens > 2048
+    # one worst-case reservation uses the 4096 output budget
+    assert ledger.reserved[0]["reservation"].tokens > 4096
 
 
 @pytest.mark.parametrize(
@@ -450,15 +450,15 @@ def test_timeout_above_120_only_for_the_local_shadow() -> None:
         settings(INTELLIGENCE_CALL_TIMEOUT_SECONDS=301, **SHADOW_ON)
 
 
-def test_new_shadow_budget_covers_the_2048_worst_case() -> None:
+def test_new_shadow_budget_covers_the_4096_worst_case() -> None:
     from scripts import create_shadow_budget as script
 
-    assert script.SCOPE_REF == "s5-shadow-overdue-synthetic-think"
+    assert script.SCOPE_REF == "s5-shadow-overdue-synthetic-think-4096"
     assert script.SCOPE_REF != "s5-shadow-overdue-synthetic"
     reservation = script.one_call_reservation(2000)
     # the old budget (256 output tokens, margin 2000) was 1064
     assert reservation.tokens > 1064
-    assert reservation.tokens >= 2048
+    assert reservation.tokens >= 4096
 
 
 def test_evaluator_uses_the_shadow_profile_settings() -> None:

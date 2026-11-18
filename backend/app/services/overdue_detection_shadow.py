@@ -70,7 +70,7 @@ OUTPUT_SCHEMA_ID: Final[str] = "overdue-shadow-output-v1"
 DECISIONS: Final[tuple[str, str]] = ("mark_overdue", "no_action")
 # Reasoning + the JSON answer. 256 only held the JSON. The profile cap
 # (LOCAL_QWEN3_4B_THINK_OUTPUT_TOKENS) is the same value.
-MAX_OUTPUT_TOKENS: Final[int] = 2048
+MAX_OUTPUT_TOKENS: Final[int] = 4096
 
 OUTPUT_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",

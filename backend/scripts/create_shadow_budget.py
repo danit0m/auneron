@@ -13,12 +13,12 @@ chamada do perfil local-qwen3-4b (preco zero):
   1 micro e e devolvida na liquidacao). Fica em 1, apenas o minimo aceito.
 - Tokens: e o limite que garante "uma chamada". limit_tokens = a reserva de
   pior caso de UMA tentativa (bytes de instrucoes + entrada + schema, mais
-  os tokens de saida de pior caso (2048), mais a margem configurada), calculada com as
+  os tokens de saida de pior caso (4096), mais a margem configurada), calculada com as
   mesmas constantes e a mesma funcao do gateway. Enquanto a chamada esta em voo, a
   reserva ocupa o limite inteiro (R = L); depois da liquidacao o consumo real
   (entrada + saida, minimo 2 tokens, na pratica centenas) fica em S e uma
   segunda reserva (R2 ~ L) nao cabe (S + R2 > L). Com raciocinio, a saida de pior
-  caso e shadow.MAX_OUTPUT_TOKENS (2048: raciocinio + JSON), e o consumo real
+  caso e shadow.MAX_OUTPUT_TOKENS (4096: raciocinio + JSON), e o consumo real
   (eval_count inclui os tokens de raciocinio) pode chegar a ~2000: ainda assim
   S + R2 > L, entao uma segunda chamada continua recusada. Se a chamada falhar com
   estado desconhecido, U = R tambem bloqueia a seguinte (e o breaker de
@@ -61,10 +61,10 @@ from app.services import overdue_detection_shadow as shadow
 
 EXPECTED_DATABASE = "auneron_neon_synthetic"
 SCOPE_KIND = "deployment_period"
-# Novo scope_ref para o shadow COM raciocinio (think=true, 2048 tokens de saida).
+# Novo scope_ref para o shadow COM raciocinio (think=true, 4096 tokens de saida).
 # O orcamento anterior (s5-shadow-overdue-synthetic, id 1) foi dimensionado para
 # o prompt v1 sem raciocinio (256 tokens de saida); NAO e alterado nem apagado.
-SCOPE_REF = "s5-shadow-overdue-synthetic-think"
+SCOPE_REF = "s5-shadow-overdue-synthetic-think-4096"
 PERIOD_DAYS = 7
 PRICE_KEY = "local-zero"
 

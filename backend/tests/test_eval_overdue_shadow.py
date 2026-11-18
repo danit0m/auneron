@@ -370,7 +370,7 @@ def test_latency_percentiles_max_and_total(tmp_path):
             "total": 20000,
         },
     }
-    # raciocinio ligado: carga a frio + ate 2048 tokens nao cabem em 120 s
+    # raciocinio ligado: carga a frio + ate 4096 tokens nao cabem em 120 s
     assert ev.CALL_TIMEOUT_SECONDS == 300
     assert report["config"]["timeout_seconds"] == 300
     summary = (out / "summary.md").read_text(encoding="utf-8")
@@ -416,7 +416,7 @@ def test_prompt_schema_input_and_options_are_the_shadows(tmp_path):
     assert first["options"]["seed"] == 0
     assert first["model"] == "qwen3:4b"
     assert first["think"] is True and first["stream"] is False
-    assert first["options"]["num_predict"] == 2048
+    assert first["options"]["num_predict"] == 4096
 
     for sent, (status, due, business) in zip(runtime.chats, ROWS):
         expected_input = shadow.build_model_input(

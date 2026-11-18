@@ -59,7 +59,7 @@ DAYS = 41
 def shadow_test_profile():
     """
     Fake-provider profile that mirrors the REAL shadow profile's output
-    cap (reasoning + JSON = 2048). The lab profiles (cap 512/1024) would
+    cap (reasoning + JSON = 4096). The lab profiles (cap 512/1024) would
     be refused in the gateway preflight, so the shadow would never call
     the provider. Name/price/model are the lab-fast ones.
     """

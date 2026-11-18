@@ -70,7 +70,7 @@ APPROVED_DIGEST: Final[str] = (
 EXPECTED_OLLAMA_VERSION: Final[str] = "0.40.16"
 MIN_FREE_MEMORY_GIB: Final[float] = 14.0
 # = INTELLIGENCE_CALL_TIMEOUT_SECONDS da S5 com raciocinio (300 s): carga a frio
-# (~33 s) + ate 2048 tokens a ~19 tok/s (~108 s) + leitura do prompt. 120 nao basta.
+# (~33 s) + ate 4096 tokens a ~19 tok/s (~215 s) + leitura do prompt. 120 nao basta.
 CALL_TIMEOUT_SECONDS: Final[int] = 300
 MAX_CONSECUTIVE_FAILURES: Final[int] = 5
 DECISIONS: Final[tuple[str, str]] = shadow.DECISIONS
