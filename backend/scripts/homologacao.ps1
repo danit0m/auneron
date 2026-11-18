@@ -8,7 +8,7 @@
     Nenhum comando imprime, exporta ou copia valores do cofre.
 
     Comandos: configurar, status, versao-banco, pendentes, backup, ensaiar, migrar,
-              registrar-acao-pagamento, registrar-acao-atraso, detectar-vencidos, consultar,
+              registrar-acao-pagamento, registrar-acao-atraso, consultar,
               provisionar-deteccao-vencidos, vincular-deteccao-vencidos, desvincular-deteccao-vencidos,
               provisionar-orcamento-shadow, provisionar-conta-vencida-sintetica, redefinir-senha,
               subir-backend, parar-backend, subir-frontend, parar-frontend,
@@ -82,14 +82,6 @@
       auneron_neon_synthetic (4) e, ao vincular, se houver autoridade L3 ativa (5). Idempotente.
       Sem -Confirmar apenas mostra o que faria. Exige -Pasta. Codigos: 0 ok, 3 inelegivel, 4, 5.
 
-    detectar-vencidos: varredura diaria de vencimento (POST /accounts/detect-overdue).
-      Le a API_KEY vigente do cofre na hora e a entrega ao script
-      backend\scripts\scheduled_detect_overdue.py so por variavel de ambiente.
-      Email/senha da conta de servico vem do arquivo de credenciais externo.
-      Repassa o codigo de saida do script (0 ok, 1 erro, 2 falhas parciais).
-      Exige -Pasta. Para a tarefa agendada:
-        powershell -NoProfile -ExecutionPolicy Bypass -File <checkout>\backend\scripts\homologacao.ps1 detectar-vencidos -Pasta <checkout>
-
     Exemplos:
       .\homologacao.ps1 configurar                 (o diretor, no terminal dele)
       .\homologacao.ps1 status
@@ -126,7 +118,7 @@ param(
     [Parameter(ParameterSetName = 'Normal', Position = 0, Mandatory = $true)]
     [ValidateSet(
         'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
-        'registrar-acao-pagamento', 'registrar-acao-atraso', 'detectar-vencidos', 'consultar',
+        'registrar-acao-pagamento', 'registrar-acao-atraso', 'consultar',
         'provisionar-deteccao-vencidos', 'vincular-deteccao-vencidos', 'desvincular-deteccao-vencidos',
         'provisionar-orcamento-shadow', 'provisionar-conta-vencida-sintetica', 'redefinir-senha',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend',
@@ -788,12 +780,6 @@ function Montar-Ambiente {
         }
         $amb['PYTHONUTF8'] = '1'
     }
-    elseif ($Alvo -eq 'varredura') {
-        # So a chave vigente: a varredura nao precisa do banco.
-        Exigir-Segredos $cofre @('API_KEY')
-        $amb['API_KEY'] = Obter-Segredo $cofre 'API_KEY'
-        $amb['PYTHONUTF8'] = '1'
-    }
     elseif ($Alvo -eq 'frontend') {
         Exigir-Segredos $cofre @('API_KEY')
         $amb['AUNERON_BACKEND_URL'] = $script:UrlBackend
@@ -807,7 +793,6 @@ function Nomes-Do-Ambiente {
     if ($Alvo -eq 'backend') {
         return (@($script:ConfigPadrao.Keys) + $script:NomesSegredos + @('PYTHONUTF8')) -join ', '
     }
-    if ($Alvo -eq 'varredura') { return 'API_KEY, PYTHONUTF8' }
     return 'AUNERON_BACKEND_URL, AUNERON_API_KEY'
 }
 
@@ -1529,31 +1514,6 @@ function Cmd-VincularDeteccaoVencidos { Rodar-BindingDeteccao -Modo 'vincular' }
 
 function Cmd-DesvincularDeteccaoVencidos { Rodar-BindingDeteccao -Modo 'desvincular' }
 
-function Cmd-DetectarVencidos {
-    # Varredura diaria de vencimento. A chave vigente (API_KEY) sai do cofre no momento da execucao
-    # e vai ao filho SO por variavel de ambiente. O script e o interpretador sao fixos (nenhum
-    # parametro do usuario escolhe executavel ou arquivo). O codigo de saida do script e repassado.
-    $raiz = Resolver-Pasta
-    $arqPy = Join-Path $raiz 'backend\scripts\scheduled_detect_overdue.py'
-    if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
-        Falhar 'Nao existe backend\scripts\scheduled_detect_overdue.py no checkout informado.'
-    }
-    $py = Resolver-Python $raiz
-    if ($script:Ctx.Simular) {
-        Info 'SIMULACAO: nada sera feito.'
-        Info ('Faria, em {0}\backend: {1} {2}' -f $raiz, $py, $arqPy)
-        Info ('Ambiente do filho (nomes): ' + (Nomes-Do-Ambiente 'varredura'))
-        return
-    }
-    $amb = Montar-Ambiente 'varredura'
-    $res = Invoke-Filho -Exe $py -Argumentos @($arqPy) -DiretorioTrabalho (Join-Path $raiz 'backend') -Ambiente $amb
-    if ($res.Saida) { Info $res.Saida }
-    if ($res.Codigo -ne 0) {
-        $script:Codigo = $res.Codigo
-        Falhar ('scheduled_detect_overdue.py terminou com codigo {0} (1 = erro, 2 = falhas parciais).' -f $res.Codigo)
-    }
-}
-
 function Cmd-Consultar {
     # Somente leitura: SQL fixo por relatorio, transacao read-only forcada em duas camadas
     # (PGOPTIONS no ambiente do filho e BEGIN READ ONLY / ROLLBACK no proprio SQL).
@@ -2206,7 +2166,6 @@ function Principal {
             'migrar'         { Cmd-Migrar }
             'registrar-acao-pagamento' { Cmd-RegistrarAcaoPagamento }
             'registrar-acao-atraso'    { Cmd-RegistrarAcaoAtraso }
-            'detectar-vencidos' { Cmd-DetectarVencidos }
             'consultar'      { Cmd-Consultar }
             'provisionar-deteccao-vencidos' { Cmd-ProvisionarDeteccaoVencidos }
             'vincular-deteccao-vencidos' { Cmd-VincularDeteccaoVencidos }
