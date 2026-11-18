@@ -597,6 +597,134 @@ sys.exit(2)
     $pyCta = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_shadow_synthetic_account.py'))
     Verificar 'create_shadow_budget.py e create_shadow_synthetic_account.py: banco esperado fixo e sem DELETE' ($pyOrc.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyCta.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyOrc -notmatch '(?i)\.delete\(|\bDELETE\b\s+FROM' -and $pyCta -notmatch '(?i)\.delete\(|\bDELETE\b\s+FROM')
 
+    Write-Host '== Instancia de teste da importacao (A6; offline) =='
+    Verificar 'importacao: auneron_test aceito' (Test-NomeBancoImportacao 'auneron_test' 'auneron_neon_synthetic')
+    foreach ($ruim in @('', 'auneron', 'Auneron_Test', 'AUNERON_TEST', 'auneron_test ', 'auneron_test2', 'auneron_neon_synthetic', 'auneron_ensaio_20261114093015', 'auneron_test"; x', "auneron_test`n")) {
+        Verificar ('importacao: nome recusado [' + ($ruim -replace "`n", '\n') + ']') (-not (Test-NomeBancoImportacao $ruim 'auneron_neon_synthetic'))
+    }
+    Verificar 'importacao: banco da homologacao igual a auneron_test recusado' (-not (Test-NomeBancoImportacao 'auneron_test' 'auneron_test'))
+    Verificar 'importacao: hosts locais aceitos' ((Test-HostLocal 'localhost') -and (Test-HostLocal '127.0.0.1') -and (Test-HostLocal '::1') -and (Test-HostLocal 'LocalHost'))
+    Verificar 'importacao: hosts nao locais recusados' (-not (Test-HostLocal 'fakehost') -and -not (Test-HostLocal 'ep-x.neon.tech') -and -not (Test-HostLocal '') -and -not (Test-HostLocal '10.0.0.5') -and -not (Test-HostLocal 'localhost.evil.com'))
+    $u = Montar-UrlBancoImportacao $fakeUrl
+    Verificar 'importacao: URL troca so o banco' ($u -eq ('postgresql+psycopg://fakeuser:' + $fakeSenhaCodificada + '@fakehost:5999/auneron_test')) 'ok'
+    $u = Montar-UrlBancoImportacao 'postgresql://u:p%40q@localhost:5433/real?sslmode=require&x=1'
+    Verificar 'importacao: URL preserva a query' ($u -eq 'postgresql://u:p%40q@localhost:5433/auneron_test?sslmode=require&x=1') 'ok'
+    $a = Montar-AmbienteImportacao 'postgresql://u@localhost/auneron_test'
+    Verificar 'importacao: ambiente fixo (test, chave ligada, manutencao desligada, inteligencia off, banco de teste)' ($a['APP_ENV'] -eq 'test' -and $a['IMPORT_CONFIRMATION_TEST_ENABLED'] -eq 'true' -and $a['MAINTENANCE_ENABLED'] -eq 'false' -and $a['INTELLIGENCE_MODE'] -eq 'off' -and $a['DATABASE_URL'] -eq 'postgresql://u@localhost/auneron_test' -and $a['CORS_ORIGINS'] -match '5181')
+
+    # Cofre temporario com servidor LOCAL (valores falsos) para exercitar o caminho feliz das simulacoes.
+    $baseL = Join-Path $tmp 'base-local'
+    $cofreL = Join-Path $baseL 'cofre.xml'
+    [void](New-Item -ItemType Directory -Force -Path $baseL)
+    $fakeUrlLocal = 'postgresql+psycopg://fakeuser:' + $fakeSenhaCodificada + '@localhost:5999/fakedb'
+    $proibidos = $proibidos + @($fakeUrlLocal)
+    $script:Ctx.Cofre = $cofreL
+    $script:Ctx.Base = $baseL
+    Salvar-Cofre @{
+        'DATABASE_URL' = (ConvertTo-SecureString -String $fakeUrlLocal -AsPlainText -Force | ConvertFrom-SecureString)
+        'API_KEY'      = (ConvertTo-SecureString -String $fakeChave -AsPlainText -Force | ConvertFrom-SecureString)
+    }
+    $script:Ctx.Cofre = ''
+    $script:Ctx.Base = ''
+    $comunsL = @('-Cofre', $cofreL, '-Base', $baseL)
+    $dumpNovo = Join-Path $tmp 'imp.dump'
+    Set-Content -LiteralPath $dumpNovo -Value 'x' -Encoding ASCII
+
+    $r = Rodar-Script (@('preparar-instancia-importacao', '-Pasta', $pasta) + $comunsL)
+    Verificar 'preparar: sem -ConfirmarBackup recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'ConfirmarBackup') $r.Saida
+    $r = Rodar-Script (@('preparar-instancia-importacao', '-ConfirmarBackup', $dumpNovo) + $comunsL)
+    Verificar 'preparar: sem -Pasta recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta') $r.Saida
+    $r = Rodar-Script (@('preparar-instancia-importacao', '-Simular', '-Pasta', $pasta, '-ConfirmarBackup', $velho) + $comunsL)
+    Verificar 'preparar: dump com mais de 24 h recusado' ($r.Codigo -ne 0 -and $r.Saida -match '24 h') $r.Saida
+    $r = Rodar-Script (@('preparar-instancia-importacao', '-Simular', '-Pasta', $pasta, '-ConfirmarBackup', (Join-Path $tmp 'nao-existe.dump')) + $comunsL)
+    Verificar 'preparar: dump inexistente recusado' ($r.Codigo -ne 0 -and $r.Saida -match 'nao existe') $r.Saida
+    $r = Rodar-Script (@('preparar-instancia-importacao', '-Simular', '-Pasta', $pasta, '-ConfirmarBackup', $dumpNovo) + $comuns)
+    $saidas['preparar-host-remoto'] = $r.Saida
+    Verificar 'preparar: servidor nao local (fakehost) recusado' ($r.Codigo -ne 0 -and $r.Saida -match 'nao e local') $r.Saida
+    $r = Rodar-Script (@('preparar-instancia-importacao', '-Simular', '-Pasta', $pasta, '-ConfirmarBackup', $dumpNovo) + $comunsL)
+    $saidas['preparar-simular'] = $r.Saida
+    Verificar 'preparar -Simular: exit 0, banco auneron_test, homologacao intocada, recusa se existir' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida -match 'Banco novo: auneron_test' -and $r.Saida -match 'fakedb NAO sera tocado' -and $r.Saida -match 'remover-instancia-importacao') $r.Saida
+    $r = Rodar-Script (@('preparar-instancia-importacao', '-Pasta', $pasta, '-ConfirmarBackup', $dumpNovo) + $comunsL)
+    Verificar 'preparar sem -Confirmar: nada e criado' ($r.Codigo -eq 0 -and $r.Saida -match 'Nada foi criado') $r.Saida
+
+    $r = Rodar-Script (@('subir-backend-importacao', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comunsL)
+    $saidas['subir-backend-importacao'] = $r.Saida
+    Verificar 'subir-backend-importacao -Simular: porta 8001, auneron_test, APP_ENV=test, chave ligada, manutencao desligada' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('--port 8001') -and $r.Saida -match 'auneron_test em localhost' -and $r.Saida.Contains('APP_ENV=test') -and $r.Saida.Contains('IMPORT_CONFIRMATION_TEST_ENABLED=true') -and $r.Saida.Contains('MAINTENANCE_ENABLED=false') -and $r.Saida -match 'backend-importacao-\d{8}-\d{6}\.out\.log' -and $r.Saida -match 'DATABASE_URL') $r.Saida
+    $r = Rodar-Script (@('subir-backend-importacao', '-Pasta', $pasta) + $comunsL)
+    Verificar 'subir-backend-importacao sem -Confirmar/-Simular: nada e iniciado' ($r.Codigo -eq 0 -and $r.Saida -match 'Nada foi iniciado') $r.Saida
+    $r = Rodar-Script (@('subir-backend-importacao', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comuns)
+    Verificar 'subir-backend-importacao: servidor nao local recusado' ($r.Codigo -ne 0 -and $r.Saida -match 'nao e local') $r.Saida
+    $r = Rodar-Script (@('subir-backend-importacao', '-Simular', '-SemSondagem') + $comunsL)
+    Verificar 'subir-backend-importacao sem -Pasta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta') $r.Saida
+    $r = Rodar-Script (@('subir-backend-importacao', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Porta', '8000') + $comunsL)
+    Verificar 'subir-backend-importacao: a porta nao e parametro' ($r.Codigo -ne 0 -and $r.Saida -match 'Porta')
+    $r = Rodar-Script (@('subir-frontend-importacao', '-Simular', '-SemSondagem', '-Pasta', $pasta) + $comunsL)
+    $saidas['subir-frontend-importacao'] = $r.Saida
+    Verificar 'subir-frontend-importacao -Simular: porta 5181 e aponta a 8001 (se node no PATH)' ((($r.Codigo -eq 0) -and $r.Saida.Contains('--port 5181') -and $r.Saida -match 'AUNERON_BACKEND_URL' -and $r.Saida -match 'frontend-importacao-\d{8}-\d{6}') -or ($r.Saida -match 'node.exe nao encontrado')) $r.Saida
+    $r = Rodar-Script (@('remover-instancia-importacao', '-Pasta', $pasta) + $comunsL)
+    Verificar 'remover sem -Confirmar: nada e removido e cita aprovacao de Daniel' ($r.Codigo -eq 0 -and $r.Saida -match 'Nada foi removido' -and $r.Saida -match 'Daniel' -and $r.Saida -match 'Sera excluido apenas o banco auneron_test') $r.Saida
+    $r = Rodar-Script (@('remover-instancia-importacao', '-Simular', '-Pasta', $pasta) + $comunsL)
+    Verificar 'remover -Simular: exit 0, nada removido' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO: nada sera removido') $r.Saida
+    $r = Rodar-Script (@('remover-instancia-importacao', '-Simular') + $comunsL)
+    Verificar 'remover sem -Pasta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta') $r.Saida
+    $r = Rodar-Script (@('remover-instancia-importacao', '-Simular', '-Pasta', $pasta, '-Banco', 'auneron_neon_synthetic') + $comunsL)
+    Verificar 'remover: o nome do banco nao e parametro' ($r.Codigo -ne 0 -and $r.Saida -match 'Banco')
+
+    # Porta 8001 ocupada: um listener temporario DESTE processo (liberado no finally; nada em segundo plano).
+    $escuta = $null
+    try {
+        $escuta = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Parse('127.0.0.1'), 8001)
+        $escuta.Start()
+    }
+    catch { $escuta = $null }
+    if ($null -ne $escuta) {
+        try {
+            $r = Rodar-Script (@('subir-backend-importacao', '-Simular', '-Pasta', $pasta) + $comunsL)
+            Verificar 'subir-backend-importacao: porta 8001 ocupada recusada' ($r.Codigo -ne 0 -and $r.Saida -match 'Porta 8001 ja esta ocupada') $r.Saida
+            $r = Rodar-Script (@('remover-instancia-importacao', '-Confirmar', '-Pasta', $pasta) + $comunsL)
+            Verificar 'remover -Confirmar com a 8001 ocupada: recusa (pare o backend antes) e nada e removido' ($r.Codigo -ne 0 -and $r.Saida -match 'Porta 8001 ja esta ocupada') $r.Saida
+            $r = Rodar-Script (@('parar-backend-importacao', '-Simular') + $comunsL)
+            Verificar 'parar-backend-importacao: processo que nao e o uvicorn esperado na 8001 nao e parado' ($r.Codigo -ne 0 -and $r.Saida -match 'NAO e o backend esperado') $r.Saida
+        }
+        finally { $escuta.Stop() }
+    }
+    else { Write-Host '  (aviso: porta 8001 ja ocupada neste PC; testes de porta ocupada nao executados)' }
+
+    # Funcoes com psql FALSO (sem servidor): existencia, ordem dos comandos e conferencia literal do nome.
+    $psqlOriginal = ${function:Invoke-Psql}
+    $script:SqlsFalsos = New-Object System.Collections.ArrayList
+    $script:ExisteFalso = ''
+    function Invoke-Psql {
+        param($Psql, $Db, $Sql)
+        [void]$script:SqlsFalsos.Add([string]$Sql)
+        $s = ''
+        if ($Sql -like 'SELECT (rolcreatedb*') { $s = 't' }
+        elseif ($Sql -like 'SELECT 1 FROM pg_database*') { $s = $script:ExisteFalso }
+        return [pscustomobject]@{ Codigo = 0; Saida = $s }
+    }
+    try {
+        $dbFalso = [pscustomobject]@{ Host = 'localhost'; Porta = 5999; Usuario = 'u'; Senha = ''; Banco = 'fakedb'; SslMode = '' }
+        $est = @{ Criado = '' }
+        $script:ExisteFalso = '1'
+        $m = Lancar { Criar-BancoERestaurar -Psql 'p' -PgRestore 'r' -Db $dbFalso -Nome 'auneron_test' -Dump 'x.dump' -Estado $est -Rotulo 'teste' -MensagemExiste 'JA-EXISTE-MSG' }
+        Verificar 'banco ja existe: recusa com a mensagem, sem CREATE e sem marcar como criado' ($m -eq 'JA-EXISTE-MSG' -and $est.Criado -eq '' -and @($script:SqlsFalsos | Where-Object { $_ -match '^CREATE DATABASE' }).Count -eq 0) $m
+        $mPrep = [regex]::Match((Get-Content -LiteralPath $alvoScript -Raw), '(?s)function Cmd-PrepararInstanciaImportacao \{.*?\r?\n\}\r?\n')
+        Verificar 'preparar: a mensagem de banco existente orienta remover-instancia-importacao e cita Daniel' ($mPrep.Success -and $mPrep.Value -match "ja existe; nada foi feito\. Se for mesmo para recriar.*remover-instancia-importacao -Confirmar.*Daniel")
+        $script:SqlsFalsos.Clear()
+        $e = Remover-BancoImportacao 'p' $dbFalso 'auneron_neon_synthetic'
+        Verificar 'remover: nome diferente de auneron_test recusado, nenhum SQL executado' ($e -match 'Remocao recusada' -and $script:SqlsFalsos.Count -eq 0) $e
+        $e = Remover-BancoImportacao 'p' $dbFalso 'fakedb'
+        Verificar 'remover: banco real da homologacao recusado' ($e -match 'Remocao recusada' -and $script:SqlsFalsos.Count -eq 0) $e
+        $e = Remover-BancoImportacao 'p' $dbFalso 'Auneron_Test'
+        Verificar 'remover: caixa diferente recusada' ($e -match 'Remocao recusada' -and $script:SqlsFalsos.Count -eq 0) $e
+        $dbIgual = [pscustomobject]@{ Host = 'localhost'; Porta = 5999; Usuario = 'u'; Senha = ''; Banco = 'auneron_test'; SslMode = '' }
+        $e = Remover-BancoImportacao 'p' $dbIgual 'auneron_test'
+        Verificar 'remover: se a homologacao fosse auneron_test, recusa' ($e -match 'Remocao recusada' -and $script:SqlsFalsos.Count -eq 0) $e
+        $e = Remover-BancoImportacao 'p' $dbFalso 'auneron_test'
+        Verificar 'remover: auneron_test executa exatamente um SQL com o nome literal' ($e -eq '' -and $script:SqlsFalsos.Count -eq 1 -and $script:SqlsFalsos[0] -ceq 'DROP DATABASE "auneron_test"') ($script:SqlsFalsos -join '|')
+    }
+    finally { ${function:Invoke-Psql} = $psqlOriginal }
+
     Write-Host '== Varredura de vazamento =='
     foreach ($k in $saidas.Keys) {
         $achou = @($proibidos | Where-Object { $saidas[$k].Contains($_) })
@@ -618,7 +746,14 @@ sys.exit(2)
     Verificar 'sem operadores indisponiveis no 5.1' ($codigo -notmatch '\s&&\s' -and $codigo -notmatch '\s\|\|\s' -and $codigo -notmatch '\?\?' -and $codigo -notmatch 'AsHashtable')
     $padraoDrop = '(?i)drop\s+database|dropdb'
     $todosDrop = [regex]::Matches($codigo, $padraoDrop)
-    Verificar 'exatamente uma remocao de banco no script' ($todosDrop.Count -eq 1) ([string]$todosDrop.Count)
+    Verificar 'exatamente duas remocoes de banco no script (descartavel do ensaio e auneron_test)' ($todosDrop.Count -eq 2) ([string]$todosDrop.Count)
+    $mRemImp = [regex]::Match($codigo, '(?s)function Remover-BancoImportacao \{.*?\r?\n\}\r?\n')
+    $posDropI = if ($mRemImp.Success) { [regex]::Match($mRemImp.Value, $padraoDrop).Index } else { -1 }
+    $posChecI = if ($mRemImp.Success) { $mRemImp.Value.IndexOf('Test-NomeBancoImportacao') } else { -1 }
+    Verificar 'a remocao da instancia de importacao e precedida pela conferencia literal do nome' ($mRemImp.Success -and $posChecI -ge 0 -and $posChecI -lt $posDropI -and [regex]::Matches($mRemImp.Value, $padraoDrop).Count -eq 1)
+    Verificar 'Remover-BancoImportacao so e chamada com o nome criado/constante da instancia' ([regex]::Matches($codigo, 'Remover-BancoImportacao \$psql \$db (\$estadoBanco\.Criado|\$nome)').Count -eq 2)
+    Verificar 'Test-NomeBancoImportacao compara com -cne a constante auneron_test' ($codigo.Contains('$Nome -cne $script:BancoImportacao') -and $codigo.Contains("`$script:BancoImportacao = 'auneron_test'"))
+    Verificar 'a trava do backend nao foi relaxada neste script (sem outro banco/host no ambiente fixo)' ($codigo -match "'APP_ENV'\s+= 'test'" -and $codigo -match "'IMPORT_CONFIRMATION_TEST_ENABLED'\s+= 'true'" -and $codigo -match "'MAINTENANCE_ENABLED'\s+= 'false'")
     $mLimpa = [regex]::Match($codigo, '(?s)function Limpar-BancoEnsaio \{.*?\r?\n\}\r?\n')
     $posDrop = if ($mLimpa.Success) { [regex]::Match($mLimpa.Value, $padraoDrop).Index } else { -1 }
     $posChecagem = if ($mLimpa.Success) { $mLimpa.Value.IndexOf('Test-NomeBancoEnsaio') } else { -1 }

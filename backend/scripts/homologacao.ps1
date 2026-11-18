@@ -11,7 +11,27 @@
               registrar-acao-pagamento, registrar-acao-atraso, detectar-vencidos, consultar,
               provisionar-deteccao-vencidos, vincular-deteccao-vencidos, desvincular-deteccao-vencidos,
               provisionar-orcamento-shadow, provisionar-conta-vencida-sintetica, redefinir-senha,
-              subir-backend, parar-backend, subir-frontend, parar-frontend
+              subir-backend, parar-backend, subir-frontend, parar-frontend,
+              preparar-instancia-importacao, subir-backend-importacao, parar-backend-importacao,
+              subir-frontend-importacao, parar-frontend-importacao, remover-instancia-importacao
+
+    INSTANCIA DE TESTE DA IMPORTACAO (A6). Uma copia SEPARADA da homologacao, em outro banco, onde a
+    confirmacao de importacao pode ser exercida. Nunca toca no banco da homologacao nem nas portas
+    8000/5180. Veja backend\docs\operations\A6_IMPORTACAO_RUNBOOK.md.
+      preparar-instancia-importacao -Pasta <hml> -ConfirmarBackup <dump>: valida o dump (como o ensaiar),
+        cria o banco auneron_test NO MESMO servidor da homologacao, restaura o dump nele e roda
+        alembic upgrade head. Recusa se auneron_test ja existir (remova antes com
+        remover-instancia-importacao) e se o servidor nao for local (a trava da importacao exige host
+        local). A URL e derivada da DATABASE_URL do cofre trocando so o nome do banco, so no ambiente do
+        filho; nunca e impressa. Sem -Confirmar (ou com -Simular) apenas mostra o que faria.
+      subir-backend-importacao -Pasta <hml>: segundo backend na porta 8001 apontando para auneron_test,
+        com APP_ENV=test, IMPORT_CONFIRMATION_TEST_ENABLED=true, MAINTENANCE_ENABLED=false (nenhum loop de
+        manutencao roda) e INTELLIGENCE_MODE=off. Confere que o banco alvo e auneron_test e local.
+      subir-frontend-importacao -Pasta <hml>: Vite na porta 5181 com AUNERON_BACKEND_URL apontando para a 8001.
+      parar-backend-importacao / parar-frontend-importacao: param so os da 8001 / 5181.
+      remover-instancia-importacao -Pasta <hml> -Confirmar: EXCLUI o banco auneron_test (e nenhum outro;
+        o nome e conferido literalmente antes). E uma delecao: exige aprovacao de Daniel. Exige a porta
+        8001 livre (rode parar-backend-importacao antes). Sem -Confirmar (ou com -Simular) apenas mostra.
 
     provisionar-orcamento-shadow: cria UM orcamento de implantacao (deployment_period, 7 dias) para a
       rodada S5 do shadow de vencidos, via backend\scripts\create_shadow_budget.py (modulo fixo). O limite
@@ -90,6 +110,13 @@
       .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Simular
       .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Confirmar
       .\homologacao.ps1 parar-backend -Confirmar
+      .\homologacao.ps1 preparar-instancia-importacao -Pasta C:\auneron -ConfirmarBackup C:\...\hml-X.dump -Simular
+      .\homologacao.ps1 preparar-instancia-importacao -Pasta C:\auneron -ConfirmarBackup C:\...\hml-X.dump -Confirmar
+      .\homologacao.ps1 subir-backend-importacao -Pasta C:\auneron -Confirmar
+      .\homologacao.ps1 subir-frontend-importacao -Pasta C:\auneron -Confirmar
+      .\homologacao.ps1 parar-frontend-importacao -Confirmar
+      .\homologacao.ps1 parar-backend-importacao -Confirmar
+      .\homologacao.ps1 remover-instancia-importacao -Pasta C:\auneron -Confirmar   (delecao: aprovacao de Daniel)
 
     Nao existe downgrade neste script. Veja backend/docs/DEPLOYMENT.md.
     Autoteste offline: backend/scripts/test_homologacao.ps1
@@ -102,7 +129,9 @@ param(
         'registrar-acao-pagamento', 'registrar-acao-atraso', 'detectar-vencidos', 'consultar',
         'provisionar-deteccao-vencidos', 'vincular-deteccao-vencidos', 'desvincular-deteccao-vencidos',
         'provisionar-orcamento-shadow', 'provisionar-conta-vencida-sintetica', 'redefinir-senha',
-        'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend'
+        'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend',
+        'preparar-instancia-importacao', 'subir-backend-importacao', 'parar-backend-importacao',
+        'subir-frontend-importacao', 'parar-frontend-importacao', 'remover-instancia-importacao'
     )]
     [string]$Comando,
 
@@ -144,6 +173,22 @@ $script:PortaBackend = 8000
 $script:PortaFrontend = 5180
 $script:UrlBackend = 'http://127.0.0.1:8000'
 $script:UrlFrontend = 'http://127.0.0.1:5180'
+
+# Instancia de teste da importacao (A6): segundo backend/frontend e banco proprio. Valores FIXOS.
+# A trava do codigo (import_confirm.confirmation_test_is_available) exige APP_ENV=test, a chave ligada,
+# banco chamado auneron_test e host local; nada disso e relaxado aqui.
+$script:PortaBackendImportacao = 8001
+$script:PortaFrontendImportacao = 5181
+$script:UrlBackendImportacao = 'http://127.0.0.1:8001'
+$script:UrlFrontendImportacao = 'http://127.0.0.1:5181'
+$script:BancoImportacao = 'auneron_test'
+$script:AmbienteImportacaoFixo = [ordered]@{
+    'APP_ENV'                            = 'test'
+    'IMPORT_CONFIRMATION_TEST_ENABLED'   = 'true'
+    'MAINTENANCE_ENABLED'                = 'false'
+    'INTELLIGENCE_MODE'                  = 'off'
+    'CORS_ORIGINS'                       = 'http://127.0.0.1:5181,http://localhost:5181'
+}
 
 # Segredos: sempre no cofre, nunca em texto puro.
 $script:NomesSegredos = @('DATABASE_URL', 'API_KEY')
@@ -857,9 +902,10 @@ function Exigir-FerramentaPg {
 # Alembic
 # ---------------------------------------------------------------------------
 function Rodar-Alembic {
-    param([string]$Raiz, [string[]]$Args2, [string]$UrlBanco = '')
+    param([string]$Raiz, [string[]]$Args2, [string]$UrlBanco = '', [hashtable]$AmbienteExtra = @{})
     $py = Resolver-Python $Raiz
     $amb = Montar-Ambiente 'backend'
+    foreach ($k in @($AmbienteExtra.Keys)) { $amb[$k] = $AmbienteExtra[$k] }
     if ($UrlBanco) {
         # Ensaio: o filho enxerga SO o banco descartavel (URL montada em memoria).
         Registrar-Segredo $UrlBanco
@@ -925,6 +971,12 @@ function Montar-UrlBancoEnsaio {
     # so o nome do banco muda. O nome precisa ser do padrao do ensaio.
     param([string]$Url, [string]$NomeBanco)
     if (-not (Test-NomeBancoEnsaio $NomeBanco '')) { Falhar 'Nome de banco de ensaio invalido.' }
+    return (Trocar-BancoDaUrl $Url $NomeBanco)
+}
+
+function Trocar-BancoDaUrl {
+    # Funcao pura (sem validar o nome; quem chama valida): troca so o nome do banco da URL.
+    param([string]$Url, [string]$NomeBanco)
     $m = [regex]::Match($Url, '^(?<esq>postgresql(?:\+psycopg2?)?)://(?<auth>[^/?#]*)(?:/(?<banco>[^?#]*))?(?:\?(?<q>[^#]*))?(?:#.*)?$')
     if (-not $m.Success) { Falhar 'DATABASE_URL: formato nao suportado.' }
     $r = $m.Groups['esq'].Value + '://' + $m.Groups['auth'].Value + '/' + $NomeBanco
@@ -1002,8 +1054,8 @@ function Obter-InfoGit {
 }
 
 function Obter-HeadUnico {
-    param([string]$Raiz, [string]$UrlBanco = '')
-    $heads = @(Extrair-Revisoes (Rodar-Alembic $Raiz @('heads') $UrlBanco))
+    param([string]$Raiz, [string]$UrlBanco = '', [hashtable]$AmbienteExtra = @{})
+    $heads = @(Extrair-Revisoes (Rodar-Alembic $Raiz @('heads') $UrlBanco $AmbienteExtra))
     if ($heads.Count -ne 1) { Falhar 'O checkout tem mais de um head (ou nenhum) de migracao; resolva antes.' }
     return $heads[0]
 }
@@ -1044,6 +1096,35 @@ function Limpar-BancoEnsaio {
         return ("Falha ao remover o banco descartavel {0}; REMOVA-O MANUALMENTE. Saida:`n{1}" -f $Nome, $res.Saida)
     }
     return ''
+}
+
+function Criar-BancoERestaurar {
+    # Passos comuns do ensaio e da instancia de importacao: permissao CREATEDB, inexistencia do nome,
+    # CREATE DATABASE e pg_restore --no-owner. $Estado.Criado so recebe o nome DEPOIS do CREATE bem-sucedido
+    # (e o que autoriza a limpeza em quem chama). O nome ja deve ter sido validado por quem chama.
+    param([string]$Psql, [string]$PgRestore, $Db, [string]$Nome, [string]$Dump, [hashtable]$Estado, [string]$Rotulo, [string]$MensagemExiste)
+    $perm = Invoke-Psql $Psql $Db 'SELECT (rolcreatedb OR rolsuper) FROM pg_roles WHERE rolname = current_user'
+    if ($perm.Codigo -ne 0) { Falhar ("Nao foi possivel consultar o servidor com psql:`n" + $perm.Saida) }
+    if ($perm.Saida.Trim() -ne 't') {
+        Falhar ("O usuario '{0}' nao tem permissao para criar bancos (CREATEDB); este comando precisa criar o banco {1}. Peca a um administrador do PostgreSQL: ALTER ROLE <usuario> CREATEDB." -f $Db.Usuario, $Rotulo)
+    }
+    $ex = Invoke-Psql $Psql $Db ("SELECT 1 FROM pg_database WHERE datname = '" + $Nome + "'")
+    if ($ex.Codigo -ne 0) { Falhar ("Falha ao verificar o banco {0}:`n{1}" -f $Rotulo, $ex.Saida) }
+    if ($ex.Saida.Trim() -ne '') { Falhar $MensagemExiste }
+    $cr = Invoke-Psql $Psql $Db ('CREATE DATABASE "' + $Nome + '"')
+    if ($cr.Codigo -ne 0) { Falhar ("Falha ao criar o banco {0}:`n{1}" -f $Rotulo, $cr.Saida) }
+    $Estado.Criado = $Nome
+    Info ('Banco {0} criado. Restaurando o dump ...' -f $Rotulo)
+    $amb = @{ 'PGPASSWORD' = $(if ($Db.Senha) { $Db.Senha } else { $null }); 'PGCLIENTENCODING' = 'UTF8' }
+    if ($Db.SslMode) { $amb['PGSSLMODE'] = $Db.SslMode }
+    $ar = @('-h', $Db.Host, '-p', [string]$Db.Porta)
+    if ($Db.Usuario) { $ar += @('-U', $Db.Usuario) }
+    $ar += @('-d', $Nome, '--no-owner', '--exit-on-error', '-w', $Dump)
+    $rs = Invoke-Filho -Exe $PgRestore -Argumentos $ar -Ambiente $amb
+    if ($rs.Codigo -ne 0) {
+        $l = @($rs.Saida -split "`r?`n" | Select-Object -Last 12)
+        Falhar ("pg_restore falhou no banco {0} (codigo {1}):`n{2}" -f $Rotulo, $rs.Codigo, ($l -join "`n"))
+    }
 }
 
 function Cmd-Ensaiar {
@@ -1090,28 +1171,12 @@ function Cmd-Ensaiar {
     $revFim = @()
     $head = ''
     try {
-        $perm = Invoke-Psql $psql $db 'SELECT (rolcreatedb OR rolsuper) FROM pg_roles WHERE rolname = current_user'
-        if ($perm.Codigo -ne 0) { Falhar ("Nao foi possivel consultar o servidor com psql:`n" + $perm.Saida) }
-        if ($perm.Saida.Trim() -ne 't') {
-            Falhar ("O usuario '{0}' nao tem permissao para criar bancos (CREATEDB); o ensaio precisa criar um banco descartavel. Peca a um administrador do PostgreSQL: ALTER ROLE <usuario> CREATEDB." -f $db.Usuario)
+        $estadoBanco = @{ Criado = '' }
+        try {
+            Criar-BancoERestaurar -Psql $psql -PgRestore $pgrestore -Db $db -Nome $nome -Dump $item.FullName -Estado $estadoBanco `
+                -Rotulo 'descartavel' -MensagemExiste ('O banco ' + $nome + ' ja existe; nada foi feito. Tente de novo.')
         }
-        $ex = Invoke-Psql $psql $db ("SELECT 1 FROM pg_database WHERE datname = '" + $nome + "'")
-        if ($ex.Codigo -ne 0) { Falhar ("Falha ao verificar o banco descartavel:`n" + $ex.Saida) }
-        if ($ex.Saida.Trim() -ne '') { Falhar ('O banco ' + $nome + ' ja existe; nada foi feito. Tente de novo.') }
-        $cr = Invoke-Psql $psql $db ('CREATE DATABASE "' + $nome + '"')
-        if ($cr.Codigo -ne 0) { Falhar ("Falha ao criar o banco descartavel:`n" + $cr.Saida) }
-        $criado = $nome
-        Info 'Banco descartavel criado. Restaurando o dump ...'
-        $amb = @{ 'PGPASSWORD' = $(if ($db.Senha) { $db.Senha } else { $null }); 'PGCLIENTENCODING' = 'UTF8' }
-        if ($db.SslMode) { $amb['PGSSLMODE'] = $db.SslMode }
-        $ar = @('-h', $db.Host, '-p', [string]$db.Porta)
-        if ($db.Usuario) { $ar += @('-U', $db.Usuario) }
-        $ar += @('-d', $nome, '--no-owner', '--exit-on-error', '-w', $item.FullName)
-        $rs = Invoke-Filho -Exe $pgrestore -Argumentos $ar -Ambiente $amb
-        if ($rs.Codigo -ne 0) {
-            $l = @($rs.Saida -split "`r?`n" | Select-Object -Last 12)
-            Falhar ("pg_restore falhou no banco descartavel (codigo {0}):`n{1}" -f $rs.Codigo, ($l -join "`n"))
-        }
+        finally { $criado = [string]$estadoBanco.Criado }
         Info 'Restauracao concluida. Rodando alembic no descartavel ...'
         $revIni = @(Extrair-Revisoes (Rodar-Alembic $raiz @('current') $urlEnsaio))
         Info ('Revisao inicial: ' + $(if ($revIni.Count -gt 0) { $revIni -join ', ' } else { '(sem versao)' }))
@@ -1165,6 +1230,205 @@ function Cmd-Ensaiar {
     Info ('Revisao final   : ' + $revFim[0] + ' (head)')
     Info ('Commit          : {0} (arvore limpa: {1})' -f $git1.Commit, $(if ($git1.Limpa) { 'sim' } else { 'NAO' }))
     Info ('Recibo          : ' + $arq)
+}
+
+# ---------------------------------------------------------------------------
+# Instancia de teste da importacao (A6)
+# ---------------------------------------------------------------------------
+function Test-NomeBancoImportacao {
+    # Funcao pura: o nome e EXATAMENTE auneron_test (sensivel a caixa) e NAO e o banco da homologacao?
+    param([string]$Nome, [string]$BancoReal)
+    if ([string]::IsNullOrEmpty($Nome)) { return $false }
+    if ($Nome -cne $script:BancoImportacao) { return $false }
+    if ($BancoReal -and ($Nome -ieq $BancoReal)) { return $false }
+    return $true
+}
+
+function Test-HostLocal {
+    # Funcao pura: mesma lista da trava do backend (import_confirm.confirmation_test_is_available).
+    param([string]$HostBanco)
+    if ([string]::IsNullOrEmpty($HostBanco)) { return $false }
+    return (@('localhost', '127.0.0.1', '::1') -contains $HostBanco.ToLowerInvariant())
+}
+
+function Montar-UrlBancoImportacao {
+    # Funcao pura: a mesma URL da homologacao, trocando SO o nome do banco por auneron_test.
+    param([string]$Url)
+    return (Trocar-BancoDaUrl $Url $script:BancoImportacao)
+}
+
+function Montar-AmbienteImportacao {
+    # Funcao pura: ambiente do segundo backend (valores fixos nao secretos + a URL do banco de teste).
+    param([string]$UrlBancoTeste)
+    $amb = @{}
+    foreach ($k in $script:AmbienteImportacaoFixo.Keys) { $amb[$k] = $script:AmbienteImportacaoFixo[$k] }
+    $amb['DATABASE_URL'] = $UrlBancoTeste
+    return $amb
+}
+
+function Obter-ContextoImportacao {
+    # Le o cofre e devolve o servidor da homologacao e a URL do auneron_test (so em memoria).
+    # Recusa se o banco da homologacao ja for auneron_test ou se o servidor nao for local.
+    $cofre = Ler-Cofre
+    Exigir-Segredos $cofre @('DATABASE_URL')
+    $url = Obter-Segredo $cofre 'DATABASE_URL'
+    $db = ConvertFrom-DatabaseUrl $url
+    Registrar-Segredo $db.Senha
+    if (-not (Test-NomeBancoImportacao $script:BancoImportacao $db.Banco)) {
+        Falhar ('O banco da homologacao ja se chama ' + $db.Banco + '; a instancia de importacao exige um banco separado chamado auneron_test.')
+    }
+    if (-not (Test-HostLocal $db.Host)) {
+        Falhar ('O servidor da homologacao ({0}) nao e local. A trava da importacao so libera a confirmacao com banco auneron_test em host local (localhost, 127.0.0.1 ou ::1); nada foi feito.' -f $db.Host)
+    }
+    $urlTeste = Montar-UrlBancoImportacao $url
+    Registrar-Segredo $urlTeste
+    return [pscustomobject]@{ Db = $db; UrlTeste = $urlTeste }
+}
+
+function Remover-BancoImportacao {
+    # Segundo (e unico outro) ponto do script que exclui um banco: SO o auneron_test, com o nome conferido
+    # literalmente antes. Devolve '' se excluiu, senao a mensagem de erro.
+    param([string]$Psql, $Db, [string]$Nome)
+    if (-not (Test-NomeBancoImportacao $Nome $Db.Banco)) {
+        return ('Remocao recusada: so o banco auneron_test pode ser removido por este comando (' + $Nome + ').')
+    }
+    $res = Invoke-Psql $Psql $Db ('DROP DATABASE "' + $Nome + '"')
+    if ($res.Codigo -ne 0) {
+        return ("Falha ao remover o banco {0}. Saida:`n{1}" -f $Nome, $res.Saida)
+    }
+    return ''
+}
+
+function Cmd-PrepararInstanciaImportacao {
+    if (-not $script:Ctx.ConfirmarBackup) {
+        Falhar 'preparar-instancia-importacao exige -ConfirmarBackup <caminho do .dump> criado ha menos de 24 h (rode backup antes).'
+    }
+    $raiz = Resolver-Pasta
+    $item = Validar-DumpArquivo $script:Ctx.ConfirmarBackup '-ConfirmarBackup'
+    $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ctx = Obter-ContextoImportacao
+    $db = $ctx.Db
+    $nome = $script:BancoImportacao
+    $pgrestore = Resolver-FerramentaPg 'pg_restore'
+    $psql = Resolver-FerramentaPgIrma $pgrestore 'psql'
+    if ($script:Ctx.Simular -or (-not $script:Ctx.Confirmar)) {
+        if ($script:Ctx.Simular) { Info 'SIMULACAO: nada sera criado.' }
+        else { Info 'Nada foi criado. Repita com -Confirmar para executar (ou -Simular).' }
+        Info ('Dump     : {0} ({1} bytes, SHA-256 {2})' -f $item.FullName, $item.Length, $hash)
+        Info ('Servidor : host={0} porta={1} usuario={2} (banco da homologacao {3} NAO sera tocado)' -f $db.Host, $db.Porta, $db.Usuario, $db.Banco)
+        Info ('Banco novo: ' + $nome)
+        Info ('pg_restore: ' + $(if ($pgrestore) { $pgrestore } else { 'NAO ENCONTRADO' }))
+        Info ('psql      : ' + $(if ($psql) { $psql } else { 'NAO ENCONTRADO' }))
+        Info ('Interpretador: ' + (Resolver-Python $raiz))
+        Info ('Faria: pg_restore --list; checar CREATEDB e que {0} NAO existe (se existir, recusa: remova antes com remover-instancia-importacao); criar o banco; pg_restore --no-owner; em {1}\backend, com DATABASE_URL do filho apontando a {0} e APP_ENV=test: alembic upgrade head e conferir revisao == head. Se algo falhar depois de criar, o {0} parcial e removido.' -f $nome, $raiz)
+        return
+    }
+    if (-not $pgrestore) { [void](Exigir-FerramentaPg 'pg_restore') }
+    if (-not $psql) { Falhar 'psql.exe nao encontrado na mesma pasta do pg_restore.' }
+    $lst = Invoke-Filho -Exe $pgrestore -Argumentos @('--list', $item.FullName)
+    if ($lst.Codigo -ne 0) { Falhar 'pg_restore --list reprovou o arquivo informado em -ConfirmarBackup.' }
+    Info ('Dump aceito: {0} (SHA-256 {1})' -f $item.FullName, $hash)
+    Info ('Banco novo: {0} em {1}:{2} (banco da homologacao {3} nao sera tocado)' -f $nome, $db.Host, $db.Porta, $db.Banco)
+    $ambTeste = @{ 'APP_ENV' = 'test' }
+    $estadoBanco = @{ Criado = '' }
+    $erroCorpo = $null
+    $revFim = @()
+    $head = ''
+    try {
+        Criar-BancoERestaurar -Psql $psql -PgRestore $pgrestore -Db $db -Nome $nome -Dump $item.FullName -Estado $estadoBanco `
+            -Rotulo 'da instancia de importacao' `
+            -MensagemExiste ('O banco ' + $nome + ' ja existe; nada foi feito. Se for mesmo para recriar a instancia, pare o backend da 8001 e rode remover-instancia-importacao -Confirmar (delecao: precisa de aprovacao de Daniel) antes.')
+        Info 'Restauracao concluida. Rodando alembic no banco de teste ...'
+        $head = Obter-HeadUnico $raiz $ctx.UrlTeste $ambTeste
+        $up = Rodar-Alembic $raiz @('upgrade', 'head') $ctx.UrlTeste $ambTeste
+        foreach ($l in @($up -split "`r?`n" | Where-Object { $_ -match 'Running upgrade' })) { Info ('  ' + $l) }
+        $revFim = @(Extrair-Revisoes (Rodar-Alembic $raiz @('current') $ctx.UrlTeste $ambTeste))
+        Info ('Revisao final: ' + ($revFim -join ', '))
+        if ($revFim.Count -ne 1 -or $revFim[0] -ne $head) {
+            Falhar ('Revisao final ({0}) difere do head ({1}).' -f ($revFim -join ', '), $head)
+        }
+    }
+    catch { $erroCorpo = Mascarar-Texto ([string]$_.Exception.Message) }
+    if ($erroCorpo) {
+        $partes = @('PREPARACAO FALHOU: ' + $erroCorpo)
+        if ($estadoBanco.Criado -ne '') {
+            # So o banco criado NESTA execucao (nome conferido literalmente) e removido.
+            $erroLimpeza = Remover-BancoImportacao $psql $db $estadoBanco.Criado
+            if ($erroLimpeza -eq '') { $partes += ('O banco parcial ' + $nome + ' foi removido.') }
+            else { $partes += $erroLimpeza; $partes += 'REMOVA-O com remover-instancia-importacao -Confirmar antes de tentar de novo.' }
+        }
+        Falhar ($partes -join "`n")
+    }
+    Info ''
+    Info ('INSTANCIA PREPARADA: banco {0} restaurado do dump e na revisao {1} (head).' -f $nome, $revFim[0])
+    Info 'Proximo passo: subir-backend-importacao -Pasta <hml> -Confirmar'
+}
+
+function Cmd-SubirBackendImportacao {
+    $raiz = Resolver-Pasta
+    $py = Resolver-Python $raiz
+    $ctx = Obter-ContextoImportacao
+    $cofre = Ler-Cofre
+    Exigir-Segredos $cofre $script:NomesSegredos
+    # Defesa em profundidade: o banco do ambiente do filho tem de ser exatamente auneron_test, e local.
+    $dbAlvo = ConvertFrom-DatabaseUrl $ctx.UrlTeste
+    if ($dbAlvo.Banco -cne $script:BancoImportacao) { Falhar 'O banco alvo da instancia de importacao nao e auneron_test; nada foi iniciado.' }
+    if (-not (Test-HostLocal $dbAlvo.Host)) { Falhar 'O servidor do banco alvo nao e local; nada foi iniciado.' }
+    Exigir-PortaLivre $script:PortaBackendImportacao
+    $extra = Montar-AmbienteImportacao $ctx.UrlTeste
+    $args3 = @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', [string]$script:PortaBackendImportacao)
+    Info '== Backend da instancia de importacao (A6; banco de teste; sem producao) =='
+    Info ('Banco alvo           : {0} em {1}:{2} (a URL completa nunca e impressa)' -f $dbAlvo.Banco, $dbAlvo.Host, $dbAlvo.Porta)
+    Info ('Variaveis fixas      : ' + ((@($script:AmbienteImportacaoFixo.Keys) | ForEach-Object { '{0}={1}' -f $_, $script:AmbienteImportacaoFixo[$_] }) -join '; '))
+    Info ('Porta               : {0} (a homologacao segue na {1})' -f $script:PortaBackendImportacao, $script:PortaBackend)
+    if ((-not $script:Ctx.Simular) -and (-not $script:Ctx.Confirmar)) {
+        Info 'Nada foi iniciado. Repita com -Confirmar para subir (ou -Simular).'
+        return
+    }
+    if (-not $script:Ctx.Simular) {
+        # O banco precisa existir (criado por preparar-instancia-importacao); so leitura no servidor.
+        $pgrestore = Resolver-FerramentaPg 'pg_restore'
+        $psql = Resolver-FerramentaPgIrma $pgrestore 'psql'
+        if ($psql -and (-not $script:Ctx.SemSondagem)) {
+            $ex = Invoke-Psql $psql $ctx.Db ("SELECT 1 FROM pg_database WHERE datname = '" + $script:BancoImportacao + "'")
+            if ($ex.Codigo -ne 0) { Falhar ("Falha ao verificar o banco auneron_test:`n" + $ex.Saida) }
+            if ($ex.Saida.Trim() -eq '') { Falhar 'O banco auneron_test nao existe; rode preparar-instancia-importacao antes. Nada foi iniciado.' }
+        }
+    }
+    Iniciar-Servico -Alvo 'backend' -Porta $script:PortaBackendImportacao -Exe $py -Args3 $args3 -Dir (Join-Path $raiz 'backend') -Raiz $raiz -AmbienteExtra $extra `
+        -Chave 'backend-importacao' -UrlBase $script:UrlBackendImportacao
+}
+
+function Cmd-RemoverInstanciaImportacao {
+    $raiz = Resolver-Pasta
+    $cofre = Ler-Cofre
+    Exigir-Segredos $cofre @('DATABASE_URL')
+    $url = Obter-Segredo $cofre 'DATABASE_URL'
+    $db = ConvertFrom-DatabaseUrl $url
+    Registrar-Segredo $db.Senha
+    $nome = $script:BancoImportacao
+    if (-not (Test-NomeBancoImportacao $nome $db.Banco)) {
+        Falhar ('O banco da homologacao ja se chama ' + $db.Banco + '; recusado.')
+    }
+    $pgrestore = Resolver-FerramentaPg 'pg_restore'
+    $psql = Resolver-FerramentaPgIrma $pgrestore 'psql'
+    Info '== Remocao da instancia de importacao (DELECAO: exige aprovacao de Daniel) =='
+    Info ('Servidor : host={0} porta={1} usuario={2}' -f $db.Host, $db.Porta, $db.Usuario)
+    Info ('Sera excluido apenas o banco {0}; o banco da homologacao ({1}) NAO sera tocado.' -f $nome, $db.Banco)
+    if ($script:Ctx.Simular -or (-not $script:Ctx.Confirmar)) {
+        if ($script:Ctx.Simular) { Info 'SIMULACAO: nada sera removido.' }
+        else { Info 'Nada foi removido. Repita com -Confirmar (apos aprovacao de Daniel e com a 8001 parada).' }
+        Info ('psql: ' + $(if ($psql) { $psql } else { 'NAO ENCONTRADO' }))
+        return
+    }
+    Exigir-PortaLivre $script:PortaBackendImportacao
+    if (-not $psql) { Falhar 'psql.exe nao encontrado (procurado ao lado do pg_restore).' }
+    $ex = Invoke-Psql $psql $db ("SELECT 1 FROM pg_database WHERE datname = '" + $nome + "'")
+    if ($ex.Codigo -ne 0) { Falhar ("Falha ao verificar o banco {0}:`n{1}" -f $nome, $ex.Saida) }
+    if ($ex.Saida.Trim() -eq '') { Info ('O banco ' + $nome + ' nao existe; nada a remover.'); return }
+    $erro = Remover-BancoImportacao $psql $db $nome
+    if ($erro -ne '') { Falhar $erro }
+    Info ('Banco removido: ' + $nome)
 }
 
 function Cmd-RegistrarAcaoPagamento {
@@ -1570,11 +1834,14 @@ function Mostrar-FimDoLog {
 }
 
 function Iniciar-Servico {
-    param([string]$Alvo, [int]$Porta, [string]$Exe, [string[]]$Args3, [string]$Dir, [string]$Raiz, [hashtable]$AmbienteExtra = @{})
+    param([string]$Alvo, [int]$Porta, [string]$Exe, [string[]]$Args3, [string]$Dir, [string]$Raiz, [hashtable]$AmbienteExtra = @{}, [string]$Chave = '', [string]$UrlBase = '')
+    # $Chave: nome de logs/estado (padrao = $Alvo); $UrlBase: URL do servico (padrao = a da homologacao).
+    if (-not $Chave) { $Chave = $Alvo }
+    if (-not $UrlBase) { $UrlBase = $(if ($Alvo -eq 'backend') { $script:UrlBackend } else { $script:UrlFrontend }) }
     $logs = Join-Path (Get-BaseDir) 'logs'
     $carimbo = (Get-Date).ToString('yyyyMMdd-HHmmss')
-    $logOut = Join-Path $logs ($Alvo + '-' + $carimbo + '.out.log')
-    $logErr = Join-Path $logs ($Alvo + '-' + $carimbo + '.err.log')
+    $logOut = Join-Path $logs ($Chave + '-' + $carimbo + '.out.log')
+    $logErr = Join-Path $logs ($Chave + '-' + $carimbo + '.err.log')
     $linhaArgs = (($Args3 | ForEach-Object { ConvertTo-ArgWin $_ }) -join ' ')
     if ($script:Ctx.Simular) {
         Info 'SIMULACAO: nada sera feito.'
@@ -1582,6 +1849,7 @@ function Iniciar-Servico {
         Info ('Executaria : {0} {1}' -f $Exe, $linhaArgs)
         Info ('Em         : ' + $Dir)
         Info ('Ambiente   : ' + (Nomes-Do-Ambiente $Alvo) + ' (valores do cofre, so no ambiente do processo filho)')
+        if ($AmbienteExtra.Count -gt 0) { Info ('Ambiente extra (nomes; valores so no filho): ' + ((@($AmbienteExtra.Keys) | Sort-Object) -join ', ')) }
         Info ('Logs       : ' + $logOut + ' e ' + $logErr)
         return
     }
@@ -1591,6 +1859,7 @@ function Iniciar-Servico {
     $amb = Montar-Ambiente $Alvo
     # Extras (shadow): sobrescrevem o padrao so no ambiente do filho; nunca contem segredos.
     foreach ($k in @($AmbienteExtra.Keys)) { $amb[$k] = $AmbienteExtra[$k] }
+    if ($AmbienteExtra.ContainsKey('DATABASE_URL')) { Registrar-Segredo ([string]$AmbienteExtra['DATABASE_URL']) }
     $salvo = Aplicar-Ambiente $amb
     $proc = $null
     try {
@@ -1608,15 +1877,15 @@ function Iniciar-Servico {
         Falhar ('{0} nao subiu na porta {1} (logs em {2}).' -f $Alvo, $Porta, $logs)
     }
     $dono = $esc[0]
-    Gravar-Estado $Alvo $dono.Pid $Raiz
+    Gravar-Estado $Chave $dono.Pid $Raiz
     if ($Alvo -eq 'backend') {
-        $codigo = Get-Http ($script:UrlBackend + '/health')
+        $codigo = Get-Http ($UrlBase + '/health')
         if ($codigo -ne 200) { Falhar ('Backend escutando, mas GET /health retornou ' + $codigo + '.') }
-        $pronto = Get-Http ($script:UrlBackend + '/ready')
+        $pronto = Get-Http ($UrlBase + '/ready')
         Info ('Backend no ar: PID {0}, /health 200, /ready {1}.' -f $dono.Pid, $pronto)
     }
     else {
-        $codigo = Get-Http ($script:UrlFrontend + '/')
+        $codigo = Get-Http ($UrlBase + '/')
         if ($codigo -ne 200) { Falhar ('Frontend escutando, mas GET / retornou ' + $codigo + '.') }
         Info ('Frontend no ar: PID {0}, GET / 200.' -f $dono.Pid)
     }
@@ -1830,7 +2099,17 @@ function Cmd-RedefinirSenha {
     }
 }
 
+function Cmd-SubirFrontendImportacao {
+    Subir-Frontend -Porta $script:PortaFrontendImportacao -UrlBase $script:UrlFrontendImportacao -Chave 'frontend-importacao' `
+        -PortaBackendAlvo $script:PortaBackendImportacao -AmbienteExtra @{ 'AUNERON_BACKEND_URL' = $script:UrlBackendImportacao }
+}
+
 function Cmd-SubirFrontend {
+    Subir-Frontend -Porta $script:PortaFrontend -UrlBase $script:UrlFrontend -Chave 'frontend' -PortaBackendAlvo $script:PortaBackend
+}
+
+function Subir-Frontend {
+    param([int]$Porta, [string]$UrlBase, [string]$Chave, [int]$PortaBackendAlvo, [hashtable]$AmbienteExtra = @{})
     $raiz = Resolver-Pasta
     $vite = Join-Path $raiz 'frontend\node_modules\vite\bin\vite.js'
     if (-not (Test-Path -LiteralPath $vite -PathType Leaf)) {
@@ -1840,16 +2119,18 @@ function Cmd-SubirFrontend {
     if (-not $node) { Falhar 'node.exe nao encontrado no PATH.' }
     $cofre = Ler-Cofre
     Exigir-Segredos $cofre @('API_KEY')
-    Exigir-PortaLivre $script:PortaFrontend
+    Exigir-PortaLivre $Porta
     if (-not $script:Ctx.SemSondagem) {
-        if (@(Get-Escutando $script:PortaBackend).Count -eq 0) { Info 'AVISO: nada escuta na porta 8000; o frontend subira, mas /api falhara ate o backend subir.' }
+        if (@(Get-Escutando $PortaBackendAlvo).Count -eq 0) { Info ('AVISO: nada escuta na porta {0}; o frontend subira, mas /api falhara ate o backend subir.' -f $PortaBackendAlvo) }
     }
-    $args3 = @($vite, '--host', '127.0.0.1', '--port', [string]$script:PortaFrontend, '--strictPort')
-    Iniciar-Servico -Alvo 'frontend' -Porta $script:PortaFrontend -Exe $node.Source -Args3 $args3 -Dir (Join-Path $raiz 'frontend') -Raiz $raiz
+    $args3 = @($vite, '--host', '127.0.0.1', '--port', [string]$Porta, '--strictPort')
+    Iniciar-Servico -Alvo 'frontend' -Porta $Porta -Exe $node.Source -Args3 $args3 -Dir (Join-Path $raiz 'frontend') -Raiz $raiz `
+        -AmbienteExtra $AmbienteExtra -Chave $Chave -UrlBase $UrlBase
 }
 
 function Cmd-Parar {
-    param([string]$Alvo, [int]$Porta)
+    param([string]$Alvo, [int]$Porta, [string]$Chave = '')
+    if (-not $Chave) { $Chave = $Alvo }
     if ($script:Ctx.SemSondagem) { Falhar '-SemSondagem nao se aplica a parar-*.' }
     $esc = @(Get-Escutando $Porta)
     if ($esc.Count -eq 0) { Info ('Nada escutando na porta {0}; nada a parar.' -f $Porta); return }
@@ -1871,7 +2152,7 @@ function Cmd-Parar {
     $limite = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $limite -and @(Get-Escutando $Porta).Count -gt 0) { Start-Sleep -Milliseconds 500 }
     if (@(Get-Escutando $Porta).Count -gt 0) { Falhar ('A porta {0} continua ocupada apos parar.' -f $Porta) }
-    Gravar-Estado $Alvo $null ''
+    Gravar-Estado $Chave $null ''
     Info ('{0} parado; porta {1} livre.' -f $Alvo, $Porta)
 }
 
@@ -1937,6 +2218,12 @@ function Principal {
             'parar-backend'  { Cmd-Parar 'backend' $script:PortaBackend }
             'subir-frontend' { Cmd-SubirFrontend }
             'parar-frontend' { Cmd-Parar 'frontend' $script:PortaFrontend }
+            'preparar-instancia-importacao' { Cmd-PrepararInstanciaImportacao }
+            'subir-backend-importacao'  { Cmd-SubirBackendImportacao }
+            'parar-backend-importacao'  { Cmd-Parar 'backend' $script:PortaBackendImportacao 'backend-importacao' }
+            'subir-frontend-importacao' { Cmd-SubirFrontendImportacao }
+            'parar-frontend-importacao' { Cmd-Parar 'frontend' $script:PortaFrontendImportacao 'frontend-importacao' }
+            'remover-instancia-importacao' { Cmd-RemoverInstanciaImportacao }
         }
     }
     catch {

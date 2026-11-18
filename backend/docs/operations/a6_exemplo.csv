@@ -1,0 +1,6 @@
+cliente;valor;vencimento;status
+A6 TESTE Cliente Um;1500,50;2026-12-10;aberto
+A6 TESTE Cliente Dois;320,00;2026-12-15;aberto
+A6 TESTE Cliente Tres;89,90;2026-12-20;aberto
+A6 TESTE Cliente Quatro;2400,00;2027-01-05;aberto
+A6 TESTE Cliente Cinco;150,25;2027-01-10;aberto
