@@ -8,6 +8,9 @@ Script de avaliacao, FORA de app/. Roda manualmente a partir de backend/:
         --expected-sha256 <hash registrado na geracao> ^
         --out-dir <pasta NOVA da rodada>
 
+cases_v1.json e o conjunto de AJUSTE; cases_v2.json e a PROVA (inedito,
+nao ajustar prompt com ele). Ver evals/overdue_shadow/README.md.
+
 Usa EXATAMENTE o prompt, o schema, o limite de saida e a montagem de
 entrada do shadow (app.services.overdue_detection_shadow), e o
 OllamaProvider (loopback, digest aprovado). Sem banco, sem ledger, sem
@@ -117,6 +120,7 @@ def prompt_schema_hash() -> str:
         {
             "instructions": shadow.INSTRUCTIONS,
             "output_schema": shadow.OUTPUT_SCHEMA,
+            "prompt_version": shadow.PROMPT_VERSION,
             "prompt_template_id": shadow.PROMPT_TEMPLATE_ID,
             "output_schema_id": shadow.OUTPUT_SCHEMA_ID,
             "max_output_tokens": shadow.MAX_OUTPUT_TOKENS,
@@ -572,6 +576,7 @@ def build_report(
             "max_output_tokens": shadow.MAX_OUTPUT_TOKENS,
             "timeout_seconds": CALL_TIMEOUT_SECONDS,
             "attempts_per_case": 1,
+            "prompt_version": shadow.PROMPT_VERSION,
             "prompt_template_id": shadow.PROMPT_TEMPLATE_ID,
             "output_schema_id": shadow.OUTPUT_SCHEMA_ID,
             "prompt_schema_sha256": prompt_schema_hash(),
@@ -603,7 +608,9 @@ def render_summary(report: dict[str, Any]) -> str:
         f"- Modelo: {config['model_id']} digest {config['approved_digest']}",
         f"- Ollama: {', '.join(config['observed_ollama_versions']) or 'n/d'}",
         f"- Conjunto: sha256 {config['dataset_sha256']}",
-        f"- Prompt/schema: sha256 {config['prompt_schema_sha256']}",
+        f"- Prompt: {config['prompt_version']} "
+        f"({config['prompt_template_id']}), "
+        f"sha256 {config['prompt_schema_sha256']}",
         f"- Opcoes: {json.dumps(config['options'], sort_keys=True)}",
         f"- max_output_tokens {config['max_output_tokens']}, "
         f"timeout {config['timeout_seconds']} s, 1 tentativa por caso",

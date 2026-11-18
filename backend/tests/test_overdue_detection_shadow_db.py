@@ -272,7 +272,7 @@ def test_valid_answer_is_recorded_in_ledger_and_log(
         (call,) = db.query(IntelligenceModelCall).all()
         assert call.state == "settled"
         assert call.provider == "fake"
-        assert call.purpose == "overdue_shadow_v1"
+        assert call.purpose == "overdue_shadow_v2"
         assert call.call_key.startswith("overdue-shadow:")
         assert call.data_classification == "synthetic"
 
