@@ -156,7 +156,7 @@ test('contadores e filtros das abas', () => {
   const paga = conta(10, { status: 'pago' });
   const itens = classificarContas([venc1, venc2, hoje, em3, em4, longe, paga], HOJE);
 
-  assert.deepEqual(plain(contarAbas(itens)), { todas: 4, vencidas: 2, 'ate-3-dias': 2 });
+  assert.deepEqual(plain(contarAbas(itens)), { todas: 4, vencidas: 2, 'ate-3-dias': 2, 'promessa-vencida': 0 });
 
   const idsDe = (aba) => filtrarFila(itens, aba).map((i) => i.conta.id);
   assert.deepEqual(plain(idsDe('vencidas')), [venc2.id, venc1.id]);
@@ -166,7 +166,7 @@ test('contadores e filtros das abas', () => {
 
 test('abas vazias quando nao ha contas elegiveis', () => {
   const itens = classificarContas([conta(-20)], HOJE);
-  assert.deepEqual(plain(contarAbas(itens)), { todas: 0, vencidas: 0, 'ate-3-dias': 0 });
+  assert.deepEqual(plain(contarAbas(itens)), { todas: 0, vencidas: 0, 'ate-3-dias': 0, 'promessa-vencida': 0 });
   assert.deepEqual(plain(filtrarFila(itens, 'todas')), []);
 });
 

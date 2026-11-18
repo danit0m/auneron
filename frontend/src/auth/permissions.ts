@@ -26,6 +26,7 @@ const managerPermissions = [
   "work:read",
   "skill:execute",
   "skill:execute_mutating",
+  "account:contact",
 ] as const satisfies readonly Permission[];
 
 const executivePermissions = [
@@ -71,4 +72,11 @@ export function podeCadastrarCliente(
   hasPermission: (permission: Permission) => boolean,
 ): boolean {
   return hasPermission("clients.manage");
+}
+
+/** Registrar contato/promessa em Recebiveis exige account:contact. */
+export function podeRegistrarContato(
+  hasPermission: (permission: Permission) => boolean,
+): boolean {
+  return hasPermission("account:contact");
 }

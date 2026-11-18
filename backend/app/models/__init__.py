@@ -28,6 +28,7 @@ from app.models.work_learning_runtime_context_snapshot import (
 from app.models.work_outcome_evaluation import WorkOutcomeEvaluation
 from app.models.account_event import AccountEvent
 from app.models.account_payment import AccountPayment
+from app.models.account_contact_event import AccountContactEvent
 from app.models.approval_request_input import ApprovalRequestInput
 from app.models.account_vencimento_change import AccountVencimentoChange
 from app.models.account_data_entry_audit_event import (
