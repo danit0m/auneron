@@ -192,6 +192,13 @@ class AccountResponse(AccountBase):
     # None para titulo nao pago ou pago antes desta fatia.
     paid_on: date | None = None
 
+    # A5 -- agregado de contato/promessa (tabela lateral
+    # account_contact_events), calculado na leitura e preenchido em lote
+    # pela rota; nunca aceito como entrada.
+    ultimo_contato_em: datetime | None = None
+    promessa_vigente: date | None = None
+    promessa_vencida: bool = False
+
     # F3 -- projecao advisory/read-only calculada a cada resposta, nunca
     # aceita como entrada (AccountCreate/AccountUpdate nao possuem este
     # campo). Sempre recalculada pelo model_validator abaixo, mesmo se
@@ -214,6 +221,53 @@ class AccountResponse(AccountBase):
         )
 
         return self
+
+
+AccountContactEventType = Literal[
+    "contato",
+    "promessa",
+    "remarcacao",
+    "encerramento",
+]
+
+
+class AccountContactEventCreate(BaseModel):
+    """A5 -- registro de contato/promessa (so inclusao)."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    event_type: AccountContactEventType
+    promised_date: date | None = None
+    note: str | None = Field(default=None, max_length=280)
+
+    @field_validator("note")
+    @classmethod
+    def _blank_note_is_absent(cls, value):
+        return value or None
+
+    @model_validator(mode="after")
+    def _promised_date_matches_type(self) -> "AccountContactEventCreate":
+        needs_date = self.event_type in ("promessa", "remarcacao")
+        if needs_date and self.promised_date is None:
+            raise ValueError("promised_date_required")
+        if not needs_date and self.promised_date is not None:
+            raise ValueError("promised_date_not_allowed")
+        return self
+
+
+class AccountContactEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    account_id: int
+    event_type: AccountContactEventType
+    promised_date: date | None
+    note: str | None
+    actor_user_id: int
+    created_at: datetime
 
 
 # TASK054 (TI1): atribuicao manual da referencia de origem a um titulo

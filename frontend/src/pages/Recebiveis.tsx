@@ -5,10 +5,18 @@ import { Link } from "react-router-dom";
 
 import api, { getApiErrorMessage, IDEMPOTENCY_KEY_HEADER } from "../api/api";
 import { Header } from "../components/layout/Header";
+import RegistrarContatoModal from "../components/recebiveis/RegistrarContatoModal";
 import RegistrarPagamentoModal from "../components/recebiveis/RegistrarPagamentoModal";
 import { AuneronBot, Badge, Button, Card, Spinner } from "../components/ui";
 import { descreverPrazo, formatarMoeda } from "../lib/cockpit";
 import { useAuth } from "../hooks/useAuth";
+import { podeRegistrarContato } from "../auth/permissions";
+import {
+  descreverProximaPromessa,
+  descreverUltimoContato,
+  temPromessaVencida,
+  type TipoEventoContato,
+} from "../lib/contatoPromessa";
 import {
   descreverPagamento,
   estadoPagamento,
@@ -167,6 +175,7 @@ const ABAS: ReadonlyArray<{ chave: AbaChave; rotulo: string }> = [
   { chave: "todas", rotulo: "Todas" },
   { chave: "vencidas", rotulo: "Vencidas" },
   { chave: "ate-3-dias", rotulo: "Vencem em até 3 dias" },
+  { chave: "promessa-vencida", rotulo: "Promessa vencida" },
 ];
 
 const COR_FAIXA: Record<FaixaChave, string> = {
@@ -214,6 +223,7 @@ export default function Recebiveis() {
     hasPermission("skill:execute") && hasPermission("skill:execute_mutating");
   const podeDecidir = hasPermission("approval:decide");
   const podeVerAprovacoes = hasPermission("approval:read");
+  const podeContato = podeRegistrarContato(hasPermission);
 
   const [contas, setContas] = useState<Account[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -228,6 +238,9 @@ export default function Recebiveis() {
   const [contaDoModal, setContaDoModal] = useState<Account | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [erroModal, setErroModal] = useState("");
+  const [contaDoContato, setContaDoContato] = useState<Account | null>(null);
+  const [salvandoContato, setSalvandoContato] = useState(false);
+  const [erroContato, setErroContato] = useState("");
   const [concluindoId, setConcluindoId] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(
     null,
@@ -371,6 +384,41 @@ export default function Recebiveis() {
       setErroModal(mensagemDaApi(error, "Não foi possível enviar o pedido de pagamento."));
     } finally {
       setEnviando(false);
+    }
+  }
+
+  function abrirContato(conta: Account) {
+    setErroContato("");
+    setFeedback(null);
+    setContaDoContato(conta);
+  }
+
+  const fecharContato = useCallback(() => {
+    setContaDoContato(null);
+    setErroContato("");
+  }, []);
+
+  async function enviarContato(dados: {
+    corpo: { event_type: TipoEventoContato; promised_date?: string; note?: string };
+    idempotencyKey: string;
+  }) {
+    if (!contaDoContato) return;
+
+    setSalvandoContato(true);
+    setErroContato("");
+
+    try {
+      await api.post(`/accounts/${contaDoContato.id}/contact-events`, dados.corpo, {
+        headers: { [IDEMPOTENCY_KEY_HEADER]: dados.idempotencyKey },
+      });
+      setContaDoContato(null);
+      setFeedback({ tipo: "ok", texto: "Contato registrado." });
+      await carregar(true);
+    } catch (error) {
+      console.error("Erro ao registrar contato:", error);
+      setErroContato(mensagemDaApi(error, "Não foi possível registrar o contato."));
+    } finally {
+      setSalvandoContato(false);
     }
   }
 
@@ -642,6 +690,8 @@ export default function Recebiveis() {
                       <th scope="col">Valor</th>
                       <th scope="col">Situação</th>
                       <th scope="col">Próxima ação sugerida</th>
+                      <th scope="col">Último contato</th>
+                      <th scope="col">Próxima promessa</th>
                       <th scope="col">Pagamento</th>
                     </tr>
                   </thead>
@@ -667,6 +717,11 @@ export default function Recebiveis() {
                           <td className="recebiveis-valor">{formatarMoeda(item.valor)}</td>
                           <td>
                             <Situacao item={item} />
+                            {temPromessaVencida(item.conta) && (
+                              <Badge variant="danger" dot>
+                                Promessa vencida
+                              </Badge>
+                            )}
                           </td>
                           <td>
                             {!item.vencida ? (
@@ -683,6 +738,22 @@ export default function Recebiveis() {
                                 Ver recomendação
                               </Link>
                             )}
+                          </td>
+                          <td>{descreverUltimoContato(item.conta.ultimo_contato_em)}</td>
+                          <td>
+                            <div className="recebiveis-pagamento">
+                              <span>{descreverProximaPromessa(item.conta)}</span>
+                              {podeContato && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  aria-label={`Registrar contato de ${item.conta.cliente}`}
+                                  onClick={() => abrirContato(item.conta)}
+                                >
+                                  Registrar contato
+                                </Button>
+                              )}
+                            </div>
                           </td>
                           <td>
                             <AcaoPagamento
@@ -710,6 +781,16 @@ export default function Recebiveis() {
           </div>
         </Card>
       </section>
+
+      {contaDoContato && (
+        <RegistrarContatoModal
+          conta={contaDoContato}
+          salvando={salvandoContato}
+          erro={erroContato}
+          onClose={fecharContato}
+          onSubmit={enviarContato}
+        />
+      )}
 
       {contaDoModal && (
         <RegistrarPagamentoModal

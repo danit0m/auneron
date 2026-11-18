@@ -22,7 +22,8 @@ export type Permission =
   | "work:read"
   | "work:assess_escalation"
   | "skill:execute"
-  | "skill:execute_mutating";
+  | "skill:execute_mutating"
+  | "account:contact";
 
 export interface AuthUser {
   id: number;

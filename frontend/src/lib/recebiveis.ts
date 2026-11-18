@@ -3,7 +3,7 @@ import type { Account } from "../types/account";
 import { diasAte } from "./cockpit";
 
 export type FaixaChave = "a-vencer" | "1-30" | "31-60" | "61-90" | "mais-90";
-export type AbaChave = "todas" | "vencidas" | "ate-3-dias";
+export type AbaChave = "todas" | "vencidas" | "ate-3-dias" | "promessa-vencida";
 
 export const JANELA_PROXIMAS = 3;
 
@@ -121,10 +121,16 @@ export function venceEmAte3Dias(item: ContaEmAberto): boolean {
   return !item.vencida && item.diasParaVencer <= JANELA_PROXIMAS;
 }
 
+/** A5: promessa de pagamento vencida (cálculo da API, fuso de negócio). */
+export function promessaVencida(item: ContaEmAberto): boolean {
+  return item.conta.promessa_vencida === true;
+}
+
 /** Itens da fila de cobrança para a aba escolhida, já ordenados. */
 export function filtrarFila(itens: ContaEmAberto[], aba: AbaChave): ContaEmAberto[] {
   const ordenados = ordenarFila(itens);
 
+  if (aba === "promessa-vencida") return ordenados.filter(promessaVencida);
   if (aba === "vencidas") return ordenados.filter((i) => i.vencida);
   if (aba === "ate-3-dias") return ordenados.filter(venceEmAte3Dias);
   return ordenados.filter((i) => i.vencida || venceEmAte3Dias(i));
@@ -135,6 +141,7 @@ export function contarAbas(itens: ContaEmAberto[]): Record<AbaChave, number> {
     todas: filtrarFila(itens, "todas").length,
     vencidas: filtrarFila(itens, "vencidas").length,
     "ate-3-dias": filtrarFila(itens, "ate-3-dias").length,
+    "promessa-vencida": filtrarFila(itens, "promessa-vencida").length,
   };
 }
 

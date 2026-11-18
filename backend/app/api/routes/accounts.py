@@ -33,8 +33,16 @@ from app.models.policy_authority_consumption import PolicyAuthorityConsumption
 from app.repositories.approval_repository import ApprovalRepository
 from app.repositories.memory_repository import MemoryRepository
 from app.repositories.skill_repository import SkillRepository
+from app.models.account_contact_event import AccountContactEvent
+from app.repositories.account_contact_repository import (
+    AccountContactRepository,
+)
+from app.services.account_contact_summary import summarize_contact_events
+from sqlalchemy.exc import IntegrityError
 from app.schemas.account import (
     AccountClassificationResponse,
+    AccountContactEventCreate,
+    AccountContactEventResponse,
     AccountCreate,
     AccountMarkPaidRequest,
     AccountResponse,
@@ -133,6 +141,7 @@ GOVERNED_HISTORY_COLUMNS = (
     BusinessEffectVerification.target_account_id,
     account_title_references.c.account_id,
     AccountPayment.account_id,
+    AccountContactEvent.account_id,
 )
 
 
@@ -154,10 +163,21 @@ def _responses_with_paid_on(
                 .where(AccountPayment.account_id.in_(ids))
             ).all()
         }
+    # A5: agregado de contato/promessa, tambem em lote (uma consulta so).
+    contact_events = AccountContactRepository(db).list_for_accounts(ids)
+    today = business_today()
     responses = []
     for account in accounts:
         response = AccountResponse.model_validate(account)
         response.paid_on = paid.get(account.id)
+        summary = summarize_contact_events(
+            contact_events.get(account.id, []),
+            account_status=account.status,
+            today=today,
+        )
+        response.ultimo_contato_em = summary.ultimo_contato_em
+        response.promessa_vigente = summary.promessa_vigente
+        response.promessa_vencida = summary.promessa_vencida
         responses.append(response)
     return responses
 
@@ -907,6 +927,127 @@ def execute_account_mark_paid(
         "duplicate": result.duplicate,
         "output": result.output,
     }
+
+
+def _same_contact_event(
+    existing: AccountContactEvent,
+    account_id: int,
+    payload: AccountContactEventCreate,
+) -> bool:
+    return (
+        existing.account_id == account_id
+        and existing.event_type == payload.event_type
+        and existing.promised_date == payload.promised_date
+        and existing.note == payload.note
+    )
+
+
+def _idempotency_conflict() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Idempotency-Key já usada com conteúdo diferente.",
+    )
+
+
+@router.post(
+    "/{account_id}/contact-events",
+    response_model=AccountContactEventResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_account_contact_event(
+    account_id: int,
+    payload: AccountContactEventCreate,
+    response: Response,
+    idempotency_key: str = Depends(get_approval_idempotency_key),
+    authenticated: AuthenticatedSession = Depends(
+        require_permission("account:contact")
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    A5 -- registra contato/promessa/remarcacao/encerramento de um titulo.
+    Somente inclusao e idempotente pela chave: repeticao com o mesmo
+    conteudo devolve o mesmo registro (200); a mesma chave com conteudo
+    diferente e 409.
+    """
+    idempotency_key = idempotency_key.strip()
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key não pode ser vazia.",
+        )
+
+    repository = AccountContactRepository(db)
+
+    # Serializa registros concorrentes do mesmo titulo.
+    account = db.execute(
+        select(Account)
+        .where(Account.id == account_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+
+    existing = repository.find_by_idempotency_key(idempotency_key)
+    if existing is not None:
+        if not _same_contact_event(existing, account_id, payload):
+            raise _idempotency_conflict()
+        response.status_code = status.HTTP_200_OK
+        return existing
+
+    try:
+        event = repository.add(
+            account_id=account_id,
+            event_type=payload.event_type,
+            promised_date=payload.promised_date,
+            note=payload.note,
+            actor_user_id=authenticated.user.id,
+            idempotency_key=idempotency_key,
+        )
+        db.commit()
+    except IntegrityError:
+        # Corrida na mesma chave (outro titulo ou outra requisicao).
+        db.rollback()
+        existing = repository.find_by_idempotency_key(idempotency_key)
+        if existing is None or not _same_contact_event(
+            existing, account_id, payload
+        ):
+            raise _idempotency_conflict() from None
+        response.status_code = status.HTTP_200_OK
+        return existing
+
+    # Sem dado pessoal: nem nota nem cliente, so ids e tipo.
+    account_logger.info(
+        "account_contact_event_created",
+        extra={
+            "account_id": account_id,
+            "contact_event_id": event.id,
+            "event_type": event.event_type,
+            "actor_user_id": event.actor_user_id,
+        },
+    )
+    return event
+
+
+@router.get(
+    "/{account_id}/contact-events",
+    response_model=list[AccountContactEventResponse],
+    dependencies=read_dependencies,
+)
+def list_account_contact_events(
+    account_id: int,
+    db: Session = Depends(get_db),
+):
+    """A5 -- historico de contatos/promessas, mais recente primeiro."""
+    if db.get(Account, account_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conta não encontrada.",
+        )
+    return AccountContactRepository(db).list_for_account(account_id)
 
 
 @router.get(

@@ -286,7 +286,7 @@ def test_no_route_permission_table_or_migration_was_added():
 
     config = Config(str(BACKEND / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND / "migrations"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["c8e2a5f1d704"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["f1b7d3a9c520"]
 
 
 def test_the_credential_and_provider_vocabulary_stays_out_of_planning():

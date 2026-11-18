@@ -51,6 +51,7 @@ Permission = Literal[
     "approval:decide",
     "approval:decide_sensitive",
     "clients.detect_overdue",
+    "account:contact",
 ]
 
 USER_ROLES: tuple[UserRole, ...] = (
@@ -96,6 +97,7 @@ ROLE_PERMISSIONS: dict[
         "clients.view",
         "clients.manage",
         "imports.execute",
+        "account:contact",
         "brain.view",
         "brain.manage",
         "executive.view",
@@ -124,6 +126,7 @@ ROLE_PERMISSIONS: dict[
         "clients.view",
         "clients.manage",
         "imports.execute",
+        "account:contact",
         "brain.view",
         "brain.manage",
         "executive.view",
@@ -153,6 +156,7 @@ ROLE_PERMISSIONS: dict[
         "clients.view",
         "clients.manage",
         "imports.execute",
+        "account:contact",
         "brain.view",
         "brain.manage",
         "executive.view",
@@ -192,6 +196,7 @@ ROLE_PERMISSIONS: dict[
         "clients.view",
         "clients.manage",
         "imports.execute",
+        "account:contact",
         "brain.view",
         "brain.manage",
         "executive.view",
