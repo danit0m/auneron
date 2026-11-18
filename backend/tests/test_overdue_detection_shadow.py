@@ -543,7 +543,8 @@ def test_request_is_minimal_synthetic_and_carries_no_personal_data() -> None:
     assert request.data_classification is DataClassification.SYNTHETIC
     assert request.deployment_budget_id == 7
     assert request.profile == "lab-fast"
-    assert request.purpose == "overdue_shadow_v1"
+    assert request.purpose == "overdue_shadow_v2"
+    assert request.prompt_template_id == "overdue-shadow-prompt-v2"
     assert request.output_schema["properties"]["decision"]["enum"] == [
         "mark_overdue", "no_action",
     ]

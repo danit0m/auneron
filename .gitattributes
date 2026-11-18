@@ -7,3 +7,7 @@
 
 # Binarios explicitos - nunca normalizar.
 frontend/src/assets/hero.png binary
+
+# Conjuntos selados da avaliacao do shadow: o hash depende dos bytes exatos.
+backend/evals/overdue_shadow/cases_v1.json -text
+backend/evals/overdue_shadow/cases_v2.json -text
