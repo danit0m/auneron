@@ -30,6 +30,7 @@ Codigos de saida:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import math
@@ -58,18 +59,24 @@ from app.intelligence.gateway.errors import ProviderModelNotApprovedError
 from app.intelligence.gateway.errors import ProviderNotSentError
 from app.intelligence.gateway.errors import ProviderTimeoutError
 from app.intelligence.gateway.gateway import strict_json_loads
+from app.intelligence.gateway.profiles import build_local_ollama_profile
 from app.services import overdue_detection_shadow as shadow
 
-EVAL_VERSION: Final[str] = "overdue-shadow-eval-v1"
+EVAL_VERSION: Final[str] = "overdue-shadow-eval-v2-think"
 MODEL_ID: Final[str] = "qwen3:4b"
 APPROVED_DIGEST: Final[str] = (
     "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7"
 )
 EXPECTED_OLLAMA_VERSION: Final[str] = "0.40.16"
 MIN_FREE_MEMORY_GIB: Final[float] = 14.0
-CALL_TIMEOUT_SECONDS: Final[int] = 120  # = INTELLIGENCE_CALL_TIMEOUT_SECONDS da S5 (carga a frio do 1o caso)
+# = INTELLIGENCE_CALL_TIMEOUT_SECONDS da S5 com raciocinio (300 s): carga a frio
+# (~33 s) + ate 2048 tokens a ~19 tok/s (~108 s) + leitura do prompt. 120 nao basta.
+CALL_TIMEOUT_SECONDS: Final[int] = 300
 MAX_CONSECUTIVE_FAILURES: Final[int] = 5
 DECISIONS: Final[tuple[str, str]] = shadow.DECISIONS
+
+# Mesmo perfil do shadow (raciocinio ligado, amostragem, teto de saida).
+_PROFILE: Final = build_local_ollama_profile(model_id=MODEL_ID)
 
 EXIT_OK: Final[int] = 0
 EXIT_REFUSED: Final[int] = 2
@@ -124,6 +131,9 @@ def prompt_schema_hash() -> str:
             "prompt_template_id": shadow.PROMPT_TEMPLATE_ID,
             "output_schema_id": shadow.OUTPUT_SCHEMA_ID,
             "max_output_tokens": shadow.MAX_OUTPUT_TOKENS,
+            "reasoning_mode": shadow.REASONING_MODE,
+            "think": _PROFILE.think,
+            "sampling": dataclasses.asdict(_PROFILE.sampling),
         }
     )
 
@@ -336,10 +346,14 @@ def _classify_answer(
 ) -> tuple[str, str | None, int | None, str | None]:
     """-> (outcome, obtained, reason_length, error)."""
     if status is not ProviderStatus.COMPLETED:
+        # TRUNCATED (done_reason=length: the budget ended inside the
+        # reasoning or the JSON) is never used as an answer.
         return INVALID, None, None, status.value
 
+    if output_text is None or not output_text.strip():
+        return INVALID, None, None, "empty_content"
+
     try:
-        assert output_text is not None
         parsed = strict_json_loads(output_text)
         Draft202012Validator(dict(shadow.OUTPUT_SCHEMA)).validate(parsed)
     except Exception:
@@ -382,6 +396,8 @@ def run_cases(
             "outcome": NOT_RUN,
             "latency_ms": None,
             "reason_length": None,
+            "thinking_length": None,
+            "output_tokens": None,
             "error": None,
         }
         results.append(record)
@@ -397,6 +413,8 @@ def run_cases(
             output_schema=shadow.OUTPUT_SCHEMA,
             max_output_tokens=shadow.MAX_OUTPUT_TOKENS,
             timeout_seconds=CALL_TIMEOUT_SECONDS,
+            think=_PROFILE.think,
+            sampling=_PROFILE.sampling,
         )
         started = clock()
 
@@ -453,6 +471,9 @@ def run_cases(
             )
             record["reason_length"] = reason_length
             record["error"] = error
+            # Only the LENGTH of the reasoning; the text is never kept.
+            record["thinking_length"] = response.thinking_length
+            record["output_tokens"] = response.output_tokens
 
         if consecutive >= MAX_CONSECUTIVE_FAILURES:
             stop_reason = "consecutive_transport_failures"
@@ -498,7 +519,30 @@ def compute_metrics(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     def rate(num: int, den: int) -> float | None:
         return round(num / den, 4) if den else None
 
+    thinking = [
+        r["thinking_length"] for r in results
+        if r.get("thinking_length") is not None
+    ]
+    out_tokens = [
+        r["output_tokens"] for r in results
+        if r.get("output_tokens") is not None
+    ]
+    truncated = sum(1 for r in results if r["error"] == "truncated")
+    empty = sum(1 for r in results if r["error"] == "empty_content")
+
     return {
+        "truncated_responses": truncated,
+        "empty_content_responses": empty,
+        "thinking_chars": {
+            "calls_with_thinking": len(thinking),
+            "mean": round(sum(thinking) / len(thinking), 1) if thinking else None,
+            "max": max(thinking) if thinking else None,
+        },
+        "output_tokens": {
+            "calls": len(out_tokens),
+            "mean": round(sum(out_tokens) / len(out_tokens), 1) if out_tokens else None,
+            "max": max(out_tokens) if out_tokens else None,
+        },
         "total_cases": total,
         "correct": counts[CORRECT],
         "unwarranted_actions": counts[UNWARRANTED_ACTION],
@@ -573,6 +617,14 @@ def build_report(
                 recorder.chat_bodies[0]["think"]
                 if recorder.chat_bodies else None
             ),
+            "reasoning_mode": shadow.REASONING_MODE,
+            "sampling_choice": (
+                "recomendacao Qwen3 para raciocinio (temperature 0.6, "
+                "top_p 0.95, top_k 20) com seed fixa 0; temperature 0 "
+                "(guloso) causa repeticao sem fim no raciocinio. "
+                "Repetibilidade so no mesmo build/hardware do runtime."
+            ),
+            "reasoning_text_stored": False,
             "max_output_tokens": shadow.MAX_OUTPUT_TOKENS,
             "timeout_seconds": CALL_TIMEOUT_SECONDS,
             "attempts_per_case": 1,
@@ -612,6 +664,10 @@ def render_summary(report: dict[str, Any]) -> str:
         f"({config['prompt_template_id']}), "
         f"sha256 {config['prompt_schema_sha256']}",
         f"- Opcoes: {json.dumps(config['options'], sort_keys=True)}",
+        f"- Raciocinio: think={config['think']} ({config['reasoning_mode']}); "
+        f"amostragem: {config['sampling_choice']}",
+        f"- Texto do raciocinio gravado: {config['reasoning_text_stored']} "
+        "(so o tamanho em caracteres)",
         f"- max_output_tokens {config['max_output_tokens']}, "
         f"timeout {config['timeout_seconds']} s, 1 tentativa por caso",
         "",
@@ -627,7 +683,15 @@ def render_summary(report: dict[str, Any]) -> str:
         f"| Atrasos nao identificados (no_action onde o certo e "
         f"mark_overdue) | {metrics['missed_overdue']} "
         f"(taxa {metrics['missed_overdue_rate']}) |",
-        f"| Respostas invalidas | {metrics['invalid_responses']} |",
+        f"| Respostas invalidas | {metrics['invalid_responses']} "
+        f"(truncadas {metrics['truncated_responses']}, "
+        f"conteudo vazio {metrics['empty_content_responses']}) |",
+        f"| Raciocinio (caracteres): media / max | "
+        f"{metrics['thinking_chars']['mean']} / "
+        f"{metrics['thinking_chars']['max']} |",
+        f"| Tokens de saida: media / max | "
+        f"{metrics['output_tokens']['mean']} / "
+        f"{metrics['output_tokens']['max']} |",
         f"| Timeouts | {metrics['timeouts']} |",
         f"| Erros de transporte | {metrics['transport_errors']} |",
         f"| Nao executados | {metrics['not_run']} |",
@@ -757,10 +821,12 @@ class ScriptedOracleTransport:
                 "model": MODEL_ID,
                 "done": True,
                 "message": {
+                    "thinking": "offline reasoning",
                     "content": json.dumps(
                         {"decision": decision, "reason": "offline"}
-                    )
+                    ),
                 },
+                "done_reason": "stop",
                 "prompt_eval_count": 50,
                 "eval_count": 10,
             }

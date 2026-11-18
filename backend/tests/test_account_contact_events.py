@@ -18,6 +18,7 @@ from sqlalchemy import event
 from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy import text
+from sqlalchemy.exc import DataError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -412,7 +413,6 @@ def _raw_insert(db_session, account, **values):
         {"event_type": "encerramento", "promised_date": date(2030, 1, 1)},
         {"note": ""},
         {"note": "   "},
-        {"note": "x" * 281},
         {"idempotency_key": ""},
         {"idempotency_key": "   "},
     ],
@@ -424,6 +424,16 @@ def test_database_checks_reject_invalid_rows(db_session, values) -> None:
     with pytest.raises(IntegrityError):
         _raw_insert(db_session, account, **values)
         db_session.flush()
+    db_session.rollback()
+
+
+def test_database_rejects_note_above_the_column_size(db_session) -> None:
+    # VARCHAR(280) recusa antes do CHECK de tamanho: DataError, nao IntegrityError.
+    account = _make_account(db_session)
+    _manager(db_session)
+
+    with pytest.raises(DataError):
+        _raw_insert(db_session, account, note="x" * 281)
     db_session.rollback()
 
 

@@ -109,7 +109,12 @@ export default function InteligenciaResumo({ gatilho }: Props) {
           <ol className="inteligencia-etapas">
             {funil.map((etapa) => (
               <li key={etapa.chave} className={`inteligencia-etapa inteligencia-etapa-${etapa.chave}`}>
-                <span className="inteligencia-etapa-rotulo">{etapa.rotulo}</span>
+                <span className="inteligencia-etapa-rotulo">
+                  {etapa.rotulo}
+                  {etapa.detalhe && (
+                    <small className="inteligencia-etapa-detalhe">{etapa.detalhe}</small>
+                  )}
+                </span>
                 <span className="inteligencia-barra" aria-hidden="true">
                   <span style={{ width: `${etapa.percentual}%` }} />
                 </span>

@@ -559,7 +559,7 @@ sys.exit(2)
     Verificar '-OrcamentoShadow 0: recusa (ValidateRange)' ($r.Codigo -ne 0) $r.Saida
     $r = Rodar-Script (@('subir-backend', '-Simular', '-SemSondagem', '-Pasta', $pasta, '-Shadow', '-DigestModelo', $dig, '-OrcamentoShadow', '7') + $comuns)
     $saidas['subir-backend-shadow-simular'] = $r.Saida
-    Verificar 'subir-backend -Shadow -Simular: exit 0 e todas as variaveis do shadow' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('INTELLIGENCE_MODE=shadow') -and $r.Saida.Contains('OVERDUE_SHADOW_ENABLED=true') -and $r.Saida.Contains('OVERDUE_SHADOW_DATA_CLASSIFICATION=synthetic') -and $r.Saida.Contains('OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN=1') -and $r.Saida.Contains('OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID=7') -and $r.Saida.Contains('OVERDUE_SHADOW_MODEL_ID=qwen3:4b') -and $r.Saida.Contains('OVERDUE_SHADOW_MODEL_DIGEST=' + $dig) -and $r.Saida.Contains('INTELLIGENCE_CALL_TIMEOUT_SECONDS=120') -and $r.Saida.Contains('INTELLIGENCE_MAX_ATTEMPTS=1') -and $r.Saida.Contains('APP_ENV             : development')) $r.Saida
+    Verificar 'subir-backend -Shadow -Simular: exit 0 e todas as variaveis do shadow' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('INTELLIGENCE_MODE=shadow') -and $r.Saida.Contains('OVERDUE_SHADOW_ENABLED=true') -and $r.Saida.Contains('OVERDUE_SHADOW_DATA_CLASSIFICATION=synthetic') -and $r.Saida.Contains('OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN=1') -and $r.Saida.Contains('OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID=7') -and $r.Saida.Contains('OVERDUE_SHADOW_MODEL_ID=qwen3:4b') -and $r.Saida.Contains('OVERDUE_SHADOW_MODEL_DIGEST=' + $dig) -and $r.Saida.Contains('INTELLIGENCE_CALL_TIMEOUT_SECONDS=300') -and $r.Saida.Contains('INTELLIGENCE_MAX_ATTEMPTS=1') -and $r.Saida.Contains('APP_ENV             : development')) $r.Saida
 
     # Funcoes puras do pre-voo (dados falsos; nenhuma chamada ao Ollama).
     Verificar 'digest: 64 hex aceito e normalizado' ((Normalizar-DigestModelo ('AB12' * 16)) -ceq $dig -and (Normalizar-DigestModelo ('sha256:' + $dig)) -ceq $dig)
@@ -578,7 +578,7 @@ sys.exit(2)
     Verificar 'tags: modelo sem digest: recusado (codigo 8)' ($avSemDigest.Codigo -eq 8)
     $ambSh = Montar-AmbienteShadow $dig 7
     Verificar 'ambiente do shadow: exatamente as 9 variaveis esperadas, sem segredos' (($ambSh.Keys | Sort-Object) -join ',' -eq 'INTELLIGENCE_CALL_TIMEOUT_SECONDS,INTELLIGENCE_MAX_ATTEMPTS,INTELLIGENCE_MODE,OVERDUE_SHADOW_DATA_CLASSIFICATION,OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID,OVERDUE_SHADOW_ENABLED,OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN,OVERDUE_SHADOW_MODEL_DIGEST,OVERDUE_SHADOW_MODEL_ID') (($ambSh.Keys | Sort-Object) -join ',')
-    Verificar 'ambiente do shadow: timeout dentro do limite do config (<= 120) e tentativa unica' ([int]$ambSh['INTELLIGENCE_CALL_TIMEOUT_SECONDS'] -le 120 -and [int]$ambSh['INTELLIGENCE_MAX_ATTEMPTS'] -eq 1)
+    Verificar 'ambiente do shadow: timeout com raciocinio (> 120 e <= 300, teto do config so para o shadow) e tentativa unica' ([int]$ambSh['INTELLIGENCE_CALL_TIMEOUT_SECONDS'] -gt 120 -and [int]$ambSh['INTELLIGENCE_CALL_TIMEOUT_SECONDS'] -le 300 -and [int]$ambSh['INTELLIGENCE_MAX_ATTEMPTS'] -eq 1)
     Verificar 'ambiente do shadow: APP_ENV padrao nao e production' ($script:ConfigPadrao['APP_ENV'] -ne 'production' -and $script:ConfigPadrao['INTELLIGENCE_MODE'] -eq 'off')
 
     $codSh = [IO.File]::ReadAllText($alvoScript)

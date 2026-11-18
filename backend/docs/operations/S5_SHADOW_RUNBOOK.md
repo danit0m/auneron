@@ -1,5 +1,18 @@
 # S5 - Rodada real do shadow do agente de vencidos (homologacao sintetica)
 
+> **Raciocinio ligado (decisao do diretor).** O `qwen3:4b` instalado e o Qwen3-4B-Thinking-2507:
+> o perfil `local-qwen3-4b` agora envia `think=true`, `num_predict=2048` (raciocinio + JSON),
+> amostragem 0,6 / 0,95 / 20 com seed 0, e o timeout do shadow sobe para 300 s. O prompt v2
+> NAO mudou; o ledger distingue as chamadas pelo `prompt_template_id`
+> `overdue-shadow-prompt-v2-think` (as anteriores usam `overdue-shadow-prompt-v2`).
+> O texto do raciocinio NUNCA e gravado (so o tamanho em caracteres).
+>
+> **Orcamento NOVO obrigatorio.** O orcamento id 1 (`s5-shadow-overdue-synthetic`) foi dimensionado
+> para o prompt v1 sem raciocinio (256 tokens de saida; limite 1064). Ele NAO serve (a reserva
+> de pior caso agora e 4713 tokens com a margem padrao) e NAO deve ser alterado nem apagado.
+> `provisionar-orcamento-shadow` cria um orcamento novo com `scope_ref`
+> `s5-shadow-overdue-synthetic-think`; use o `ID_ORCAMENTO` novo em `-OrcamentoShadow`.
+
 Escopo: UMA chamada real do modelo local `qwen3:4b` (Ollama, loopback) sobre UMA conta
 sintetica, no banco `auneron_neon_synthetic`. O shadow so observa: o resultado do modelo
 nunca decide nada. Dados reais e `APP_ENV=production` sao recusados pelo codigo.
@@ -13,8 +26,8 @@ O preco local e zero, entao o limite de dinheiro (`limit_micro = 1`, o minimo ac
 restringe quantidade de chamadas. Quem garante e o limite de **tokens**:
 
 - `limit_tokens` = reserva de pior caso de UMA tentativa (bytes de instrucoes + entrada +
-  schema, + 256 tokens de saida, + margem `INTELLIGENCE_RESERVATION_MARGIN_BPS`), calculada
-  com a mesma funcao do gateway (1064 com a margem padrao de 2000 bps).
+  schema, + 2048 tokens de saida, + margem `INTELLIGENCE_RESERVATION_MARGIN_BPS`), calculada
+  com a mesma funcao do gateway (4713 com a margem padrao de 2000 bps; era 1064 com 256 tokens).
 - Admissao atomica no UPDATE do ledger: `R + S + U + O + r <= L`. Com a chamada em voo,
   `R = L`; depois de liquidada o consumo real (centenas de tokens) fica em `S`, e uma segunda
   reserva (~L) nao cabe. Se a chamada terminar em estado desconhecido, `U = R` tambem bloqueia.
@@ -49,8 +62,9 @@ login por desenho).
    `INTELLIGENCE_MODE=shadow`, `OVERDUE_SHADOW_ENABLED=true`,
    `OVERDUE_SHADOW_DATA_CLASSIFICATION=synthetic`, `OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN=1`,
    `OVERDUE_SHADOW_DEPLOYMENT_BUDGET_ID`, `OVERDUE_SHADOW_MODEL_ID=qwen3:4b`,
-   `OVERDUE_SHADOW_MODEL_DIGEST`, `INTELLIGENCE_CALL_TIMEOUT_SECONDS=120` (maximo aceito; cobre
-   o primeiro carregamento do modelo), `INTELLIGENCE_MAX_ATTEMPTS=1`. `APP_ENV=development`.
+   `OVERDUE_SHADOW_MODEL_DIGEST`, `INTELLIGENCE_CALL_TIMEOUT_SECONDS=300` (teto aceito pelo
+   config acima de 120 somente com o shadow ligado, modo shadow e fora de production; cobre
+   carga a frio + raciocinio), `INTELLIGENCE_MAX_ATTEMPTS=1`. `APP_ENV=development`.
 7. **Um ciclo**: nao ha comando a rodar; a deteccao embutida dispara em ate ~60 s. Aguarde,
    com tempo maximo de 5 min, o aparecimento no `<Base>\logs\backend-*.out.log` de
    `overdue.shadow.observed` (ou `overdue.detection.completed` com `aprovacoes_solicitadas=1`;
@@ -66,7 +80,9 @@ login por desenho).
 - **Chamada**: exatamente 1 linha em `intelligence_model_calls`, `state=settled`,
   `model_profile=local-qwen3-4b`, `model_id=qwen3:4b`, `model_digest` == digest aprovado,
   `provider_reported_model` e `runtime_version` preenchidos, `error_class` vazio.
-- **Latencia**: `latency_ms` registrada e dentro de 120 s.
+- **Latencia**: `latency_ms` registrada e dentro de 300 s (esperado: dezenas de segundos).
+- **Raciocinio**: `prompt_template_id=overdue-shadow-prompt-v2-think`; `output_tokens` inclui
+  os tokens de raciocinio; nenhum texto de raciocinio em log, ledger ou relatorio.
 - **Formato**: saida valida no schema (`call_ok=true` no log; sem `error_code`).
 - **Concordancia**: evento `overdue.shadow.observed` com `decision_modelo` e
   `decision_deterministica` (esperada: `mark_overdue`); registre `agreement` true/false. A
@@ -82,8 +98,9 @@ login por desenho).
 
 ## Risco do timeout e regra para `unknown`
 
-`INTELLIGENCE_CALL_TIMEOUT_SECONDS=120` e o maximo aceito pelo config e nao ha folga: se o
-primeiro carregamento do `qwen3:4b` passar de 120 s, a chamada termina em timeout. Timeout e
+`INTELLIGENCE_CALL_TIMEOUT_SECONDS=300` e o teto do config para o shadow. Estimativa de pior
+caso: carga a frio ~33 s + 2048 tokens a ~19 tok/s (~108 s) + leitura do prompt ~ 150 s; 300 s
+da folga de 2x. Se mesmo assim estourar, a chamada termina em timeout. Timeout e
 tratado como possivelmente enviada: a chamada fica `unknown` (`U = R`), nunca e liberada por
 palpite e bloqueia nova admissao. **Regra: se a chamada ficar `unknown`, NAO repetir** (nem
 reiniciar para tentar de novo, nem criar novo orcamento por conta propria). Pare o backend,
@@ -92,4 +109,4 @@ registre o relatorio `shadow` e o log, e reporte ao PO, que decide a reconciliac
 ## Fora do escopo
 
 Nao ha segunda chamada, nem retry, nem dado real, nem producao. Repetir a rodada exige novo
-orcamento (o existente fica consumido) e nova conta, e e decisao do PO.
+orcamento (o existente fica consumido; o do prompt v1, id 1, nunca e reutilizado) e nova conta, e e decisao do PO.

@@ -19,6 +19,11 @@ from sqlalchemy.engine import make_url
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 
+# Teto geral do timeout de chamada do gateway. Acima disso (ate 300) so o
+# shadow local de vencidos com raciocinio (shadow ligado, modo shadow,
+# fora de production) -- ver validador em Settings.
+INTELLIGENCE_CALL_TIMEOUT_GENERAL_MAX = 120
+
 # IPs estáticos dos proxies empacotados (docker-compose.prod.yml), fixados
 # via SEC-AUTH-1.1C. Em production, FORWARDED_ALLOW_IPS precisa conter os
 # dois, sempre como /32 -- CIDRs adicionais (LB/CDN externo) são permitidos
@@ -409,7 +414,10 @@ class Settings(BaseSettings):
         default=30,
         validation_alias="INTELLIGENCE_CALL_TIMEOUT_SECONDS",
         ge=1,
-        le=120,
+        # Hard ceiling 300 ONLY for the local reasoning shadow; every
+        # other configuration stays capped at 120 (see
+        # INTELLIGENCE_CALL_TIMEOUT_GENERAL_MAX and the model validator).
+        le=300,
     )
     intelligence_max_concurrent_calls: int = Field(
         default=2,
@@ -743,6 +751,22 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "O banco auneron_test exige APP_ENV=test."
+            )
+
+        if (
+            self.intelligence_call_timeout_seconds
+            > INTELLIGENCE_CALL_TIMEOUT_GENERAL_MAX
+            and not (
+                self.overdue_shadow_enabled
+                and self.intelligence_mode == "shadow"
+                and self.environment != "production"
+            )
+        ):
+            raise ValueError(
+                "INTELLIGENCE_CALL_TIMEOUT_SECONDS acima de "
+                f"{INTELLIGENCE_CALL_TIMEOUT_GENERAL_MAX} so e aceito "
+                "com OVERDUE_SHADOW_ENABLED=true, "
+                "INTELLIGENCE_MODE=shadow e fora de production."
             )
 
         if self.overdue_shadow_enabled:
