@@ -206,7 +206,7 @@ $script:ConfigPadrao = [ordered]@{
 }
 
 # Shadow do agente de vencidos (rodada S5). Valores FIXOS; so -DigestModelo e -OrcamentoShadow variam.
-# Timeout de chamada: carga a frio (~33 s) + raciocinio de ate 2048 tokens a ~19 tok/s (~108 s) + leitura do
+# Timeout de chamada: carga a frio (~33 s) + raciocinio de ate 4096 tokens a ~19 tok/s (~215 s) + leitura do
 # prompt nao cabem em 120 s. 300 s e o teto de INTELLIGENCE_CALL_TIMEOUT_SECONDS (config.py), aceito acima de
 # 120 SOMENTE com OVERDUE_SHADOW_ENABLED=true + INTELLIGENCE_MODE=shadow fora de production (este bloco).
 # Tentativas: 1 (sem retry, para a chamada unica).
@@ -2057,7 +2057,7 @@ function Rodar-ProvisionamentoShadow {
 }
 
 function Cmd-ProvisionarOrcamentoShadow {
-    Rodar-ProvisionamentoShadow -Modulo 'scripts.create_shadow_budget' -Arquivo 'create_shadow_budget.py' -Efeito 'cria UM orcamento deployment_period (7 dias, scope_ref s5-shadow-overdue-synthetic-think; o orcamento antigo s5-shadow-overdue-synthetic, de prompt v1 sem raciocinio, NAO e alterado) com limit_tokens = reserva de pior caso de UMA chamada local-qwen3-4b com raciocinio (2048 tokens de saida) (preco zero; o limite de tokens e o que garante uma chamada) e limit_micro = 1; idempotente; recusa se o banco nao for auneron_neon_synthetic.'
+    Rodar-ProvisionamentoShadow -Modulo 'scripts.create_shadow_budget' -Arquivo 'create_shadow_budget.py' -Efeito 'cria UM orcamento deployment_period (7 dias, scope_ref s5-shadow-overdue-synthetic-think-4096; os orcamentos antigos s5-shadow-overdue-synthetic e s5-shadow-overdue-synthetic-think NAO sao alterados) com limit_tokens = reserva de pior caso de UMA chamada local-qwen3-4b com raciocinio (4096 tokens de saida) (preco zero; o limite de tokens e o que garante uma chamada) e limit_micro = 1; idempotente; recusa se o banco nao for auneron_neon_synthetic.'
 }
 
 function Cmd-ProvisionarContaVencidaSintetica {

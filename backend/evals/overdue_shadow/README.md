@@ -10,13 +10,13 @@ Ambos seguem a mesma regra de rotulo (`mark_overdue` sse status `aberto`
 e `due_date < business_date`, estrito). Os arquivos sao `-text` no
 `.gitattributes`: o SHA-256 selado depende dos bytes exatos.
 
-O avaliador roda com RACIOCINIO LIGADO (`think=true`, 2048 tokens de saida,
+O avaliador roda com RACIOCINIO LIGADO (`think=true`, 4096 tokens de saida (era 2048; a v1 de 18/11 truncou 13/80 casos nesse limite),
 amostragem 0,6 / 0,95 / 20 com seed 0, timeout 300 s por caso, 1 tentativa),
 as mesmas configuracoes do shadow (perfil `local-qwen3-4b`). O texto do
 raciocinio nunca e gravado (so `thinking_length` por caso). Cada conjunto
 tem 80 casos: estime de ~35 a ~70 min por conjunto (30 a 50 s por caso a
-~19 tok/s) e ate ~2,5 h no pior caso (todos os casos no limite de 2048
-tokens). O primeiro caso inclui a carga a frio (~33 s).
+~19 tok/s) e ate ~2,5 h no pior caso (todos os casos no limite de 4096
+tokens; ~4,8 h). O primeiro caso inclui a carga a frio (~33 s).
 
 Rodada real (a partir de `backend/`, pasta de saida NOVA a cada rodada):
 

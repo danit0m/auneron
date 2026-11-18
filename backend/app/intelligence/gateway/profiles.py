@@ -148,9 +148,9 @@ LOCAL_QWEN3_4B_PROFILE_NAME: Final[str] = "local-qwen3-4b"
 
 # Qwen3-4B-Thinking-2507 (the installed qwen3:4b) always reasons. With
 # think=True the runtime separates the reasoning from the answer. The
-# budget must hold reasoning + the JSON answer: 2048 tokens (see
+# budget must hold reasoning + the JSON answer: 4096 tokens (see
 # docs/operations/S5_SHADOW_RUNBOOK.md). The cap equals that budget.
-LOCAL_QWEN3_4B_THINK_OUTPUT_TOKENS: Final[int] = 2048
+LOCAL_QWEN3_4B_THINK_OUTPUT_TOKENS: Final[int] = 4096
 
 # Sampling = the model card's recommendation for thinking mode
 # (temperature 0.6, top_p 0.95, top_k 20) with a FIXED seed. Greedy

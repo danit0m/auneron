@@ -1,7 +1,7 @@
 # S5 - Rodada real do shadow do agente de vencidos (homologacao sintetica)
 
 > **Raciocinio ligado (decisao do diretor).** O `qwen3:4b` instalado e o Qwen3-4B-Thinking-2507:
-> o perfil `local-qwen3-4b` agora envia `think=true`, `num_predict=2048` (raciocinio + JSON),
+> o perfil `local-qwen3-4b` agora envia `think=true`, `num_predict=4096` (raciocinio + JSON; era 2048: a avaliacao v1 de 18/11 truncou 13/80 casos no limite de 2048),
 > amostragem 0,6 / 0,95 / 20 com seed 0, e o timeout do shadow sobe para 300 s. O prompt v2
 > NAO mudou; o ledger distingue as chamadas pelo `prompt_template_id`
 > `overdue-shadow-prompt-v2-think` (as anteriores usam `overdue-shadow-prompt-v2`).
@@ -9,9 +9,9 @@
 >
 > **Orcamento NOVO obrigatorio.** O orcamento id 1 (`s5-shadow-overdue-synthetic`) foi dimensionado
 > para o prompt v1 sem raciocinio (256 tokens de saida; limite 1064). Ele NAO serve (a reserva
-> de pior caso agora e 4713 tokens com a margem padrao) e NAO deve ser alterado nem apagado.
+> de pior caso agora e 7170 tokens com a margem padrao) e NAO deve ser alterado nem apagado.
 > `provisionar-orcamento-shadow` cria um orcamento novo com `scope_ref`
-> `s5-shadow-overdue-synthetic-think`; use o `ID_ORCAMENTO` novo em `-OrcamentoShadow`.
+> `s5-shadow-overdue-synthetic-think-4096` (o orcamento `-think`, dimensionado para 2048 tokens, tambem NAO e alterado); use o `ID_ORCAMENTO` novo em `-OrcamentoShadow`.
 
 Escopo: UMA chamada real do modelo local `qwen3:4b` (Ollama, loopback) sobre UMA conta
 sintetica, no banco `auneron_neon_synthetic`. O shadow so observa: o resultado do modelo
@@ -26,8 +26,8 @@ O preco local e zero, entao o limite de dinheiro (`limit_micro = 1`, o minimo ac
 restringe quantidade de chamadas. Quem garante e o limite de **tokens**:
 
 - `limit_tokens` = reserva de pior caso de UMA tentativa (bytes de instrucoes + entrada +
-  schema, + 2048 tokens de saida, + margem `INTELLIGENCE_RESERVATION_MARGIN_BPS`), calculada
-  com a mesma funcao do gateway (4713 com a margem padrao de 2000 bps; era 1064 com 256 tokens).
+  schema, + 4096 tokens de saida, + margem `INTELLIGENCE_RESERVATION_MARGIN_BPS`), calculada
+  com a mesma funcao do gateway (7170 com a margem padrao de 2000 bps; era 4713 com 2048 tokens e 1064 com 256).
 - Admissao atomica no UPDATE do ledger: `R + S + U + O + r <= L`. Com a chamada em voo,
   `R = L`; depois de liquidada o consumo real (centenas de tokens) fica em `S`, e uma segunda
   reserva (~L) nao cabe. Se a chamada terminar em estado desconhecido, `U = R` tambem bloqueia.
@@ -99,8 +99,8 @@ login por desenho).
 ## Risco do timeout e regra para `unknown`
 
 `INTELLIGENCE_CALL_TIMEOUT_SECONDS=300` e o teto do config para o shadow. Estimativa de pior
-caso: carga a frio ~33 s + 2048 tokens a ~19 tok/s (~108 s) + leitura do prompt ~ 150 s; 300 s
-da folga de 2x. Se mesmo assim estourar, a chamada termina em timeout. Timeout e
+caso: carga a frio ~33 s + 4096 tokens a ~19 tok/s (~215 s) + leitura do prompt ~ 250 s; 300 s
+da folga de ~1,2x (apertada; so o limite inteiro de 4096 tokens chega perto, media real ~1150 tokens = ~60 s). Se mesmo assim estourar, a chamada termina em timeout. Timeout e
 tratado como possivelmente enviada: a chamada fica `unknown` (`U = R`), nunca e liberada por
 palpite e bloqueia nova admissao. **Regra: se a chamada ficar `unknown`, NAO repetir** (nem
 reiniciar para tentar de novo, nem criar novo orcamento por conta propria). Pare o backend,
