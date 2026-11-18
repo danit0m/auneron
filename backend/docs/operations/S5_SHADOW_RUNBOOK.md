@@ -41,8 +41,8 @@ restringe quantidade de chamadas. Quem garante e o limite de **tokens**:
 SEM `-Shadow`, o backend cria o pedido de aprovacao no proximo ciclo e a rodada shadow nao
 tera pedido novo para observar. Por isso a conta so e criada com o backend PARADO.
 `provisionar-conta-vencida-sintetica` recusa (codigo 9) se a porta 8000 estiver ocupada.
-NAO use `detectar-vencidos` (obsoleto: chama a rota HTTP com a conta de sistema, que nao faz
-login por desenho).
+O comando `detectar-vencidos` e o script `scheduled_detect_overdue.py` foram removidos (chamavam a rota HTTP
+com a conta de sistema, que nao faz login por desenho; a deteccao roda dentro do backend a cada minuto).
 
 1. `parar-backend -Confirmar` (confirme com `status` que a porta 8000 esta livre).
 2. `backup` -> `ensaiar -ConfirmarBackup <dump>` -> `migrar -ConfirmarBackup <dump>`

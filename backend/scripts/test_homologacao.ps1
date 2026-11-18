@@ -367,39 +367,6 @@ sys.exit(5)
     Verificar 'vincular -Confirmar: repassa o exit code do script (5) e o modo literal' ($r.Codigo -eq 5 -and $r.Saida.Contains('modo=vincular')) ('codigo=' + $r.Codigo + ' ' + $r.Saida)
     Set-Content -LiteralPath (Join-Path $pastaBind 'backend\scripts\create_overdue_detection_binding.py') -Value '' -Encoding ASCII
 
-    Write-Host '== detectar-vencidos =='
-    $pastaVarr = Join-Path $tmp 'checkout-varredura'
-    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaVarr 'backend\scripts'))
-    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaVarr 'frontend'))
-    Set-Content -LiteralPath (Join-Path $pastaVarr 'backend\alembic.ini') -Value '' -Encoding ASCII
-    Set-Content -LiteralPath (Join-Path $pastaVarr 'frontend\package.json') -Value '{}' -Encoding ASCII
-    $r = Rodar-Script (@('detectar-vencidos', '-Simular', '-SemSondagem') + $comuns)
-    Verificar 'detectar-vencidos aceito no ValidateSet (recusa por falta de -Pasta)' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta' -and $r.Saida -notmatch 'ValidateSet') $r.Saida
-    $r = Rodar-Script (@('detectar-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pastaVarr) + $comuns)
-    Verificar 'detectar-vencidos sem o .py no checkout: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'scheduled_detect_overdue') $r.Saida
-    Set-Content -LiteralPath (Join-Path $pastaVarr 'backend\scripts\scheduled_detect_overdue.py') -Value '' -Encoding ASCII
-    $r = Rodar-Script (@('detectar-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pastaVarr) + $comuns)
-    $saidas['detectar-vencidos-simular'] = $r.Saida
-    Verificar 'detectar-vencidos -Simular: exit 0, script fixo e so API_KEY (sem DATABASE_URL) no ambiente' ($r.Codigo -eq 0 -and $r.Saida.Contains('scheduled_detect_overdue.py') -and $r.Saida -match 'Ambiente do filho \(nomes\): API_KEY, PYTHONUTF8' -and $r.Saida -notmatch 'DATABASE_URL') $r.Saida
-    $r = Rodar-Script (@('detectar-vencidos', '-Simular', '-SemSondagem', '-Pasta', $pastaVarr, '-Executavel', 'x.exe') + $comuns)
-    Verificar 'detectar-vencidos: nenhum parametro escolhe executavel' ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
-
-    # Execucao real com um "script de varredura" FALSO no checkout de teste: confere que a chave
-    # do cofre chega ao filho por ambiente, que a saida sai mascarada e que o exit code e repassado.
-    $falsoPy = @'
-import os, sys
-k = os.environ.get("API_KEY", "")
-print("chave_no_ambiente=" + k)
-print("tem_database_url=" + str("DATABASE_URL" in os.environ))
-sys.exit(2)
-'@
-    Set-Content -LiteralPath (Join-Path $pastaVarr 'backend\scripts\scheduled_detect_overdue.py') -Value $falsoPy -Encoding ASCII
-    $r = Rodar-Script (@('detectar-vencidos', '-Pasta', $pastaVarr) + $comuns)
-    $saidas['detectar-vencidos-real'] = $r.Saida
-    Verificar 'detectar-vencidos: repassa o exit code do script (2)' ($r.Codigo -eq 2) ('codigo=' + $r.Codigo + ' ' + $r.Saida)
-    Verificar 'detectar-vencidos: a chave do cofre chegou ao filho (mascarada na saida)' ($r.Saida -match 'chave_no_ambiente=\*\*\*') $r.Saida
-    Verificar 'detectar-vencidos: DATABASE_URL do cofre nao vai ao filho' ($r.Saida -match 'tem_database_url=False') $r.Saida
-
     Write-Host '== consultar (somente leitura) =='
     $r = Rodar-Script (@('consultar', '-Simular', '-SemSondagem') + $comuns)
     Verificar 'consultar sem -Relatorio: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Relatorio') $r.Saida
@@ -771,9 +738,6 @@ sys.exit(2)
     Verificar 'nao existe parametro -Modulo no script' ($nomesParam -notcontains 'Modulo')
     $vsCmd = @(@($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Comando' })[0].Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
     Verificar 'ValidateSet de -Comando contem registrar-acao-atraso' ($vsCmd -contains 'registrar-acao-atraso') ($vsCmd -join ',')
-    $mDet = [regex]::Match($codigo, '(?s)function Cmd-DetectarVencidos \{.*?\r?\n\}\r?\n')
-    Verificar 'detectar-vencidos: script e literal fixo, ambiente so com a chave, sem Rodar-RegistroDeAcao' ($mDet.Success -and $mDet.Value.Contains("'backend\scripts\scheduled_detect_overdue.py'") -and $mDet.Value.Contains("Montar-Ambiente 'varredura'") -and $mDet.Value -notmatch 'Rodar-RegistroDeAcao')
-    Verificar 'ValidateSet de -Comando contem detectar-vencidos' ($vsCmd -contains 'detectar-vencidos') ($vsCmd -join ',')
     Verificar 'ValidateSet de -Comando contem provisionar-deteccao-vencidos' ($vsCmd -contains 'provisionar-deteccao-vencidos') ($vsCmd -join ',')
     $mProv = [regex]::Match($codigo, '(?s)function Cmd-ProvisionarDeteccaoVencidos \{.*?\r?\n\}\r?\n')
     Verificar 'provisionar: script e modulo literais fixos, ambiente do backend, sem Rodar-RegistroDeAcao' ($mProv.Success -and $mProv.Value.Contains("'backend\scripts\create_system_principal.py'") -and $mProv.Value.Contains("@('-m', 'scripts.create_system_principal')") -and $mProv.Value.Contains("Montar-Ambiente 'backend'") -and $mProv.Value -notmatch 'Rodar-RegistroDeAcao')
@@ -794,10 +758,6 @@ sys.exit(2)
     Verificar 'nao existe parametro -Modo no script' ($nomesParam -notcontains 'Modo')
     $pyBind = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_overdue_detection_binding.py'))
     Verificar 'create_overdue_detection_binding.py: banco esperado fixo, nunca apaga binding, sem print de senha/hash' ($pyBind.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyBind -notmatch '(?i)\.delete\(' -and $pyBind -notmatch '(?i)\bDELETE\b\s+FROM' -and $pyBind -notmatch 'print\([^)]*(password|hash)')
-    $mVar = [regex]::Match($codigo, "(?s)elseif \(\`$Alvo -eq 'varredura'\) \{.*?\r?\n    \}\r?\n")
-    Verificar 'ambiente da varredura: apenas API_KEY (e PYTHONUTF8)' ($mVar.Success -and $mVar.Value -notmatch 'DATABASE_URL' -and $mVar.Value.Contains("`$amb['API_KEY']"))
-    $pyVar = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'scheduled_detect_overdue.py'))
-    Verificar 'scheduled_detect_overdue.py: api_key so de os.environ, nunca de creds[api_key]' ($pyVar.Contains('os.environ.get("API_KEY"') -and $pyVar -notmatch 'creds\[.api_key.\]')
     Verificar 'script e ASCII puro' (-not ($codigo.ToCharArray() | Where-Object { [int]$_ -gt 127 }))
 }
 finally {
