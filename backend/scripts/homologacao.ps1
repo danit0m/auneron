@@ -30,7 +30,7 @@
 
     subir-backend -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id>: sobe o backend com o shadow do
       agente de vencidos ligado (INTELLIGENCE_MODE=shadow, OVERDUE_SHADOW_*, 1 conta por rodada,
-      INTELLIGENCE_MAX_ATTEMPTS=1, INTELLIGENCE_CALL_TIMEOUT_SECONDS=120). So com -Confirmar (ou -Simular, que
+      INTELLIGENCE_MAX_ATTEMPTS=1, INTELLIGENCE_CALL_TIMEOUT_SECONDS=300 = teto do shadow local com raciocinio). So com -Confirmar (ou -Simular, que
       mostra tudo sem subir). Antes de subir: memoria fisica livre >= 14 GiB (senao codigo 6) e, por GET em
       loopback (sem inferencia) em http://127.0.0.1:11434/api/version e /api/tags, qwen3:4b presente com
       digest igual a -DigestModelo (senao codigo 7 = Ollama/modelo ausente, 8 = digest diferente). Sem -Shadow
@@ -146,15 +146,17 @@ $script:ConfigPadrao = [ordered]@{
 }
 
 # Shadow do agente de vencidos (rodada S5). Valores FIXOS; so -DigestModelo e -OrcamentoShadow variam.
-# Timeout de chamada: o primeiro carregamento do modelo local pode demorar; 120 s e o MAXIMO aceito por
-# INTELLIGENCE_CALL_TIMEOUT_SECONDS (config.py, le=120). Tentativas: 1 (sem retry, para a chamada unica).
+# Timeout de chamada: carga a frio (~33 s) + raciocinio de ate 2048 tokens a ~19 tok/s (~108 s) + leitura do
+# prompt nao cabem em 120 s. 300 s e o teto de INTELLIGENCE_CALL_TIMEOUT_SECONDS (config.py), aceito acima de
+# 120 SOMENTE com OVERDUE_SHADOW_ENABLED=true + INTELLIGENCE_MODE=shadow fora de production (este bloco).
+# Tentativas: 1 (sem retry, para a chamada unica).
 $script:ShadowFixo = [ordered]@{
     'INTELLIGENCE_MODE'                    = 'shadow'
     'OVERDUE_SHADOW_ENABLED'               = 'true'
     'OVERDUE_SHADOW_DATA_CLASSIFICATION'   = 'synthetic'
     'OVERDUE_SHADOW_MAX_ACCOUNTS_PER_RUN'  = '1'
     'OVERDUE_SHADOW_MODEL_ID'              = 'qwen3:4b'
-    'INTELLIGENCE_CALL_TIMEOUT_SECONDS'    = '120'
+    'INTELLIGENCE_CALL_TIMEOUT_SECONDS'    = '300'
     'INTELLIGENCE_MAX_ATTEMPTS'            = '1'
 }
 $script:ShadowModeloId = 'qwen3:4b'
@@ -1770,7 +1772,7 @@ function Rodar-ProvisionamentoShadow {
 }
 
 function Cmd-ProvisionarOrcamentoShadow {
-    Rodar-ProvisionamentoShadow -Modulo 'scripts.create_shadow_budget' -Arquivo 'create_shadow_budget.py' -Efeito 'cria UM orcamento deployment_period (7 dias, scope_ref s5-shadow-overdue-synthetic) com limit_tokens = reserva de pior caso de UMA chamada local-qwen3-4b (preco zero; o limite de tokens e o que garante uma chamada) e limit_micro = 1; idempotente; recusa se o banco nao for auneron_neon_synthetic.'
+    Rodar-ProvisionamentoShadow -Modulo 'scripts.create_shadow_budget' -Arquivo 'create_shadow_budget.py' -Efeito 'cria UM orcamento deployment_period (7 dias, scope_ref s5-shadow-overdue-synthetic-think; o orcamento antigo s5-shadow-overdue-synthetic, de prompt v1 sem raciocinio, NAO e alterado) com limit_tokens = reserva de pior caso de UMA chamada local-qwen3-4b com raciocinio (2048 tokens de saida) (preco zero; o limite de tokens e o que garante uma chamada) e limit_micro = 1; idempotente; recusa se o banco nao for auneron_neon_synthetic.'
 }
 
 function Cmd-ProvisionarContaVencidaSintetica {

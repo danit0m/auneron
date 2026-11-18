@@ -370,8 +370,9 @@ def test_latency_percentiles_max_and_total(tmp_path):
             "total": 20000,
         },
     }
-    assert ev.CALL_TIMEOUT_SECONDS == 120
-    assert report["config"]["timeout_seconds"] == 120
+    # raciocinio ligado: carga a frio + ate 2048 tokens nao cabem em 120 s
+    assert ev.CALL_TIMEOUT_SECONDS == 300
+    assert report["config"]["timeout_seconds"] == 300
     summary = (out / "summary.md").read_text(encoding="utf-8")
     assert "inclui carregamento a frio" in summary
     assert "sem o 1o caso" in summary
@@ -408,10 +409,14 @@ def test_prompt_schema_input_and_options_are_the_shadows(tmp_path):
     assert first["messages"][0]["content"] == shadow.INSTRUCTIONS
     assert first["format"] == shadow.OUTPUT_SCHEMA
     assert first["options"]["num_predict"] == shadow.MAX_OUTPUT_TOKENS
-    assert first["options"]["temperature"] == 0
+    # raciocinio ligado: amostragem recomendada do Qwen3 com seed fixa
+    assert first["options"]["temperature"] == 0.6
+    assert first["options"]["top_p"] == 0.95
+    assert first["options"]["top_k"] == 20
     assert first["options"]["seed"] == 0
     assert first["model"] == "qwen3:4b"
-    assert first["think"] is False and first["stream"] is False
+    assert first["think"] is True and first["stream"] is False
+    assert first["options"]["num_predict"] == 2048
 
     for sent, (status, due, business) in zip(runtime.chats, ROWS):
         expected_input = shadow.build_model_input(
@@ -428,6 +433,10 @@ def test_prompt_schema_input_and_options_are_the_shadows(tmp_path):
     assert config["observed_ollama_versions"] == [VERSION]
     assert config["attempts_per_case"] == 1
     assert config["max_output_tokens"] == shadow.MAX_OUTPUT_TOKENS
+    assert config["think"] is True
+    assert config["reasoning_mode"] == "think"
+    assert config["reasoning_text_stored"] is False
+    assert "0.6" in config["sampling_choice"]
 
 
 # ----------------------------------------------------------------------

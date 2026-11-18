@@ -167,7 +167,7 @@ def test_report_records_prompt_version_and_hash(tmp_path):
     assert config["prompt_version"] == shadow.PROMPT_VERSION
     assert shadow.PROMPT_VERSION == "overdue_shadow_v2"
     assert shadow.SHADOW_PURPOSE == shadow.PROMPT_VERSION
-    assert config["prompt_template_id"] == "overdue-shadow-prompt-v2"
+    assert config["prompt_template_id"] == "overdue-shadow-prompt-v2-think"
     assert config["prompt_schema_sha256"] == ev.prompt_schema_hash()
 
     summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
