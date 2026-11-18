@@ -86,6 +86,19 @@ class ModelCallRequest:
 
 
 @dataclass(frozen=True)
+class SamplingOptions:
+    """Sampling knobs of a local runtime. Defaults are fully greedy."""
+
+    temperature: float = 0.0
+    top_k: int = 1
+    top_p: float = 1.0
+    seed: int = 0
+
+
+DETERMINISTIC_SAMPLING: Final[SamplingOptions] = SamplingOptions()
+
+
+@dataclass(frozen=True)
 class ProviderRequest:
     model_id: str
     instructions: str
@@ -93,6 +106,10 @@ class ProviderRequest:
     output_schema: Mapping[str, Any]
     max_output_tokens: int
     timeout_seconds: int
+    # Reasoning mode of the local runtime. Default False = historical
+    # behavior. The reasoning text is never part of the answer.
+    think: bool = False
+    sampling: SamplingOptions = DETERMINISTIC_SAMPLING
 
 
 @dataclass(frozen=True)
@@ -108,6 +125,9 @@ class ProviderResponse:
     model_digest: str | None = None
     runtime_version: str | None = None
     latency_ms: int | None = None
+    # Length (characters) of the reasoning the runtime reported, never
+    # the reasoning text itself. None = no reasoning reported / fake.
+    thinking_length: int | None = None
 
 
 @dataclass(frozen=True)

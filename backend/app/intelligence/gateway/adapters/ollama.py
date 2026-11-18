@@ -14,8 +14,13 @@ Endpoint choice: ``/api/chat`` (not ``/api/generate`` as the offline
 evaluation runner uses). The gateway contract carries ``instructions``
 and ``input_text`` separately, which map 1:1 to the system and user
 messages; ``format`` receives the JSON Schema (structured output),
-``think`` is False and the sampling options are the runner's
-deterministic ones (temperature 0, top_k 1, top_p 1, seed 0). The call
+``think`` and the sampling options come from the request (profile);
+the defaults are the historical ones (think False; temperature 0,
+top_k 1, top_p 1, seed 0). With think=True the runtime returns the
+reasoning in ``message.thinking``, separate from ``message.content``;
+only the length of the former is kept, the answer is ``content`` alone
+(empty or non-JSON content => invalid response, classified by the
+gateway; ``done_reason=length`` => TRUNCATED). The call
 is NON-streaming: the gateway needs one complete document, and the
 deadline is absolute and monotonic.
 
@@ -291,6 +296,7 @@ class OllamaProvider(ProviderAdapter):
 
     @staticmethod
     def _chat_body(request: ProviderRequest) -> bytes:
+        sampling = request.sampling
         body = {
             "model": request.model_id,
             "messages": [
@@ -298,13 +304,13 @@ class OllamaProvider(ProviderAdapter):
                 {"role": "user", "content": request.input_text},
             ],
             "stream": False,
-            "think": False,
+            "think": bool(request.think),
             "format": dict(request.output_schema),
             "options": {
-                "temperature": 0,
-                "top_k": 1,
-                "top_p": 1.0,
-                "seed": 0,
+                "temperature": sampling.temperature,
+                "top_k": sampling.top_k,
+                "top_p": sampling.top_p,
+                "seed": sampling.seed,
                 "num_ctx": 8192,
                 "num_predict": request.max_output_tokens,
             },
@@ -367,6 +373,16 @@ class OllamaProvider(ProviderAdapter):
         )
         reported = document.get("model")
 
+        # Reasoning (`message.thinking`, present only with think=true):
+        # ONLY its length leaves this method. The text is never copied
+        # into the response, never logged, never used as the answer, even
+        # if it looks like JSON. The answer is `message.content` alone.
+        thinking = message.get("thinking") if isinstance(message, dict) else None
+        thinking_length = (
+            len(thinking) if isinstance(thinking, str) else None
+        )
+        del thinking
+
         if not isinstance(content, str) or not isinstance(reported, str):
             raise ProviderInvalidResponseError("envelope_invalid")
 
@@ -401,4 +417,5 @@ class OllamaProvider(ProviderAdapter):
             model_digest=digest,
             runtime_version=version,
             latency_ms=latency_ms,
+            thinking_length=thinking_length,
         )

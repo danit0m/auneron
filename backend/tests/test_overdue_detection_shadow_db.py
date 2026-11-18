@@ -28,7 +28,11 @@ from app.intelligence.gateway.budget import BudgetLedger
 from app.intelligence.gateway.budget import utcnow
 from app.intelligence.gateway.gateway import Gateway
 from app.intelligence.gateway.gateway import GatewayLimits
-from app.intelligence.gateway.profiles import build_lab_registry
+from app.intelligence.gateway.profiles import ModelProfile
+from app.intelligence.gateway.profiles import ProfileRegistry
+from app.intelligence.gateway.profiles import (
+    build_local_ollama_profile,
+)
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.approval import ApprovalConsumption
@@ -52,6 +56,25 @@ pytestmark = pytest.mark.contract
 DAYS = 41
 
 
+def shadow_test_profile():
+    """
+    Fake-provider profile that mirrors the REAL shadow profile's output
+    cap (reasoning + JSON = 2048). The lab profiles (cap 512/1024) would
+    be refused in the gateway preflight, so the shadow would never call
+    the provider. Name/price/model are the lab-fast ones.
+    """
+    real = build_local_ollama_profile()
+    return ModelProfile(
+        name="lab-fast",
+        provider="fake",
+        model_id="fake-small-v0",
+        price_key="fake-small",
+        max_output_tokens_cap=real.max_output_tokens_cap,
+        think=real.think,
+        sampling=real.sampling,
+    )
+
+
 def make_observer(script, *, limit=3):
     ledger = BudgetLedger(
         SessionLocal, unknown_fraction_bps=2500, recovery_grace_seconds=30
@@ -67,7 +90,7 @@ def make_observer(script, *, limit=3):
     )
     provider = FakeProvider(script)
     gateway = Gateway(
-        registry=build_lab_registry(),
+        registry=ProfileRegistry([shadow_test_profile()]),
         adapters={"fake": provider},
         ledger=ledger,
         limits=GatewayLimits(1, 5, 2000),

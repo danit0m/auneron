@@ -451,6 +451,8 @@ class Gateway:
             output_schema=request.output_schema,
             max_output_tokens=request.max_output_tokens,
             timeout_seconds=timeout,
+            think=profile.think,
+            sampling=profile.sampling,
         )
 
         # T2 -- write-ahead mark, durable BEFORE any network write.
@@ -464,6 +466,10 @@ class Gateway:
                     input_text=request.input_text,
                     output_schema=dict(request.output_schema),
                     max_output_tokens=request.max_output_tokens,
+                    think=profile.think,
+                    sampling=(
+                        profile.sampling if profile.think else None
+                    ),
                 ),
             )
         except GatewayError as error:
@@ -636,6 +642,16 @@ class Gateway:
             final_state = "settled"
 
         self._breaker.record_success(profile.name)
+
+        if response.thinking_length is not None:
+            # Length only; the reasoning text never reaches the gateway.
+            log_event(
+                logging.INFO,
+                "intelligence_thinking_observed",
+                call_id=call_id,
+                model_profile=profile.name,
+                thinking_length=response.thinking_length,
+            )
 
         def finish(
             ok: bool,

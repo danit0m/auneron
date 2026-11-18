@@ -60,10 +60,17 @@ logger = logging.getLogger("auneron.overdue_shadow")
 # ledger tells v1 and v2 apart.
 PROMPT_VERSION: Final[str] = "overdue_shadow_v2"
 SHADOW_PURPOSE: Final[str] = PROMPT_VERSION
-PROMPT_TEMPLATE_ID: Final[str] = "overdue-shadow-prompt-v2"
+# The v2 prompt TEXT is unchanged; what changed is that the model now
+# reasons (think=true). The template id carries that, so the call ledger
+# tells reasoning calls apart from the earlier non-reasoning ones
+# (`overdue-shadow-prompt-v2`). `purpose`/PROMPT_VERSION stay v2.
+REASONING_MODE: Final[str] = "think"
+PROMPT_TEMPLATE_ID: Final[str] = "overdue-shadow-prompt-v2-think"
 OUTPUT_SCHEMA_ID: Final[str] = "overdue-shadow-output-v1"
 DECISIONS: Final[tuple[str, str]] = ("mark_overdue", "no_action")
-MAX_OUTPUT_TOKENS: Final[int] = 256
+# Reasoning + the JSON answer. 256 only held the JSON. The profile cap
+# (LOCAL_QWEN3_4B_THINK_OUTPUT_TOKENS) is the same value.
+MAX_OUTPUT_TOKENS: Final[int] = 2048
 
 OUTPUT_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",

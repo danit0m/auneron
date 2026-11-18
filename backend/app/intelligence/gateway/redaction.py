@@ -31,6 +31,7 @@ ALLOWED_LOG_FIELDS: Final[frozenset[str]] = frozenset(
         "budget_id",
         "mode",
         "duration_ms",
+        "thinking_length",
     }
 )
 
@@ -46,16 +47,33 @@ def request_digest(
     input_text: str,
     output_schema: Any,
     max_output_tokens: int,
+    think: bool = False,
+    sampling: Any = None,
 ) -> str:
     """Stable digest of a request; the content itself is never stored."""
+    document: dict[str, Any] = {
+        "model_id": model_id,
+        "instructions": instructions,
+        "input_text": input_text,
+        "output_schema": output_schema,
+        "max_output_tokens": max_output_tokens,
+    }
+
+    # Only added when non-default, so digests of historical (no
+    # reasoning, greedy) requests are unchanged.
+    if think:
+        document["think"] = True
+
+    if sampling is not None:
+        document["sampling"] = {
+            "temperature": sampling.temperature,
+            "top_k": sampling.top_k,
+            "top_p": sampling.top_p,
+            "seed": sampling.seed,
+        }
+
     canonical = json.dumps(
-        {
-            "model_id": model_id,
-            "instructions": instructions,
-            "input_text": input_text,
-            "output_schema": output_schema,
-            "max_output_tokens": max_output_tokens,
-        },
+        document,
         sort_keys=True,
         ensure_ascii=True,
         separators=(",", ":"),

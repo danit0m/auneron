@@ -3,6 +3,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final
 
+from app.intelligence.gateway.contracts import DETERMINISTIC_SAMPLING
+from app.intelligence.gateway.contracts import SamplingOptions
 from app.intelligence.gateway.errors import GatewayError
 from app.intelligence.gateway.errors import GatewayErrorCode
 from app.intelligence.gateway.pricing import PRICE_TABLE
@@ -56,6 +58,10 @@ class ModelProfile:
     price_key: str
     max_output_tokens_cap: int
     fallbacks: tuple[str, ...] = ()
+    # Reasoning mode and sampling are properties of the profile, not of
+    # the adapter. Defaults keep every existing profile unchanged.
+    think: bool = False
+    sampling: SamplingOptions = DETERMINISTIC_SAMPLING
 
 
 class ProfileRegistry:
@@ -140,11 +146,30 @@ LOCAL_OLLAMA_PROVIDER_KEY: Final[str] = "ollama"
 LOCAL_QWEN3_4B_PROFILE_NAME: Final[str] = "local-qwen3-4b"
 
 
+# Qwen3-4B-Thinking-2507 (the installed qwen3:4b) always reasons. With
+# think=True the runtime separates the reasoning from the answer. The
+# budget must hold reasoning + the JSON answer: 2048 tokens (see
+# docs/operations/S5_SHADOW_RUNBOOK.md). The cap equals that budget.
+LOCAL_QWEN3_4B_THINK_OUTPUT_TOKENS: Final[int] = 2048
+
+# Sampling = the model card's recommendation for thinking mode
+# (temperature 0.6, top_p 0.95, top_k 20) with a FIXED seed. Greedy
+# decoding (temperature 0) is documented by the vendor to cause endless
+# repetition in reasoning, which would burn the whole budget and end as
+# `length`. The seed is fixed for repeatability on the same runtime
+# build; bit-identical output across builds/hardware is NOT guaranteed.
+QWEN3_THINKING_SAMPLING: Final[SamplingOptions] = SamplingOptions(
+    temperature=0.6, top_k=20, top_p=0.95, seed=0
+)
+
+
 def build_local_ollama_profile(
     *,
     name: str = LOCAL_QWEN3_4B_PROFILE_NAME,
     model_id: str = "qwen3:4b",
-    max_output_tokens_cap: int = 1024,
+    max_output_tokens_cap: int = LOCAL_QWEN3_4B_THINK_OUTPUT_TOKENS,
+    think: bool = True,
+    sampling: SamplingOptions = QWEN3_THINKING_SAMPLING,
 ) -> ModelProfile:
     """Configurable local-model profile (zero price, no fallback)."""
     return ModelProfile(
@@ -153,6 +178,8 @@ def build_local_ollama_profile(
         model_id=model_id,
         price_key="local-zero",
         max_output_tokens_cap=max_output_tokens_cap,
+        think=think,
+        sampling=sampling,
     )
 
 

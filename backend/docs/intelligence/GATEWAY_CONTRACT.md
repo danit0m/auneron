@@ -54,7 +54,7 @@ is used with a real provider.
 |---|---|---|---|---|---|
 | `INTELLIGENCE_MODE` | `off` | Fail-closed default | `off`/`shadow` only; production `off` | `test_intelligence_config_flags.py` | Needed for `governed`/`bounded` |
 | `INTELLIGENCE_MAX_ATTEMPTS` | 2 | One retry/fallback bounds spend amplification to 2x | 1-3 | `test_intelligence_gateway_contract.py` | Yes |
-| `INTELLIGENCE_CALL_TIMEOUT_SECONDS` | 30 | Bounds how long a reservation stays in flight; also the recovery deadline | 1-120 | `test_intelligence_budget_recovery.py` | Yes |
+| `INTELLIGENCE_CALL_TIMEOUT_SECONDS` | 30 | Bounds how long a reservation stays in flight; also the recovery deadline | 1-120 (121-300 so com `OVERDUE_SHADOW_ENABLED`, modo shadow, fora de production) | `test_intelligence_budget_recovery.py` | Yes |
 | `INTELLIGENCE_MAX_CONCURRENT_CALLS` | 2 | Limits parallel exposure | 1-8 | `test_intelligence_gateway_contract.py` | Yes |
 | `INTELLIGENCE_RESERVATION_MARGIN_BPS` | 2000 (20%) | Headroom over the priced worst case | 0-10000 | `test_intelligence_gateway_contract.py` | Yes |
 | `INTELLIGENCE_UNKNOWN_FRACTION_BPS` | 2500 (25%) | Stops admission when unknown consumption reaches a quarter of a limit | 1-10000 | `test_intelligence_budget_ledger.py` | Yes |
