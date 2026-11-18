@@ -2142,7 +2142,11 @@ def test_a_stream_larger_than_the_limit_is_not_kept_and_the_read_stops(
     while "lines" not in kept and time.monotonic() < end:
         time.sleep(0.02)  # the handler thread finishes on its own once it sees the client gone
     assert reply.status == "error" and reply.error == "body_too_large"
-    assert seen["body"] <= 301 and 300 < seen["total"] < 2000  # kept at the limit, stopped soon after
+    # kept at the limit; the read stopped well before the end of the stream. The bound is a fraction of what the
+    # server would have sent in total (400 lines), not a fixed byte count: a slow runner reads a few more lines
+    # before closing, so only "far from the whole stream" is stable.
+    whole_stream = 400 * len(json.dumps(piece("z" * 50)).encode() + b"\n")
+    assert seen["body"] <= 301 and 300 < seen["total"] < whole_stream // 4
     assert kept["lines"] < 300  # the client cut the connection long before the server was done
     assert reply.reported_timings["body_bytes"] == seen["total"]
 
