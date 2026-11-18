@@ -268,10 +268,11 @@ async def lifespan(_: FastAPI):
             await run_client_classification_recalculation_async()
             await run_receivables_monitor_async()
             await run_business_effect_verification_recovery_async()
-            await run_policy_account_mark_overdue_trigger_async()
+            if settings.policy_mark_overdue_trigger_enabled:
+                await run_policy_account_mark_overdue_trigger_async()
             await check_production_developer_roles_async()
 
-        maintenance_tasks = (
+        maintenance_tasks = [
             asyncio.create_task(
                 auth_session_maintenance_loop()
             ),
@@ -305,12 +306,26 @@ async def lifespan(_: FastAPI):
             asyncio.create_task(
                 business_effect_verification_maintenance_loop()
             ),
-            asyncio.create_task(
-                policy_account_mark_overdue_trigger_maintenance_loop()
-            ),
-        )
+        ]
+        # Gatilho L3: flag propria, alem de MAINTENANCE_ENABLED.
+        if settings.policy_mark_overdue_trigger_enabled:
+            maintenance_tasks.append(
+                asyncio.create_task(
+                    policy_account_mark_overdue_trigger_maintenance_loop()
+                )
+            )
+        maintenance_tasks = tuple(maintenance_tasks)
     else:
         maintenance_tasks = ()
+
+    if not settings.policy_mark_overdue_trigger_enabled:
+        application_logger.info(
+            "policy_account_mark_overdue_trigger_disabled",
+            extra={
+                "event": "policy.trigger.disabled",
+                "reason": "POLICY_MARK_OVERDUE_TRIGGER_ENABLED=false",
+            },
+        )
 
     # Evidence worker: gate DEDICADO (activation_floor), fora e depois do
     # bloco global. floor=None => nao agendado; floor valido => somente

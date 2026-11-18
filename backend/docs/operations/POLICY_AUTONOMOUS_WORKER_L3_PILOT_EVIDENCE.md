@@ -3,6 +3,11 @@
 **Status:** Controlled Connected Autonomous Pilot — PROVEN, corredor
 `account.mark_overdue`, single-customer-per-deployment.
 
+> Nota operacional: o gatilho L3 so inicia (recovery de startup e loop) com
+> `POLICY_MARK_OVERDUE_TRIGGER_ENABLED=true` (padrao `false`) alem de
+> `MAINTENANCE_ENABLED=true`; ainda assim exige concessao ativa em
+> `policy_authority_grants`.
+
 ## 1. Objetivo
 
 Registrar, de forma permanente e auditável, a evidência que sustenta o
