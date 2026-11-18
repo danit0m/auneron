@@ -68,6 +68,10 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="MAINTENANCE_ENABLED",
     )
+    policy_mark_overdue_trigger_enabled: bool = Field(
+        default=False,
+        validation_alias="POLICY_MARK_OVERDUE_TRIGGER_ENABLED",
+    )
 
     database_url: str = Field(
         validation_alias="DATABASE_URL",

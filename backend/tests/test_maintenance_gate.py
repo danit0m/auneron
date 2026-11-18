@@ -96,6 +96,15 @@ EVIDENCE_LOOPS = (
     "escalation_payment_observation_maintenance_loop",
 )
 
+# Gatilho L3: flag propria (POLICY_MARK_OVERDUE_TRIGGER_ENABLED) aninhada
+# dentro do gate global; so roda com maintenance E flag.
+L3_TRIGGER_OPERATIONS = frozenset(
+    {
+        "run_policy_account_mark_overdue_trigger_async",
+        "policy_account_mark_overdue_trigger_maintenance_loop",
+    }
+)
+
 GLOBAL_OPERATIONS = frozenset(
     GLOBAL_RECOVERY_SYNC + GLOBAL_RECOVERY_ASYNC + GLOBAL_LOOPS
 )
@@ -209,6 +218,9 @@ class _Outcome:
     started_extras: list[dict]
 
 
+_TRIGGER_DISABLED_LOGS: list[dict] = []
+
+
 def _install_fakes(
     monkeypatch: pytest.MonkeyPatch,
     calls: list[str],
@@ -268,6 +280,8 @@ def _install_fakes(
     )
 
     def spy_info(message, *args, extra=None, **kwargs) -> None:
+        if (extra or {}).get("event") == "policy.trigger.disabled":
+            _TRIGGER_DISABLED_LOGS.append(dict(extra))
         if message == "application_started":
             started_extras.append(dict(extra or {}))
 
@@ -283,6 +297,7 @@ def _run_lifespan(
     floor: datetime | None,
     database_online: bool = True,
     evidence_recovery_raises: bool = False,
+    policy_trigger_enabled: bool = True,
 ) -> _Outcome:
     calls: list[str] = []
     cancelled: set[str] = set()
@@ -299,6 +314,11 @@ def _run_lifespan(
     )
     monkeypatch.setattr(
         global_settings, "maintenance_enabled", maintenance_enabled
+    )
+    monkeypatch.setattr(
+        global_settings,
+        "policy_mark_overdue_trigger_enabled",
+        policy_trigger_enabled,
     )
     monkeypatch.setattr(
         global_settings,
@@ -943,3 +963,80 @@ def test_producer_fields_never_alter_gates_or_scheduling(
         == _started_extra(invalid)["evidence_worker_enabled"]
         is True
     )
+
+
+# ---------------------------------------------------------------------
+# Flag propria do gatilho L3
+# ---------------------------------------------------------------------
+
+
+def test_policy_trigger_flag_defaults_to_false() -> None:
+    from app.core.config import Settings
+
+    assert (
+        Settings.model_fields[
+            "policy_mark_overdue_trigger_enabled"
+        ].default
+        is False
+    )
+
+
+def test_policy_trigger_flag_false_skips_only_the_l3_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = _run_lifespan(
+        monkeypatch,
+        maintenance_enabled=True,
+        floor=None,
+        policy_trigger_enabled=False,
+    )
+
+    assert set(outcome.calls) == (
+        GLOBAL_OPERATIONS - L3_TRIGGER_OPERATIONS
+    )
+    assert outcome.cancelled == set(GLOBAL_LOOPS) - L3_TRIGGER_OPERATIONS
+    assert outcome.leaked_tasks == 0
+
+
+def test_policy_trigger_flag_true_with_maintenance_runs_l3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = _run_lifespan(
+        monkeypatch,
+        maintenance_enabled=True,
+        floor=None,
+        policy_trigger_enabled=True,
+    )
+
+    assert L3_TRIGGER_OPERATIONS <= set(outcome.calls)
+    assert L3_TRIGGER_OPERATIONS & outcome.cancelled == {
+        "policy_account_mark_overdue_trigger_maintenance_loop"
+    }
+
+
+def test_policy_trigger_flag_true_without_maintenance_runs_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = _run_lifespan(
+        monkeypatch,
+        maintenance_enabled=False,
+        floor=None,
+        policy_trigger_enabled=True,
+    )
+
+    assert outcome.calls == []
+    assert outcome.cancelled == set()
+
+
+def test_policy_trigger_disabled_logs_one_info_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for flag, expected in ((False, 1), (True, 0)):
+        _TRIGGER_DISABLED_LOGS.clear()
+        _run_lifespan(
+            monkeypatch,
+            maintenance_enabled=True,
+            floor=None,
+            policy_trigger_enabled=flag,
+        )
+        assert len(_TRIGGER_DISABLED_LOGS) == expected
