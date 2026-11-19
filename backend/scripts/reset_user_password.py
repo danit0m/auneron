@@ -4,6 +4,7 @@ Redefine a senha de um usuario por uma senha TEMPORARIA (recuperacao manual).
 Script operacional, rodado manualmente (comando redefinir-senha do
 homologacao.ps1) a partir de backend/:
     python -m scripts.reset_user_password <email> [--permitir-ultimo-admin]
+        [--senha-arquivo <arquivo novo>]
 
 Regras:
 - A primeira coisa feita e conferir o banco (SELECT current_database()) na
@@ -12,8 +13,11 @@ Regras:
   utilitario do login (hash_password), must_change_password=true,
   temp_password_expires_at = agora + 30 min, e REVOGA TODAS as sessoes do
   usuario na MESMA transacao (um unico commit).
-- A senha temporaria e impressa UMA vez no stdout (linha "SENHA TEMPORARIA:")
-  e nunca em log. Nenhum hash e impresso.
+- Sem --senha-arquivo, a senha temporaria e impressa UMA vez no stdout (linha
+  "SENHA TEMPORARIA:") e nunca em log (uso manual em console). Com
+  --senha-arquivo <caminho>, a senha e gravada SO nesse arquivo (novo, acesso
+  restrito ao usuario atual quando possivel) e o stdout traz apenas "senha
+  gravada em <caminho>". Nenhum hash e impresso.
 - Recusa usuario inexistente (3) e conta de servico role=system (5).
 - Recusa (6) redefinir o UNICO administrador ativo sem --permitir-ultimo-admin.
   Justificativa: a temporaria vence em 30 min e a sessao do administrador e
@@ -33,6 +37,7 @@ Codigos de saida:
     6  unico administrador ativo sem --permitir-ultimo-admin (nada gravado)
 """
 
+import os
 import secrets
 import string
 import sys
@@ -90,6 +95,7 @@ def run(
     email: str,
     allow_last_admin: bool = False,
     expected_database: str = EXPECTED_DATABASE,
+    password_file: str | None = None,
 ) -> int:
     database = db.execute(text("SELECT current_database()")).scalar()
 
@@ -139,13 +145,34 @@ def run(
         return EXIT_LAST_ADMIN
 
     password = generate_temp_password()
-    user.password_hash = hash_password(password)
-    user.must_change_password = True
-    user.temp_password_expires_at = utc_now() + timedelta(
-        minutes=TEMP_PASSWORD_TTL_MINUTES
-    )
-    revoked = revoke_user_sessions(db, user.id)
-    db.commit()
+
+    if password_file is not None:
+        # Grava o arquivo ANTES de alterar o banco: se falhar, nada e gravado.
+        try:
+            write_password_file(password_file, password)
+        except OSError as error:
+            db.rollback()
+            print(
+                "RECUSADO: nao foi possivel criar o arquivo da senha "
+                f"({type(error).__name__}). Nada foi gravado."
+            )
+            return EXIT_USAGE
+
+    try:
+        user.password_hash = hash_password(password)
+        user.must_change_password = True
+        user.temp_password_expires_at = utc_now() + timedelta(
+            minutes=TEMP_PASSWORD_TTL_MINUTES
+        )
+        revoked = revoke_user_sessions(db, user.id)
+        db.commit()
+    except Exception:
+        if password_file is not None:
+            try:
+                os.remove(password_file)
+            except OSError:
+                pass
+        raise
 
     print(f"  banco            : {database}")
     print(f"  usuario          : {user.email}")
@@ -155,22 +182,109 @@ def run(
         f"  validade         : {TEMP_PASSWORD_TTL_MINUTES} min; troca "
         "obrigatoria no primeiro acesso"
     )
-    print(PASSWORD_MARKER + password)
-    print("Anote agora: a senha nao sera mostrada de novo.")
+    if password_file is not None:
+        print(f"senha gravada em {password_file}")
+    else:
+        print(PASSWORD_MARKER + password)
+        print("Anote agora: a senha nao sera mostrada de novo.")
     return EXIT_OK
+
+
+def write_password_file(path: str, password: str) -> None:
+    """Cria um arquivo NOVO (falha se existir) com a senha e acesso restrito.
+
+    Posix: modo 0600. Windows: heranca removida e acesso so do usuario atual
+    (icacls), em melhor esforco; se nao der, o aviso nao inclui a senha.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if os.name == "nt":
+            _restrict_windows_acl(path)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            fd = -1
+            handle.write(password + "\n")
+    except BaseException:
+        if fd != -1:
+            os.close(fd)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
+
+
+def _restrict_windows_acl(path: str) -> None:
+    import getpass
+    import subprocess
+
+    try:
+        subprocess.run(
+            [
+                "icacls",
+                path,
+                "/inheritance:r",
+                "/grant:r",
+                f"{getpass.getuser()}:F",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception:
+        print(
+            "AVISO: nao foi possivel restringir as permissoes do arquivo da "
+            "senha; proteja-o manualmente."
+        )
+
+
+def _parse_args(args: list[str]):
+    """Retorna (email_args, allow_last_admin, password_file) ou None se invalido."""
+    allow_last_admin = False
+    password_file = None
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--permitir-ultimo-admin":
+            allow_last_admin = True
+        elif arg == "--senha-arquivo":
+            if password_file is not None or index + 1 >= len(args):
+                return None
+            index += 1
+            password_file = args[index]
+            if not password_file or password_file.startswith("-"):
+                return None
+        else:
+            positional.append(arg)
+        index += 1
+    return positional, allow_last_admin, password_file
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    allow_last_admin = "--permitir-ultimo-admin" in args
-    positional = [a for a in args if a != "--permitir-ultimo-admin"]
+    parsed = _parse_args(args)
+    usage = (
+        "Uso: python -m scripts.reset_user_password <email> "
+        "[--permitir-ultimo-admin] [--senha-arquivo <arquivo novo>]"
+    )
+    if parsed is None:
+        print(usage)
+        return EXIT_USAGE
+    positional, allow_last_admin, password_file = parsed
 
     if len(positional) != 1 or positional[0].startswith("-"):
-        print(
-            "Uso: python -m scripts.reset_user_password <email> "
-            "[--permitir-ultimo-admin]"
-        )
+        print(usage)
         return EXIT_USAGE
+
+    if password_file is not None:
+        if os.path.exists(password_file):
+            print("RECUSADO: o arquivo da senha ja existe. Nada foi gravado.")
+            return EXIT_USAGE
+        parent = os.path.dirname(os.path.abspath(password_file))
+        if not os.path.isdir(parent):
+            print("RECUSADO: a pasta do arquivo da senha nao existe.")
+            return EXIT_USAGE
 
     email = positional[0].strip()
 
@@ -182,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
 
     db = SessionLocal()
     try:
-        return run(db, email, allow_last_admin)
+        return run(db, email, allow_last_admin, password_file=password_file)
     except Exception:
         db.rollback()
         print("ERRO inesperado ao redefinir a senha. Nada foi gravado.")

@@ -186,3 +186,73 @@ def test_temp_password_generator_is_strong():
         assert any(c.islower() for c in value)
         assert any(c.isupper() for c in value)
         assert any(c.isdigit() for c in value)
+
+
+# --- Modo --senha-arquivo (senha so no arquivo, nunca no stdout) -------------
+
+
+def test_run_with_password_file_keeps_password_out_of_stdout(db_session, tmp_path, capsys):
+    user = _user(db_session)
+    target = tmp_path / "senha.txt"
+
+    code = script.run(
+        db_session,
+        "alvo@example.com",
+        expected_database=_database_name(db_session),
+        password_file=str(target),
+    )
+    out = capsys.readouterr().out
+
+    assert code == script.EXIT_OK
+    password = target.read_text(encoding="utf-8").strip()
+    assert len(password) >= 20
+    assert password not in out
+    assert script.PASSWORD_MARKER not in out
+    assert f"senha gravada em {target}" in out
+    db_session.expire_all()
+    assert verify_password(password, db_session.get(User, user.id).password_hash)
+
+
+def test_run_with_existing_password_file_refuses_without_writing(db_session, tmp_path, capsys):
+    user = _user(db_session)
+    old_hash = user.password_hash
+    target = tmp_path / "senha.txt"
+    target.write_text("antigo", encoding="utf-8")
+
+    code = script.run(
+        db_session,
+        "alvo@example.com",
+        expected_database=_database_name(db_session),
+        password_file=str(target),
+    )
+
+    assert code == script.EXIT_USAGE
+    assert target.read_text(encoding="utf-8") == "antigo"
+    db_session.expire_all()
+    assert db_session.get(User, user.id).password_hash == old_hash
+
+
+def test_write_password_file_creates_new_file_and_never_overwrites(tmp_path):
+    target = tmp_path / "senha.txt"
+    script.write_password_file(str(target), "Segredo-123")
+    assert target.read_text(encoding="utf-8").strip() == "Segredo-123"
+    try:
+        script.write_password_file(str(target), "Outro-456")
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("deveria recusar arquivo existente")
+    assert target.read_text(encoding="utf-8").strip() == "Segredo-123"
+
+
+def test_main_password_file_usage_errors_do_not_touch_the_database(tmp_path, capsys):
+    existing = tmp_path / "ja-existe.txt"
+    existing.write_text("x", encoding="utf-8")
+    missing_dir = tmp_path / "nao-existe" / "senha.txt"
+
+    assert script.main(["a@b.com", "--senha-arquivo"]) == script.EXIT_USAGE
+    assert script.main(["a@b.com", "--senha-arquivo", "--permitir-ultimo-admin"]) == script.EXIT_USAGE
+    assert script.main(["a@b.com", "--senha-arquivo", str(existing)]) == script.EXIT_USAGE
+    assert script.main(["a@b.com", "--senha-arquivo", str(missing_dir)]) == script.EXIT_USAGE
+    assert existing.read_text(encoding="utf-8") == "x"
+    assert not missing_dir.exists()

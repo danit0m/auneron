@@ -13,6 +13,15 @@ A trava de seguranca da importacao nao muda: a confirmacao so libera com `APP_EN
 Todos os comandos: `backend\scripts\homologacao.ps1 <comando> -Pasta <checkout da homologacao>`.
 O cofre (DATABASE_URL, API_KEY) ja deve estar configurado. Nenhum comando imprime a URL do banco.
 
+Para guardar a saida como evidencia: a saida normal do script vai para o pipeline de sucesso, entao
+`homologacao.ps1 <comando> ... | Out-File <pasta-nova>\<comando>.txt -Encoding utf8` (ou `> arquivo`, ou
+`$s = homologacao.ps1 ...`) captura tudo. Erros (`ERRO: ...`) vao para o stderr; use `2>&1` para
+inclui-los. O codigo de saida fica em `$LASTEXITCODE`.
+
+Recuperacao de senha (`redefinir-senha`): a senha temporaria NAO e mostrada nem capturada; exige
+`-ArquivoSenha <arquivo novo>` (pasta existente, arquivo inexistente) e e gravada so nesse arquivo,
+com acesso restrito ao usuario atual. Entregue o arquivo por canal seguro e apague-o.
+
 ## Sequencia
 
 1. Backup recente (menos de 24 h) da homologacao:
