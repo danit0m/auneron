@@ -1,8 +1,13 @@
 # Intelligence gateway foundation (INTELLIGENCE-IMPL-0)
 
 Local, fail-closed foundation of the multi-model gateway. It contains **no**
-real provider adapter, **no** external call, **no** LLM credential, **no** new
-route or permission, and it is not imported by `app/main.py`.
+external call, **no** LLM credential, **no** new route or permission, and it
+is not imported by `app/main.py`. It has one real provider adapter, the local
+Ollama adapter (loopback hosts only, stdlib `http.client`), used only by the
+shadow observer of the overdue agent. That observer
+(`app/services/overdue_detection_shadow.py`) is the single isolation exception:
+the only application module allowed to import this layer. See
+`MODELO_LOCAL_ARQUITETURA.md`.
 
 ## Layout
 
@@ -16,7 +21,7 @@ route or permission, and it is not imported by `app/main.py`.
 | `app/intelligence/gateway/circuit_breaker.py`, `concurrency.py` | Availability breaker and bounded concurrency. |
 | `app/intelligence/gateway/redaction.py` | Log allowlist and digests. |
 | `app/intelligence/gateway/gateway.py` | Orchestration: reserve, write-ahead mark, call, settle/unknown/release. |
-| `app/intelligence/gateway/adapters/` | `ProviderAdapter` base and the only adapter, `FakeProvider`. |
+| `app/intelligence/gateway/adapters/` | `ProviderAdapter` base, `FakeProvider` (lab) and `ollama.py` (local, loopback only). |
 | `app/models/intelligence_budget.py`, `app/repositories/intelligence_budget_repository.py` | Persistence (flush only; the ledger owns commit/rollback). |
 
 ## Modes
