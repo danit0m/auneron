@@ -690,9 +690,8 @@ export default function Recebiveis() {
                       <th scope="col">Valor</th>
                       <th scope="col">Situação</th>
                       <th scope="col">Próxima ação sugerida</th>
-                      <th scope="col">Último contato</th>
-                      <th scope="col">Próxima promessa</th>
-                      <th scope="col">Pagamento</th>
+                      <th scope="col">Contato</th>
+                      <th scope="col">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -739,10 +738,20 @@ export default function Recebiveis() {
                               </Link>
                             )}
                           </td>
-                          <td>{descreverUltimoContato(item.conta.ultimo_contato_em)}</td>
                           <td>
-                            <div className="recebiveis-pagamento">
-                              <span>{descreverProximaPromessa(item.conta)}</span>
+                            <div className="recebiveis-contato">
+                              <span>
+                                <span className="recebiveis-muted">Último: </span>
+                                {descreverUltimoContato(item.conta.ultimo_contato_em)}
+                              </span>
+                              <span>
+                                <span className="recebiveis-muted">Promessa: </span>
+                                {descreverProximaPromessa(item.conta)}
+                              </span>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="recebiveis-acoes">
                               {podeContato && (
                                 <Button
                                   variant="secondary"
@@ -753,23 +762,21 @@ export default function Recebiveis() {
                                   Registrar contato
                                 </Button>
                               )}
+                              <AcaoPagamento
+                                conta={item.conta}
+                                situacao={situacao}
+                                podePedir={podePedir}
+                                podeConcluir={podeConcluirPagamento(
+                                  situacao,
+                                  podeDecidir,
+                                  user?.id,
+                                  situacao.pedido ? decisores[situacao.pedido.request_id] : null,
+                                )}
+                                concluindo={concluindoId === item.conta.id}
+                                onPedir={abrirModal}
+                                onConcluir={(conta, pedido) => void concluirPagamento(conta, pedido)}
+                              />
                             </div>
-                          </td>
-                          <td>
-                            <AcaoPagamento
-                              conta={item.conta}
-                              situacao={situacao}
-                              podePedir={podePedir}
-                              podeConcluir={podeConcluirPagamento(
-                                situacao,
-                                podeDecidir,
-                                user?.id,
-                                situacao.pedido ? decisores[situacao.pedido.request_id] : null,
-                              )}
-                              concluindo={concluindoId === item.conta.id}
-                              onPedir={abrirModal}
-                              onConcluir={(conta, pedido) => void concluirPagamento(conta, pedido)}
-                            />
                           </td>
                         </tr>
                       );
