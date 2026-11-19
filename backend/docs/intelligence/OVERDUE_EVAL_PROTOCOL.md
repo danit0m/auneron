@@ -950,6 +950,9 @@ resultado para fora da maquina. O runner nao envia nada.
 
 ## 18. Formato da etapa de plano, modelo so-raciocinio e prompts finais (opcao A)
 
+> Nota (M7): esta secao registra uma prova historica com Ollama 0.40.15. A configuracao atual aprovada
+> usa Ollama 0.40.16; veja `MODELO_LOCAL_ARQUITETURA.md`.
+
 Decisao do diretor em 2026-11-10: opcao A. Mantem o modelo e `think: false`; a etapa 2 passa a
 enviar `format`. Preparacao OFFLINE: nenhum modelo foi chamado nesta rodada de implementacao.
 
