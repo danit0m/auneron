@@ -78,6 +78,19 @@
       do dominio governado (contas SINTETICO, eventos, pedidos, decisoes, consumos, propostas) para comparar
       antes/depois da rodada. Somente leitura.
 
+    consultar -Relatorio memorias: memorias ATIVAS de comportamento de pagamento e de classificacao, por cliente
+      (e-mail mascarado: 3 primeiras letras + dominio), com indicacao de PENDENTE de recomposicao (sem o
+      marcador ocorrencias_sem_data_efetiva no context_data) e contagens. Somente leitura.
+
+    recompor-memorias-pagamento -Pasta <hml> [-Simular] [-Confirmar]: recomposicao UNICA das memorias de
+      comportamento pendentes (ver consultar -Relatorio memorias), via backend\scripts\recompose_payment_memories.py
+      (modulo fixo). Recalcula pelo servico existente (data efetiva paid_on): com ciclos suficientes faz supersede;
+      com ciclos insuficientes ENCERRA a memoria antiga (MemoryService.invalidate, status invalidated, motivo
+      'recomposicao_data_efetiva: ciclos insuficientes'; nada e apagado). Recusa se o banco nao for
+      auneron_neon_synthetic (4). Idempotente: segunda execucao relata '0 pendentes'. Sem -Confirmar, ou com
+      -Simular, roda o script em modo simular (lista contagens e e-mails mascarados; nada e gravado).
+      Codigos: 0 ok, 1 falha em alguma memoria, 4 banco errado.
+
     provisionar-deteccao-vencidos: cria a conta de sistema sistema.vencimentos@auneron.core
       (role=system, active) se ela nao existir, via backend\scripts\create_system_principal.py
       (modulo fixo). Recusa se o banco conectado nao for auneron_neon_synthetic. Nao altera
@@ -105,6 +118,9 @@
       .\homologacao.ps1 provisionar-orcamento-shadow -Pasta C:\auneron -Confirmar
       .\homologacao.ps1 provisionar-conta-vencida-sintetica -Pasta C:\auneron -Confirmar
       .\homologacao.ps1 consultar -Relatorio shadow   (somente leitura)
+      .\homologacao.ps1 consultar -Relatorio memorias   (somente leitura)
+      .\homologacao.ps1 recompor-memorias-pagamento -Pasta C:\auneron -Simular
+      .\homologacao.ps1 recompor-memorias-pagamento -Pasta C:\auneron -Confirmar
       .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -ArquivoSenha C:\protegido\senha.txt -Simular
       .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -ArquivoSenha C:\protegido\senha.txt -Confirmar
       .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Simular
@@ -128,6 +144,7 @@ param(
         'configurar', 'status', 'versao-banco', 'pendentes', 'backup', 'ensaiar', 'migrar',
         'registrar-acao-pagamento', 'registrar-acao-atraso', 'consultar',
         'provisionar-deteccao-vencidos', 'vincular-deteccao-vencidos', 'desvincular-deteccao-vencidos',
+        'recompor-memorias-pagamento',
         'provisionar-orcamento-shadow', 'provisionar-conta-vencida-sintetica', 'redefinir-senha',
         'subir-backend', 'parar-backend', 'subir-frontend', 'parar-frontend',
         'preparar-instancia-importacao', 'subir-backend-importacao', 'parar-backend-importacao',
@@ -146,7 +163,7 @@ param(
     # Dump existente, criado ha menos de 24 h (ensaiar, migrar).
     [Parameter(ParameterSetName = 'Normal')][string]$ConfirmarBackup,
     # Relatorio fixo de somente leitura (consultar).
-    [Parameter(ParameterSetName = 'Normal')][ValidateSet('pagamento', 'catalogo', 'sistema', 'deteccao', 'shadow')][string]$Relatorio,
+    [Parameter(ParameterSetName = 'Normal')][ValidateSet('pagamento', 'catalogo', 'sistema', 'deteccao', 'shadow', 'memorias')][string]$Relatorio,
     # Id da conta (consultar -Relatorio pagamento); inteiro positivo, passado como variavel do psql.
     [Parameter(ParameterSetName = 'Normal')][ValidateRange(1, 2147483647)][int]$Conta,
     # Shadow do agente de vencidos (somente subir-backend): liga o shadow com o digest e o orcamento abaixo.
@@ -403,6 +420,38 @@ SELECT p.id, p.idempotency_key, p.snapshot_digest, p.created_at
 FROM authenticated_advisory_proposals p
 ORDER BY p.id DESC
 LIMIT 10;
+ROLLBACK;
+'@
+
+# Relatorio das memorias de pagamento: comportamento e classificacao ativas, com indicacao de pendente de
+# recomposicao (context_data sem ocorrencias_sem_data_efetiva). E-mail sempre mascarado (3 letras + dominio);
+# nenhum nome de cliente, conteudo de memoria ou e-mail completo.
+$script:SqlConsultaMemorias = @'
+BEGIN READ ONLY;
+\echo == Banco ==
+SELECT current_database() AS banco;
+\echo == Contagem por memoria ativa (pendente = sem ocorrencias_sem_data_efetiva) ==
+SELECT mi.memory_key, count(*) AS ativas, count(*) FILTER (WHERE (mi.context_data ->> 'ocorrencias_sem_data_efetiva') IS NULL) AS pendentes_recomposicao
+FROM memory_items mi
+WHERE mi.status = 'active' AND mi.scope_type = 'account' AND mi.memory_key IN ('client_behavior_payment_pattern', 'client_classification_v1')
+GROUP BY mi.memory_key
+ORDER BY mi.memory_key;
+\echo == Por cliente (e-mail mascarado; pendentes primeiro; ate 100) ==
+SELECT concat(left(x.email, 3), '***@', split_part(x.email, '@', 2)) AS cliente,
+  x.comportamento_ativas, x.comportamento_pendente, x.classificacao_ativas, x.classificacao_pendente
+FROM (
+  SELECT a.email,
+    count(*) FILTER (WHERE mi.memory_key = 'client_behavior_payment_pattern') AS comportamento_ativas,
+    bool_or(mi.memory_key = 'client_behavior_payment_pattern' AND (mi.context_data ->> 'ocorrencias_sem_data_efetiva') IS NULL) AS comportamento_pendente,
+    count(*) FILTER (WHERE mi.memory_key = 'client_classification_v1') AS classificacao_ativas,
+    bool_or(mi.memory_key = 'client_classification_v1' AND (mi.context_data ->> 'ocorrencias_sem_data_efetiva') IS NULL) AS classificacao_pendente
+  FROM memory_items mi
+  JOIN accounts a ON a.id = mi.account_id
+  WHERE mi.status = 'active' AND mi.scope_type = 'account' AND a.email IS NOT NULL AND mi.memory_key IN ('client_behavior_payment_pattern', 'client_classification_v1')
+  GROUP BY a.email
+) x
+ORDER BY x.comportamento_pendente DESC, x.classificacao_pendente DESC, cliente
+LIMIT 100;
 ROLLBACK;
 '@
 
@@ -1525,12 +1574,42 @@ function Cmd-VincularDeteccaoVencidos { Rodar-BindingDeteccao -Modo 'vincular' }
 
 function Cmd-DesvincularDeteccaoVencidos { Rodar-BindingDeteccao -Modo 'desvincular' }
 
+function Cmd-RecomporMemoriasPagamento {
+    # Recomposicao unica das memorias de comportamento. Modulo, modo e interpretador fixos (nenhum
+    # parametro do usuario escolhe modulo, modo ou executavel). Sem -Confirmar (ou com -Simular) o
+    # script Python roda em modo 'simular' (nao grava); com -Confirmar roda em 'confirmar'. O proprio
+    # script recusa banco diferente do esperado (4).
+    $raiz = Resolver-Pasta
+    $arqPy = Join-Path $raiz 'backend\scripts\recompose_payment_memories.py'
+    if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
+        Falhar 'Nao existe backend\scripts\recompose_payment_memories.py no checkout informado.'
+    }
+    $py = Resolver-Python $raiz
+    $modoPy = 'simular'
+    if ($script:Ctx.Confirmar -and (-not $script:Ctx.Simular)) { $modoPy = 'confirmar' }
+    if ($script:Ctx.Simular) {
+        Info 'SIMULACAO: nada sera feito.'
+        Info ('Faria, em {0}\backend: {1} -m scripts.recompose_payment_memories simular (lista pendentes; nada e gravado)' -f $raiz, $py)
+        Info 'Efeito com -Confirmar: recalcula as memorias de comportamento pendentes (supersede) ou as encerra por ciclos insuficientes (status invalidated, nada apagado); recusa se o banco nao for auneron_neon_synthetic; idempotente.'
+        Info ('Ambiente do filho (nomes): ' + (Nomes-Do-Ambiente 'backend'))
+        return
+    }
+    if ($modoPy -eq 'simular') { Info 'Sem -Confirmar: executando o script em modo simular (nada sera gravado). Repita com -Confirmar para recompor.' }
+    $amb = Montar-Ambiente 'backend'
+    $res = Invoke-Filho -Exe $py -Argumentos @('-m', 'scripts.recompose_payment_memories', $modoPy) -DiretorioTrabalho (Join-Path $raiz 'backend') -Ambiente $amb
+    if ($res.Saida) { Info $res.Saida }
+    if ($res.Codigo -ne 0) {
+        $script:Codigo = $res.Codigo
+        Falhar ('recompose_payment_memories terminou com codigo {0} (1 = falha em alguma memoria, 4 = banco diferente do esperado).' -f $res.Codigo)
+    }
+}
+
 function Cmd-Consultar {
     # Somente leitura: SQL fixo por relatorio, transacao read-only forcada em duas camadas
     # (PGOPTIONS no ambiente do filho e BEGIN READ ONLY / ROLLBACK no proprio SQL).
     $rel = [string]$script:Ctx.Relatorio
     $conta = [int]$script:Ctx.Conta
-    if (-not $rel) { Falhar 'consultar exige -Relatorio pagamento|catalogo|sistema|deteccao|shadow.' }
+    if (-not $rel) { Falhar 'consultar exige -Relatorio pagamento|catalogo|sistema|deteccao|shadow|memorias.' }
     if ($rel -eq 'pagamento') {
         if ($conta -lt 1) { Falhar 'consultar -Relatorio pagamento exige -Conta <id inteiro positivo>.' }
         $sql = $script:SqlConsultaPagamento
@@ -1550,6 +1629,10 @@ function Cmd-Consultar {
     elseif ($rel -eq 'shadow') {
         if ($conta -ne 0) { Falhar '-Conta so vale com -Relatorio pagamento.' }
         $sql = $script:SqlConsultaShadow
+    }
+    elseif ($rel -eq 'memorias') {
+        if ($conta -ne 0) { Falhar '-Conta so vale com -Relatorio pagamento.' }
+        $sql = $script:SqlConsultaMemorias
     }
     else { Falhar 'Relatorio desconhecido.' }
     $cofre = Ler-Cofre
@@ -2199,6 +2282,7 @@ function Principal {
             'provisionar-deteccao-vencidos' { Cmd-ProvisionarDeteccaoVencidos }
             'vincular-deteccao-vencidos' { Cmd-VincularDeteccaoVencidos }
             'desvincular-deteccao-vencidos' { Cmd-DesvincularDeteccaoVencidos }
+            'recompor-memorias-pagamento' { Cmd-RecomporMemoriasPagamento }
             'provisionar-orcamento-shadow' { Cmd-ProvisionarOrcamentoShadow }
             'provisionar-conta-vencida-sintetica' { Cmd-ProvisionarContaVencidaSintetica }
             'redefinir-senha' { Cmd-RedefinirSenha }
