@@ -15,6 +15,7 @@ from app.core.client_classification import apply_client_classification
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.services.memory_service import MemoryService
+from tests.payment_date_helpers import make_effective_payment
 
 
 def _unique_email() -> str:
@@ -47,7 +48,19 @@ def _make_paid_event(
     account: Account,
     occurred_at: datetime,
     previous_status: str = "atrasado",
+    with_effective_date: bool = True,
+    paid_on: date | None = None,
 ) -> AccountEvent:
+    # O evento e auditoria; a DATA OFICIAL e account_payments.paid_on.
+    # Por padrao paid_on = data (UTC) do evento, como nos cenarios
+    # originais; with_effective_date=False simula titulo antigo pago sem
+    # data efetiva registrada.
+    if with_effective_date:
+        make_effective_payment(
+            db,
+            account=account,
+            paid_on=paid_on or occurred_at.astimezone(timezone.utc).date(),
+        )
     event = AccountEvent(
         account_id=account.id,
         event_type="status_changed",
@@ -189,6 +202,7 @@ def test_classification_endpoint_returns_insufficient_data(
     assert classification["resolved_occurrences"] == 2
     assert classification["late_occurrences"] is None
     assert classification["late_ratio"] is None
+    assert classification["occurrences_without_effective_date"] == 0
     assert (
         classification["analysis_scope"]
         == "all_available_history"

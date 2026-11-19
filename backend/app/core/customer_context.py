@@ -92,6 +92,7 @@ class BehaviorPattern:
     payment_rate: float
     confidence: float
     recorded_at: datetime
+    occurrences_without_effective_date: int | None = None
 
 
 @dataclass(frozen=True)
@@ -271,6 +272,9 @@ def _behavioral_intelligence(
             payment_rate=context["taxa_pagamento"],
             confidence=context["confidence"],
             recorded_at=pattern_memory.created_at,
+            occurrences_without_effective_date=context.get(
+                "ocorrencias_sem_data_efetiva"
+            ),
         )
 
     classification_memory = repository.find_active_by_key(

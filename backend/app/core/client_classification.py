@@ -27,19 +27,20 @@ Reaproveita por importacao apenas compute_client_behavior_pattern.
 A consulta de candidatos e propria desta fatia
 (CLASSIFICATION_CANDIDATE_EMAILS_SQL), porque a consulta da Fatia 1
 filtra por memory_type='observation' e nunca reconheceria uma memoria
-de classificacao (memory_type='decision'). A unica duplicacao
-intencional de logica e um builder minimo de ciclos resolvidos
-(_list_resolved_cycles), usado somente quando o padrao da Fatia 1
+de classificacao (memory_type='decision'). O builder de ciclos
+resolvidos (_list_resolved_cycles, via list_effective_payment_cycles), usado somente quando o padrao da Fatia 1
 retorna None (menos de 3 ocorrencias resolvidas) -- a Fatia 1 descarta
 esses ciclos ao retornar None, mas o caso INSUFFICIENT_DATA desta
 fatia precisa deles para ficar auditavel (evidencia real, nao so uma
 contagem).
 
-A unica alteracao em client_behavior_memory_maintenance.py e um
-bugfix pontual e independente da regra de negocio da Fatia 2A:
-normalizar occurred_at para UTC antes de extrair a data (.date()),
-corrigindo um off-by-one de fuso horario ja presente em producao
-(descoberto durante o GATE desta fatia, em 09/09/2026).
+FONTE DA DATA (decisao de Daniel): a data oficial de pagamento e a
+data efetiva registrada (account_payments.paid_on), nao a data do
+evento 'pago' (account_events.occurred_at, so auditoria). Titulos
+pagos sem data efetiva ficam fora de atraso/proporcao e sao contados em
+ocorrencias_sem_data_efetiva (sem estimativa). A regra recurrence_v1 em
+si nao mudou. (O antigo bugfix de fuso sobre occurred_at deixa de se
+aplicar: paid_on e uma data de calendario.)
 """
 
 import asyncio
@@ -60,10 +61,12 @@ from app.core.client_behavior_memory_maintenance import (
 from app.core.client_behavior_memory_maintenance import (
     compute_client_behavior_pattern,
 )
+from app.core.client_behavior_memory_maintenance import (
+    list_effective_payment_cycles,
+)
 from app.core.config import settings
 from app.database.database import SessionLocal
 from app.models.account import Account
-from app.models.account_event import AccountEvent
 from app.repositories.memory_repository import MemoryRepository
 from app.services.memory_service import EvidenceInput
 from app.services.memory_service import MemoryService
@@ -93,26 +96,50 @@ REASON_BELOW_MINIMUM = "resolved_occurrences_below_minimum"
 # aparecer como candidato em todo ciclo de recalculo, gerando supersede
 # desnecessario e infinito. Corrigido apos falha detectada em
 # test_recalculate_all_client_classifications_summary (09/09/2026).
+#
+# DATA OFICIAL de pagamento = account_payments.paid_on; o evento 'pago'
+# e so gatilho (ver client_behavior_memory_maintenance). Candidato
+# tambem quando a classificacao ativa foi gravada antes da fonte oficial
+# (context_data sem 'ocorrencias_sem_data_efetiva'): recalcula uma vez.
 CLASSIFICATION_CANDIDATE_EMAILS_SQL = text(
     """
-    SELECT DISTINCT a.email
-    FROM account_events ae
-    JOIN accounts a ON a.id = ae.account_id
-    WHERE ae.new_status = 'pago'
-      AND a.email IS NOT NULL
-      AND ae.occurred_at > COALESCE(
+    SELECT DISTINCT p.email
+    FROM (
+        SELECT a.email AS email, ae.occurred_at AS registered_at
+        FROM account_events ae
+        JOIN accounts a ON a.id = ae.account_id
+        WHERE ae.new_status = 'pago'
+          AND a.email IS NOT NULL
+        UNION ALL
+        SELECT a.email AS email, ap.created_at AS registered_at
+        FROM account_payments ap
+        JOIN accounts a ON a.id = ap.account_id
+        WHERE a.email IS NOT NULL
+    ) p
+    WHERE p.registered_at > COALESCE(
         (
             SELECT MAX(mi.created_at)
             FROM memory_items mi
             JOIN accounts a2 ON mi.account_id = a2.id
-            WHERE a2.email = a.email
+            WHERE a2.email = p.email
               AND mi.memory_type = 'decision'
               AND mi.memory_key = 'client_classification_v1'
               AND mi.status = 'active'
         ),
         '-infinity'
       )
-    ORDER BY a.email
+      OR EXISTS (
+        SELECT 1
+        FROM memory_items mi
+        JOIN accounts a3 ON mi.account_id = a3.id
+        WHERE a3.email = p.email
+          AND mi.memory_type = 'decision'
+          AND mi.memory_key = 'client_classification_v1'
+          AND mi.status = 'active'
+          AND (mi.context_data ->> 'ocorrencias_sem_data_efetiva')
+              IS NULL
+      )
+    ORDER BY p.email
     """
 )
 
@@ -138,6 +165,7 @@ class ClientClassification:
     period_start: date | None
     period_end: date | None
     cycles: tuple[ClientBehaviorCycle, ...]
+    ocorrencias_sem_data_efetiva: int = 0
 
 
 def _oldest_account_id(
@@ -159,12 +187,15 @@ def _oldest_account_id(
 def _list_resolved_cycles(
     db: Session,
     email: str,
-) -> tuple[ClientBehaviorCycle, ...]:
+) -> tuple[tuple[ClientBehaviorCycle, ...], int]:
     """
-    Lista os ciclos resolvidos de um email, sem aplicar o limiar
-    minimo da Fatia 1 (settings.client_behavior_min_occurrences_for_pattern).
-    Usado somente para evidencia do caso INSUFFICIENT_DATA -- a Fatia 1
-    descarta esses ciclos ao retornar None abaixo do minimo.
+    Lista os ciclos resolvidos de um email pela DATA OFICIAL de
+    pagamento (account_payments.paid_on), sem aplicar o limiar minimo
+    da Fatia 1 (settings.client_behavior_min_occurrences_for_pattern),
+    e a contagem de titulos pagos sem data efetiva (fora dos ciclos,
+    sem estimativa). Usado somente para evidencia do caso
+    INSUFFICIENT_DATA -- a Fatia 1 descarta esses ciclos ao retornar
+    None abaixo do minimo.
     """
     accounts = (
         db.execute(
@@ -176,42 +207,11 @@ def _list_resolved_cycles(
         .all()
     )
 
-    cycles: list[ClientBehaviorCycle] = []
+    cycles, sem_data_efetiva = list_effective_payment_cycles(
+        db, list(accounts)
+    )
 
-    for account in accounts:
-        latest_paid_event = (
-            db.execute(
-                select(AccountEvent)
-                .where(
-                    AccountEvent.account_id == account.id,
-                    AccountEvent.new_status == "pago",
-                )
-                .order_by(AccountEvent.occurred_at.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
-
-        if latest_paid_event is None:
-            continue
-
-        resolved_at = latest_paid_event.occurred_at.astimezone(
-            timezone.utc
-        ).date()
-
-        cycles.append(
-            ClientBehaviorCycle(
-                account_id=account.id,
-                vencimento=account.vencimento,
-                resolved_at=resolved_at,
-                atraso_dias=(
-                    resolved_at - account.vencimento
-                ).days,
-            )
-        )
-
-    return tuple(cycles)
+    return tuple(cycles), sem_data_efetiva
 
 
 def compute_client_classification(
@@ -233,9 +233,9 @@ def compute_client_classification(
     pattern = compute_client_behavior_pattern(db, email)
 
     if pattern is None:
-        cycles = _list_resolved_cycles(db, email)
+        cycles, sem_data_efetiva = _list_resolved_cycles(db, email)
 
-        if not cycles:
+        if not cycles and not sem_data_efetiva:
             return None
 
         resolved_dates = [cycle.resolved_at for cycle in cycles]
@@ -249,9 +249,14 @@ def compute_client_classification(
             proporcao_atraso=None,
             confidence=0.0,
             reason=REASON_BELOW_MINIMUM,
-            period_start=min(resolved_dates),
-            period_end=max(resolved_dates),
+            period_start=(
+                min(resolved_dates) if resolved_dates else None
+            ),
+            period_end=(
+                max(resolved_dates) if resolved_dates else None
+            ),
             cycles=cycles,
+            ocorrencias_sem_data_efetiva=sem_data_efetiva,
         )
 
     ciclos_em_atraso = sum(
@@ -282,6 +287,9 @@ def compute_client_classification(
         period_start=min(resolved_dates),
         period_end=max(resolved_dates),
         cycles=pattern.cycles,
+        ocorrencias_sem_data_efetiva=(
+            pattern.ocorrencias_sem_data_efetiva
+        ),
     )
 
 
@@ -292,6 +300,13 @@ def _classification_title(email: str) -> str:
 def _classification_content(
     classification: ClientClassification,
 ) -> str:
+    sem_data = (
+        f" {classification.ocorrencias_sem_data_efetiva} título(s) "
+        "pago(s) sem data efetiva registrada ficaram fora do cálculo."
+        if classification.ocorrencias_sem_data_efetiva
+        else ""
+    )
+
     if classification.label == LABEL_INSUFFICIENT_DATA:
         return (
             f"Cliente {classification.email}: dados insuficientes "
@@ -299,6 +314,7 @@ def _classification_content(
             f"({classification.ocorrencias_resolvidas} ciclo(s) "
             "resolvido(s), mínimo exigido "
             f"{settings.client_behavior_min_occurrences_for_pattern})."
+            + sem_data
         )
 
     return (
@@ -309,6 +325,7 @@ def _classification_content(
         f"{classification.proporcao_atraso:.0%}). Critério: "
         f"{RULE_VERSION} (limiar "
         f"{settings.client_classification_atraso_threshold:.0%})."
+        + sem_data
     )
 
 
@@ -327,6 +344,10 @@ def _classification_context_data(
         "reason": classification.reason,
         "rule_version": RULE_VERSION,
         "analysis_scope": ANALYSIS_SCOPE,
+        "ocorrencias_sem_data_efetiva": (
+            classification.ocorrencias_sem_data_efetiva
+        ),
+        "fonte_data_pagamento": "account_payments.paid_on",
         "period_start": (
             classification.period_start.isoformat()
             if classification.period_start is not None
@@ -354,9 +375,8 @@ def _classification_evidence(
             relation="supports",
             source_type="database",
             source_reference=(
-                f"account_event:account_id={cycle.account_id}:"
-                f"new_status=pago:occurred_at="
-                f"{cycle.resolved_at.isoformat()}"
+                f"account_payment:account_id={cycle.account_id}:"
+                f"paid_on={cycle.resolved_at.isoformat()}"
             ),
             evidence_text=(
                 f"Conta {cycle.account_id}: vencimento "

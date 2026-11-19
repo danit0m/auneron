@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.database.database import SessionLocal
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.models.account_payment import AccountPayment
 from app.repositories.memory_repository import MemoryRepository
 from app.services.memory_service import EvidenceInput
 from app.services.memory_service import MemoryService
@@ -26,25 +27,47 @@ MEMORY_KEY = "client_behavior_payment_pattern"
 MAX_EVIDENCE_CYCLES = 20
 
 
+# DATA OFICIAL de pagamento = account_payments.paid_on (data efetiva do
+# pagamento registrado). O evento 'pago' de account_events registra
+# quando o Auneron executou o lancamento e serve so para auditoria; aqui
+# ele continua sendo usado apenas como GATILHO ("houve pagamento novo"),
+# nunca como data de negocio. Candidato = e-mail com pagamento
+# registrado (evento 'pago' ou linha em account_payments) posterior a
+# ultima memoria ativa.
+#
+# Memorias antigas, gravadas quando a fonte era a data do evento, NAO
+# sao recalculadas por migracao nem por marcador: sao recalculadas no
+# PROXIMO pagamento do cliente. (Um gatilho por marcador ausente poderia
+# ficar em loop aqui, pois apply_client_behavior_memory_pattern nao
+# grava nada quando ha menos ocorrencias que o minimo.) A classificacao,
+# que sempre faz supersede, usa o marcador -- ver client_classification.
 CANDIDATE_EMAILS_SQL = text(
     """
-    SELECT DISTINCT a.email
-    FROM account_events ae
-    JOIN accounts a ON a.id = ae.account_id
-    WHERE ae.new_status = 'pago'
-      AND a.email IS NOT NULL
-      AND ae.occurred_at > COALESCE(
+    SELECT DISTINCT p.email
+    FROM (
+        SELECT a.email AS email, ae.occurred_at AS registered_at
+        FROM account_events ae
+        JOIN accounts a ON a.id = ae.account_id
+        WHERE ae.new_status = 'pago'
+          AND a.email IS NOT NULL
+        UNION ALL
+        SELECT a.email AS email, ap.created_at AS registered_at
+        FROM account_payments ap
+        JOIN accounts a ON a.id = ap.account_id
+        WHERE a.email IS NOT NULL
+    ) p
+    WHERE p.registered_at > COALESCE(
         (
             SELECT MAX(mi.created_at)
             FROM memory_items mi
             JOIN accounts a2 ON mi.account_id = a2.id
-            WHERE a2.email = a.email
+            WHERE a2.email = p.email
               AND mi.memory_type = 'observation'
               AND mi.status = 'active'
         ),
         '-infinity'
       )
-    ORDER BY a.email
+    ORDER BY p.email
     """
 )
 
@@ -55,6 +78,10 @@ class ClientBehaviorCycle:
     vencimento: date
     resolved_at: date
     atraso_dias: int
+    # resolved_at e a data efetiva do pagamento (account_payments.paid_on).
+    # "evento_estimado" nao e produzido por padrao: so existiria se um
+    # indicador optasse explicitamente por estimar com o evento.
+    data_pagamento_origem: str = "efetiva"
 
 
 @dataclass(frozen=True)
@@ -68,6 +95,9 @@ class ClientBehaviorPattern:
     taxa_pagamento: float
     confidence: float
     cycles: tuple[ClientBehaviorCycle, ...]
+    # Titulos pagos (evento 'pago') sem data efetiva registrada: ficam
+    # fora de atraso/pontualidade e sao contados aqui, sem estimativa.
+    ocorrencias_sem_data_efetiva: int = 0
 
 
 def list_client_behavior_recalculation_candidate_emails(
@@ -76,6 +106,67 @@ def list_client_behavior_recalculation_candidate_emails(
     return list(
         db.execute(CANDIDATE_EMAILS_SQL).scalars().all()
     )
+
+
+def list_effective_payment_cycles(
+    db: Session,
+    accounts: list[Account],
+) -> tuple[list[ClientBehaviorCycle], int]:
+    """
+    Ciclos resolvidos pela DATA OFICIAL de pagamento
+    (account_payments.paid_on) e contagem de titulos pagos sem data
+    efetiva. Titulo com evento 'pago' mas sem account_payments (anterior
+    ao registro de paid_on) NAO vira ciclo -- nao e estimado pela data
+    do evento; so e contado em ocorrencias_sem_data_efetiva.
+    """
+    if not accounts:
+        return [], 0
+
+    ids = [account.id for account in accounts]
+
+    paid_on_by_account = {
+        row.account_id: row.paid_on
+        for row in db.execute(
+            select(
+                AccountPayment.account_id,
+                AccountPayment.paid_on,
+            ).where(AccountPayment.account_id.in_(ids))
+        ).all()
+    }
+    accounts_with_paid_event = set(
+        db.execute(
+            select(AccountEvent.account_id)
+            .where(
+                AccountEvent.account_id.in_(ids),
+                AccountEvent.new_status == "pago",
+            )
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+
+    cycles: list[ClientBehaviorCycle] = []
+    sem_data_efetiva = 0
+
+    for account in accounts:
+        paid_on = paid_on_by_account.get(account.id)
+
+        if paid_on is None:
+            if account.id in accounts_with_paid_event:
+                sem_data_efetiva += 1
+            continue
+
+        cycles.append(
+            ClientBehaviorCycle(
+                account_id=account.id,
+                vencimento=account.vencimento,
+                resolved_at=paid_on,
+                atraso_dias=(paid_on - account.vencimento).days,
+            )
+        )
+
+    return cycles, sem_data_efetiva
 
 
 def compute_client_behavior_pattern(
@@ -97,42 +188,10 @@ def compute_client_behavior_pattern(
 
     oldest_account_id = accounts[0].id
 
-    cycles: list[ClientBehaviorCycle] = []
-    total_ciclos_observados = 0
-
-    for account in accounts:
-        total_ciclos_observados += 1
-
-        latest_paid_event = (
-            db.execute(
-                select(AccountEvent)
-                .where(
-                    AccountEvent.account_id == account.id,
-                    AccountEvent.new_status == "pago",
-                )
-                .order_by(AccountEvent.occurred_at.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
-
-        if latest_paid_event is None:
-            continue
-
-        resolved_at = latest_paid_event.occurred_at.astimezone(
-            timezone.utc
-        ).date()
-        atraso_dias = (resolved_at - account.vencimento).days
-
-        cycles.append(
-            ClientBehaviorCycle(
-                account_id=account.id,
-                vencimento=account.vencimento,
-                resolved_at=resolved_at,
-                atraso_dias=atraso_dias,
-            )
-        )
+    total_ciclos_observados = len(accounts)
+    cycles, ocorrencias_sem_data_efetiva = list_effective_payment_cycles(
+        db, accounts
+    )
 
     ocorrencias_resolvidas = len(cycles)
 
@@ -146,9 +205,11 @@ def compute_client_behavior_pattern(
     atraso_medio_dias = sum(atrasos) / ocorrencias_resolvidas
     atraso_min_dias = min(atrasos)
     atraso_max_dias = max(atrasos)
+    # Taxa de pagamento nao depende da data: titulo pago sem data
+    # efetiva continua sendo um titulo pago.
     taxa_pagamento = (
-        ocorrencias_resolvidas / total_ciclos_observados
-    )
+        ocorrencias_resolvidas + ocorrencias_sem_data_efetiva
+    ) / total_ciclos_observados
     confidence = min(
         1.0,
         1 - (1 / ocorrencias_resolvidas),
@@ -164,6 +225,7 @@ def compute_client_behavior_pattern(
         taxa_pagamento=taxa_pagamento,
         confidence=confidence,
         cycles=tuple(cycles),
+        ocorrencias_sem_data_efetiva=ocorrencias_sem_data_efetiva,
     )
 
 
@@ -172,13 +234,21 @@ def _pattern_title(email: str) -> str:
 
 
 def _pattern_content(pattern: ClientBehaviorPattern) -> str:
+    sem_data = (
+        f" {pattern.ocorrencias_sem_data_efetiva} título(s) pago(s) "
+        "sem data efetiva registrada ficaram fora do cálculo."
+        if pattern.ocorrencias_sem_data_efetiva
+        else ""
+    )
     return (
         f"Cliente {pattern.email} paga suas contas com atraso médio de "
         f"{pattern.atraso_medio_dias:.1f} dia(s) (mínimo "
         f"{pattern.atraso_min_dias}, máximo {pattern.atraso_max_dias}), "
-        f"com base em {pattern.ocorrencias_resolvidas} ciclo(s) pago(s). "
+        f"com base em {pattern.ocorrencias_resolvidas} ciclo(s) pago(s) "
+        "com data efetiva de pagamento. "
         f"Taxa de pagamento observada: {pattern.taxa_pagamento:.0%}. "
         f"Confiança do padrão: {pattern.confidence:.2f}."
+        + sem_data
     )
 
 
@@ -194,17 +264,19 @@ def _pattern_context_data(
         "atraso_max_dias": pattern.atraso_max_dias,
         "taxa_pagamento": pattern.taxa_pagamento,
         "confidence": pattern.confidence,
+        "ocorrencias_sem_data_efetiva": (
+            pattern.ocorrencias_sem_data_efetiva
+        ),
+        "fonte_data_pagamento": "account_payments.paid_on",
     }
 
 
 def _pattern_evidence(
     pattern: ClientBehaviorPattern,
 ) -> tuple[EvidenceInput, ...]:
-    # MemoryService aceita no maximo 20 evidencias por chamada. Nao ha
-    # id do AccountEvent no ClientBehaviorCycle (dataclass congelado do
-    # incremento 4a), entao o source_reference e derivado de
-    # account_id + data resolvida, que identifica o evento de origem
-    # de forma equivalente.
+    # MemoryService aceita no maximo 20 evidencias por chamada. A
+    # evidencia aponta para a data efetiva do pagamento
+    # (account_payments.paid_on), derivada de account_id + data.
     recent_cycles = sorted(
         pattern.cycles,
         key=lambda cycle: cycle.resolved_at,
@@ -216,9 +288,8 @@ def _pattern_evidence(
             relation="supports",
             source_type="database",
             source_reference=(
-                f"account_event:account_id={cycle.account_id}:"
-                f"new_status=pago:occurred_at="
-                f"{cycle.resolved_at.isoformat()}"
+                f"account_payment:account_id={cycle.account_id}:"
+                f"paid_on={cycle.resolved_at.isoformat()}"
             ),
             evidence_text=(
                 f"Conta {cycle.account_id}: vencimento "

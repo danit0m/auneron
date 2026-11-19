@@ -349,6 +349,9 @@ class ClientClassificationDetail(BaseModel):
     minimum_required_occurrences: int
     late_ratio_threshold: float
     analysis_scope: str
+    # Titulos pagos sem data efetiva (fora do calculo). None = memoria
+    # gravada antes da fonte oficial de data de pagamento.
+    occurrences_without_effective_date: int | None = None
     period_start: date | None = None
     period_end: date | None = None
 
