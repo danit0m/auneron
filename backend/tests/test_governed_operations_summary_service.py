@@ -9,8 +9,11 @@ from sqlalchemy.orm import Session
 from app.core.policy_definitions import ACCOUNT_MARK_OVERDUE_POLICY_V1
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.models.account_payment import AccountPayment
+from app.models.approval import ApprovalRequest
 from app.models.policy_authority_grant import PolicyAuthorityGrant
 from app.models.user import User
+from app.services.skill_service import SkillService
 from app.services.business_effect_verification_service import (
     BusinessEffectVerificationService,
 )
@@ -140,7 +143,86 @@ def _business_datetime(business_date: date, hour: int, minute: int) -> datetime:
 
 # ---------------------------------------------------------------------
 # KPI-1
+#
+# Fonte da data de pagamento: account_payments.paid_on (data efetiva).
+# O evento 'pago' (account_events) so indica que o titulo foi pago; sem
+# paid_on a situacao e DESCONHECIDA (contada a parte).
 # ---------------------------------------------------------------------
+
+
+def _payment(
+    db_session: Session,
+    *,
+    account: Account,
+    paid_on: date,
+) -> AccountPayment:
+    service = SkillService(db_session)
+    skill = service.register_skill(
+        skill_key=f"kpi1.payment.{account.id}",
+        provider="auneron.core",
+        display_name="KPI-1 payment",
+        description="Skill para testes de data efetiva do KPI-1.",
+    )
+    draft = service.create_draft_version(
+        skill_id=skill.id,
+        version="1.0.0",
+        runtime_kind="internal_python",
+        handler_reference="app.skills.approval:kpi1_test",
+        execution_mode="read_only",
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+    )
+    version = service.publish_version(draft.id).version
+    now = datetime.now(timezone.utc)
+    approval = ApprovalRequest(
+        action_type="skill_execution",
+        skill_version_id=version.id,
+        requester_actor_type="system",
+        requester_reference=f"system:kpi1-{account.id}",
+        requester_user_id=None,
+        idempotency_key=f"kpi1-{account.id}",
+        request_fingerprint="a" * 64,
+        input_digest="b" * 64,
+        risk_level="low",
+        required_permission="approval:decide",
+        status="pending",
+        target_account_id=None,
+        target_user_id=None,
+        expires_at=now + timedelta(hours=1),
+        resolved_at=None,
+        created_at=now,
+    )
+    db_session.add(approval)
+    db_session.commit()
+    payment = AccountPayment(
+        account_id=account.id,
+        paid_on=paid_on,
+        approval_request_id=approval.id,
+    )
+    db_session.add(payment)
+    db_session.commit()
+    return payment
+
+
+def _paid_account(
+    db_session: Session,
+    *,
+    email: str,
+    vencimento: date,
+    paid_on: date,
+    event_at: datetime | None = None,
+) -> Account:
+    account = _account(
+        db_session, email=email, vencimento=vencimento, status="pago"
+    )
+    _payment(db_session, account=account, paid_on=paid_on)
+    _paid_event(
+        db_session,
+        account=account,
+        occurred_at=event_at
+        or _business_datetime(paid_on, 12, 0),
+    )
+    return account
 
 
 def test_kpi1_counts_account_never_paid(db_session: Session) -> None:
@@ -162,12 +244,91 @@ def test_kpi1_counts_account_paid_after_due_date(
     db_session: Session,
 ) -> None:
     """Reproduz o caso real da Account 2: vencimento no periodo, paga
-    depois do vencimento -- deve contar."""
+    (data efetiva) depois do vencimento -- deve contar."""
 
     vencimento = date.today() - timedelta(days=20)
-    account = _account(
+    account = _paid_account(
         db_session,
         email="kpi1-account-2-equivalent@example.com",
+        vencimento=vencimento,
+        paid_on=vencimento + timedelta(days=5),
+    )
+
+    result = GovernedOperationsSummaryService(db_session).compute(
+        period_days=30,
+    )
+
+    eligible, unknown = _kpi1_ids(db_session, period_days=30)
+    assert account.id in eligible
+    assert account.id not in unknown
+    assert result.eligible_accounts_identified >= 1
+
+
+def test_kpi1_excludes_account_paid_before_due_date(
+    db_session: Session,
+) -> None:
+    vencimento = date.today() - timedelta(days=10)
+    account = _paid_account(
+        db_session,
+        email="kpi1-paid-before@example.com",
+        vencimento=vencimento,
+        paid_on=vencimento - timedelta(days=1),
+    )
+
+    eligible, unknown = _kpi1_ids(db_session, period_days=30)
+    assert account.id not in eligible
+    assert account.id not in unknown
+
+
+def test_kpi1_excludes_account_paid_exactly_on_due_date(
+    db_session: Session,
+) -> None:
+    vencimento = date.today() - timedelta(days=10)
+    account = _paid_account(
+        db_session,
+        email="kpi1-paid-on-due-date@example.com",
+        vencimento=vencimento,
+        paid_on=vencimento,
+    )
+
+    eligible, unknown = _kpi1_ids(db_session, period_days=30)
+    assert account.id not in eligible
+    assert account.id not in unknown
+
+
+def test_kpi1_late_registration_is_not_paid_after_due_date(
+    db_session: Session,
+) -> None:
+    """paid_on 10/11, evento registrado em 14/11, vencimento 12/11: a
+    data efetiva e anterior ao vencimento; o registro tardio do evento
+    nao pode tornar a conta elegivel (antes, o evento definia a data)."""
+
+    vencimento = date.today() - timedelta(days=10)
+    account = _paid_account(
+        db_session,
+        email="kpi1-late-registration@example.com",
+        vencimento=vencimento,
+        paid_on=vencimento - timedelta(days=2),
+        event_at=_business_datetime(
+            vencimento + timedelta(days=2), 12, 0
+        ),
+    )
+
+    eligible, unknown = _kpi1_ids(db_session, period_days=30)
+    assert account.id not in eligible
+    assert account.id not in unknown
+
+
+def test_kpi1_paid_without_payment_record_is_unknown(
+    db_session: Session,
+) -> None:
+    """Pago (evento) sem account_payments: nem elegivel nem nao
+    elegivel; contado a parte."""
+
+    vencimento = date.today() - timedelta(days=10)
+    account = _account(
+        db_session,
+        email="kpi1-paid-no-payment-record@example.com",
         vencimento=vencimento,
         status="pago",
     )
@@ -179,143 +340,75 @@ def test_kpi1_counts_account_paid_after_due_date(
         ),
     )
 
-    result = GovernedOperationsSummaryService(db_session).compute(
+    eligible, unknown = _kpi1_ids(db_session, period_days=30)
+    assert account.id not in eligible
+    assert account.id in unknown
+
+    before = GovernedOperationsSummaryService(db_session).compute(
         period_days=30,
     )
-
-    eligible = _eligible_account_ids(db_session, period_days=30)
-    assert account.id in eligible
-    assert result.eligible_accounts_identified >= 1
+    assert before.eligible_accounts_unknown_payment_date >= 1
 
 
-def test_kpi1_excludes_account_paid_before_due_date(
+def test_kpi1_unknown_count_is_exposed_separately(
     db_session: Session,
 ) -> None:
     vencimento = date.today() - timedelta(days=10)
+    service = GovernedOperationsSummaryService(db_session)
+    baseline = service.compute(period_days=30)
+
     account = _account(
         db_session,
-        email="kpi1-paid-before@example.com",
+        email="kpi1-unknown-count@example.com",
         vencimento=vencimento,
         status="pago",
     )
     _paid_event(
         db_session,
         account=account,
-        occurred_at=_business_datetime(
-            vencimento - timedelta(days=1), 12, 0
-        ),
+        occurred_at=_business_datetime(vencimento, 10, 0),
     )
 
-    eligible = _eligible_account_ids(db_session, period_days=30)
-    assert account.id not in eligible
+    after = service.compute(period_days=30)
+    assert (
+        after.eligible_accounts_unknown_payment_date
+        == baseline.eligible_accounts_unknown_payment_date + 1
+    )
+    assert (
+        after.eligible_accounts_identified
+        == baseline.eligible_accounts_identified
+    )
 
 
-def test_kpi1_excludes_account_paid_exactly_on_due_date(
+def test_kpi1_event_timestamp_no_longer_decides(
     db_session: Session,
 ) -> None:
-    vencimento = date.today() - timedelta(days=10)
-    account = _account(
-        db_session,
-        email="kpi1-paid-on-due-date@example.com",
-        vencimento=vencimento,
-        status="pago",
-    )
-    _paid_event(
-        db_session,
-        account=account,
-        occurred_at=_business_datetime(vencimento, 23, 50),
-    )
-
-    eligible = _eligible_account_ids(db_session, period_days=30)
-    assert account.id not in eligible
-
-
-def test_kpi1_respects_business_timezone_boundary(
-    db_session: Session,
-) -> None:
-    """Pagamento as 23:50 America/Sao_Paulo no dia do vencimento nao
-    pode contar, mesmo que em UTC ja seja o dia seguinte."""
+    """Evento as 23:50 (fuso de negocio) no dia do vencimento, mas
+    paid_on posterior: vale a data efetiva."""
 
     vencimento = date.today() - timedelta(days=10)
-    payment_at = _business_datetime(vencimento, 23, 50)
-    assert payment_at.astimezone(timezone.utc).date() > vencimento
-
-    account = _account(
+    account = _paid_account(
         db_session,
-        email="kpi1-timezone-boundary@example.com",
+        email="kpi1-event-not-decisive@example.com",
         vencimento=vencimento,
-        status="pago",
-    )
-    _paid_event(db_session, account=account, occurred_at=payment_at)
-
-    eligible = _eligible_account_ids(db_session, period_days=30)
-    assert account.id not in eligible
-
-
-def test_kpi1_counts_account_paid_after_due_date_business_boundary(
-    db_session: Session,
-) -> None:
-    vencimento = date.today() - timedelta(days=10)
-    payment_at = _business_datetime(
-        vencimento + timedelta(days=1), 0, 10
+        paid_on=vencimento + timedelta(days=1),
+        event_at=_business_datetime(vencimento, 23, 50),
     )
 
-    account = _account(
-        db_session,
-        email="kpi1-timezone-boundary-after@example.com",
-        vencimento=vencimento,
-        status="pago",
-    )
-    _paid_event(db_session, account=account, occurred_at=payment_at)
-
-    eligible = _eligible_account_ids(db_session, period_days=30)
+    eligible, _ = _kpi1_ids(db_session, period_days=30)
     assert account.id in eligible
 
 
-def _eligible_account_ids(
+def _kpi1_ids(
     db_session: Session, *, period_days: int
-) -> set[int]:
-    from sqlalchemy import Date, cast, func, or_
-    from app.core.config import settings
+) -> tuple[set[int], set[int]]:
     from app.core.receivable_lifecycle import business_today
 
     today = business_today()
-    start = today - timedelta(days=period_days)
-
-    first_payment = (
-        db_session.query(
-            AccountEvent.account_id.label("account_id"),
-            func.min(AccountEvent.occurred_at).label(
-                "first_paid_at"
-            ),
-        )
-        .filter(AccountEvent.new_status == "pago")
-        .group_by(AccountEvent.account_id)
-        .subquery()
+    return GovernedOperationsSummaryService(db_session).kpi1_account_ids(
+        vencimento_start=today - timedelta(days=period_days),
+        vencimento_end=today,
     )
-    first_paid_business_date = cast(
-        func.timezone(
-            settings.business_timezone,
-            first_payment.c.first_paid_at,
-        ),
-        Date,
-    )
-    rows = (
-        db_session.query(Account.id)
-        .outerjoin(
-            first_payment,
-            first_payment.c.account_id == Account.id,
-        )
-        .filter(Account.vencimento >= start, Account.vencimento < today)
-        .filter(
-            or_(
-                first_payment.c.first_paid_at.is_(None),
-                first_paid_business_date > Account.vencimento,
-            )
-        )
-        .all()
-    )
-    return {row.id for row in rows}
 
 
 # ---------------------------------------------------------------------

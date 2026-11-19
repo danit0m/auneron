@@ -33,8 +33,23 @@ Ficam fora, deliberadamente: alteração administrativa (chave nula),
 
 ## Demais indicadores
 
-- KPI-1 `eligible_accounts_identified`: contas vencidas no período sem
-  pagamento até a data de vencimento (fuso de negócio).
+- KPI-1 `eligible_accounts_identified`: contas com vencimento no período que
+  não estavam pagas até o vencimento. A data de pagamento é a data efetiva
+  `account_payments.paid_on` (decisão da diretoria); o evento "pago" em
+  `account_events` fica para rastreabilidade e só indica que o título foi pago.
+  Elegível = não paga, ou `paid_on` posterior ao vencimento (pagamento no dia do
+  vencimento não conta). Um registro tardio (ex.: `paid_on` 10/11, evento
+  14/11, vencimento 12/11) não é "pago depois do vencimento".
+- `eligible_accounts_unknown_payment_date`: título pago (evento "pago" ou status
+  "pago") sem registro em `account_payments`. Situação desconhecida: não entra
+  como elegível nem como não elegível; é contado à parte (a tela mostra "N sem
+  data de pagamento").
+- Detecção até pagamento (`/outcomes/.../episodes`, `derived`):
+  `days_detection_to_payment_registration` mede o tempo até o REGISTRO do
+  pagamento (evento "pago"), não até a data efetiva. O nome antigo
+  `days_detection_to_payment` permanece como alias com o mesmo valor. A medida
+  baseada na data efetiva (`paid_on`) está PENDENTE DE DEFINIÇÃO própria,
+  incluindo o caso de pagamento anterior à detecção; não existe ainda.
 - KPI-4 `autonomous_effect_verification`: consumos de autoridade L3 de
   `account.mark_overdue` e seu resultado de verificação de efeito. Cobre só a
   origem autônoma; `total` deve igualar `autonomous_dispositions`.

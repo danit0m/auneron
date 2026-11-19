@@ -39,6 +39,7 @@ def test_governed_operations_summary_returns_200_and_schema(
     assert set(payload.keys()) == {
         "period",
         "eligible_accounts_identified",
+        "eligible_accounts_unknown_payment_date",
         "autonomous_dispositions",
         "human_governed_dispositions",
         "manual_human_dispositions",

@@ -27,6 +27,7 @@ class GovernedOperationsSummaryResponse(BaseModel):
 
     period: GovernedOperationsSummaryPeriod
     eligible_accounts_identified: int
+    eligible_accounts_unknown_payment_date: int = 0
     autonomous_dispositions: int
     human_governed_dispositions: int
     manual_human_dispositions: int

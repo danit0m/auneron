@@ -78,6 +78,10 @@ def test_outcome_episode_returns_200_with_all_categories_absent(
     assert payload["recommendation_provenance"]["linkage"] == "absent"
     assert payload["payment"]["linkage"] == "absent"
     assert payload["derived"]["days_detection_to_payment"] is None
+    assert (
+        payload["derived"]["days_detection_to_payment_registration"]
+        is None
+    )
     assert payload["amount"]["value"] == 500.0
     assert payload["amount"]["provenance_class"] == "fact"
 

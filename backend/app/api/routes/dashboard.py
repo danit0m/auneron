@@ -185,6 +185,9 @@ def governed_operations_summary(
             days=result.period_days,
         ),
         eligible_accounts_identified=result.eligible_accounts_identified,
+        eligible_accounts_unknown_payment_date=(
+            result.eligible_accounts_unknown_payment_date
+        ),
         autonomous_dispositions=result.autonomous_dispositions,
         human_governed_dispositions=result.human_governed_dispositions,
         manual_human_dispositions=result.manual_human_dispositions,

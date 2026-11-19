@@ -52,6 +52,14 @@ export function descreverOrigemHumana(
   return `${manuais} manuais · ${agente} iniciadas pelo agente, aprovadas por pessoa`;
 }
 
+/** "N sem data de pagamento"; null quando ausente ou zero (nada a mostrar). */
+export function descreverSemDataPagamento(
+  resumo: Partial<GovernedOperationsSummary> | null | undefined,
+): string | null {
+  const n = inteiro(resumo?.eligible_accounts_unknown_payment_date);
+  return n !== null && n > 0 ? `${n} sem data de pagamento` : null;
+}
+
 /**
  * Funil a partir do resumo de operações governadas. Etapa cujo campo não
  * existe (ou não é número válido) é omitida; nunca se inventa valor.
@@ -71,9 +79,11 @@ export function montarFunil(
   );
   const maior = Math.max(0, ...etapas.map((e) => e.valor));
   const detalheHumanas = descreverOrigemHumana(resumo);
+  const detalheSemData = descreverSemDataPagamento(resumo);
   return etapas.map((e) => ({
     ...e,
     ...(e.chave === "humanas" && detalheHumanas ? { detalhe: detalheHumanas } : {}),
+    ...(e.chave === "identificadas" && detalheSemData ? { detalhe: detalheSemData } : {}),
     percentual: maior > 0 ? (e.valor / maior) * 100 : 0,
   }));
 }

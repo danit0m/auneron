@@ -217,6 +217,20 @@ class PaymentOutcome:
 
 @dataclass(frozen=True)
 class DerivedMetrics:
+    """Metricas derivadas do episodio.
+
+    days_detection_to_payment_registration: dias inteiros entre a
+    primeira deteccao/observacao e o REGISTRO do pagamento (evento
+    'pago' em account_events), NAO a data efetiva do pagamento
+    (account_payments.paid_on). Uma medida baseada na data efetiva
+    esta pendente de definicao propria (inclui pagamento anterior a
+    deteccao) e nao existe aqui.
+
+    days_detection_to_payment: alias de compatibilidade com o mesmo
+    valor; preservado para nao quebrar o contrato publico.
+    """
+
+    days_detection_to_payment_registration: int | None
     days_detection_to_payment: int | None
     provenance_class: str = "derived"
 
@@ -1044,11 +1058,19 @@ def _derive(
         detection.first_observed_at is None
         or payment.occurred_at is None
     ):
-        return DerivedMetrics(days_detection_to_payment=None)
+        return DerivedMetrics(
+            days_detection_to_payment_registration=None,
+            days_detection_to_payment=None,
+        )
 
+    # Mede ate o REGISTRO do pagamento (occurred_at do evento 'pago'),
+    # nao ate a data efetiva (account_payments.paid_on).
     delta = payment.occurred_at - detection.first_observed_at
 
-    return DerivedMetrics(days_detection_to_payment=delta.days)
+    return DerivedMetrics(
+        days_detection_to_payment_registration=delta.days,
+        days_detection_to_payment=delta.days,
+    )
 
 
 def get_outcome_episode(
