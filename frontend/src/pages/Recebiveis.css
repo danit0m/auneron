@@ -217,7 +217,35 @@
 }
 
 .recebiveis-table {
-  min-width: 56rem;
+  min-width: 70rem;
+}
+
+/* Palavras e datas nunca quebram no meio; a rolagem do wrapper cobre telas estreitas. */
+.recebiveis-table td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.recebiveis-table td:nth-child(4) {
+  min-width: 13rem;
+}
+
+.recebiveis-table td:nth-child(5) {
+  min-width: 12rem;
+}
+
+.recebiveis-table td:nth-child(6) {
+  min-width: 11rem;
+}
+
+.recebiveis-contato > span {
+  white-space: nowrap;
+}
+
+.recebiveis-acoes button,
+.recebiveis-pagamento button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .recebiveis-contato,
