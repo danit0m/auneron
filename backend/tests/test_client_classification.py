@@ -32,12 +32,16 @@ from app.core.client_classification import (
 from app.core.client_classification import (
     recalculate_all_client_classifications,
 )
+from app.core.client_classification import (
+    list_client_classification_recalculation_candidate_emails,
+)
 from app.models.account import Account
 from app.models.account_event import AccountEvent
 from app.models.memory import MemoryItem
 from app.services.memory_service import MemoryService
 from app.services.memory_service import RememberResult
 from app.services.memory_service import SupersedeResult
+from tests.payment_date_helpers import make_effective_payment
 
 
 def _unique_email() -> str:
@@ -70,7 +74,19 @@ def _make_paid_event(
     account: Account,
     occurred_at: datetime,
     previous_status: str = "atrasado",
+    with_effective_date: bool = True,
+    paid_on: date | None = None,
 ) -> AccountEvent:
+    # O evento e auditoria; a DATA OFICIAL e account_payments.paid_on.
+    # Por padrao paid_on = data (UTC) do evento, como nos cenarios
+    # originais; with_effective_date=False simula titulo antigo pago sem
+    # data efetiva registrada.
+    if with_effective_date:
+        make_effective_payment(
+            db,
+            account=account,
+            paid_on=paid_on or occurred_at.astimezone(timezone.utc).date(),
+        )
     event = AccountEvent(
         account_id=account.id,
         event_type="status_changed",
@@ -380,3 +396,170 @@ def test_recalculate_all_client_classifications_summary(
         db_session, memory_service
     )
     assert summary_again.candidates == 0
+
+
+def test_candidate_emails_include_classification_without_effective_date_marker(
+    db_session: Session,
+) -> None:
+    # Classificacao gravada ANTES da fonte oficial (sem o marcador) e
+    # recalculada uma vez, mesmo sem pagamento novo. Com o marcador, nao.
+    email = _unique_email()
+    account = _make_account(
+        db_session, email=email, vencimento=date(2026, 6, 1)
+    )
+    paid_event = _make_paid_event(
+        db_session,
+        account=account,
+        occurred_at=datetime(2026, 6, 3, tzinfo=timezone.utc),
+    )
+    db_session.commit()
+
+    memory = MemoryItem(
+        memory_type="decision",
+        title=f"Classificacao - {email}",
+        content="Classificacao antiga.",
+        scope_type="account",
+        account_id=account.id,
+        confidence=Decimal("0.670"),
+        status="active",
+        valid_from=paid_event.occurred_at + timedelta(minutes=1),
+        source_type="derived",
+        source_reference=f"client_classification:{email}",
+        memory_key="client_classification_v1",
+        context_data={"label": "PAGAMENTO_REGULAR"},
+    )
+    db_session.add(memory)
+    db_session.commit()
+
+    assert email in (
+        list_client_classification_recalculation_candidate_emails(
+            db_session
+        )
+    )
+
+    memory.context_data = {
+        "label": "PAGAMENTO_REGULAR",
+        "ocorrencias_sem_data_efetiva": 0,
+    }
+    db_session.commit()
+
+    assert email not in (
+        list_client_classification_recalculation_candidate_emails(
+            db_session
+        )
+    )
+
+
+def test_classification_uses_paid_on_not_registration_event_date(
+    db_session: Session,
+) -> None:
+    # Vencimento 10/11, pagou em 10/11 (pontual), registrado em 14/11.
+    # Pela data do evento seria atraso de 4 dias (ATRASO_RECORRENTE);
+    # pela data oficial (paid_on) e pontual (PAGAMENTO_REGULAR).
+    email = _unique_email()
+
+    for _ in range(3):
+        account = _make_account(
+            db_session,
+            email=email,
+            vencimento=date(2026, 11, 10),
+        )
+        _make_paid_event(
+            db_session,
+            account=account,
+            occurred_at=datetime(2026, 11, 14, 12, tzinfo=timezone.utc),
+            paid_on=date(2026, 11, 10),
+        )
+
+    db_session.commit()
+
+    result = compute_client_classification(db_session, email)
+
+    assert result is not None
+    assert result.label == LABEL_PAGAMENTO_REGULAR
+    assert result.ciclos_em_atraso == 0
+    assert result.ocorrencias_sem_data_efetiva == 0
+
+
+def test_classification_mixed_effective_and_legacy_paid(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+
+    # 3 titulos com data efetiva: 1 atrasado de 3 (33% < 50%).
+    for index, atraso in enumerate([5, 0, 0]):
+        _make_resolved_cycle(
+            db_session,
+            email=email,
+            vencimento=date(2026, 3, 1 + index),
+            atraso_dias=atraso,
+        )
+
+    # 2 titulos antigos pagos sem data efetiva, com evento tardio: pela
+    # data do evento seriam 2 atrasos (3 de 5 = 60% -> ATRASO). Devem
+    # ficar FORA da proporcao e ser apenas contados.
+    for index in range(2):
+        legacy = _make_account(
+            db_session,
+            email=email,
+            vencimento=date(2026, 1, 1 + index),
+        )
+        _make_paid_event(
+            db_session,
+            account=legacy,
+            occurred_at=datetime(2026, 3, 20, tzinfo=timezone.utc),
+            with_effective_date=False,
+        )
+
+    db_session.commit()
+
+    result = compute_client_classification(db_session, email)
+
+    assert result is not None
+    assert result.label == LABEL_PAGAMENTO_REGULAR
+    assert result.ocorrencias_resolvidas == 3
+    assert result.ciclos_em_atraso == 1
+    assert result.ocorrencias_sem_data_efetiva == 2
+    assert all(c.data_pagamento_origem == "efetiva" for c in result.cycles)
+
+    applied = apply_client_classification(
+        db_session, MemoryService(db_session), email
+    )
+    assert applied.memory.context_data["ocorrencias_sem_data_efetiva"] == 2
+
+
+def test_classification_only_legacy_paid_is_insufficient_and_counted(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+
+    for index in range(3):
+        legacy = _make_account(
+            db_session,
+            email=email,
+            vencimento=date(2026, 1, 1 + index),
+        )
+        _make_paid_event(
+            db_session,
+            account=legacy,
+            occurred_at=datetime(2026, 3, 20, tzinfo=timezone.utc),
+            with_effective_date=False,
+        )
+
+    db_session.commit()
+
+    result = compute_client_classification(db_session, email)
+
+    assert result is not None
+    assert result.label == LABEL_INSUFFICIENT_DATA
+    assert result.ocorrencias_resolvidas == 0
+    assert result.ocorrencias_sem_data_efetiva == 3
+    assert result.period_start is None
+    assert result.period_end is None
+    assert result.cycles == ()
+
+    applied = apply_client_classification(
+        db_session, MemoryService(db_session), email
+    )
+    assert applied.memory.context_data["ocorrencias_sem_data_efetiva"] == 3
+    assert applied.memory.context_data["period_start"] is None

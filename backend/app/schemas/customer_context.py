@@ -74,6 +74,7 @@ class ClientBehaviorPatternSummary(BaseModel):
     payment_rate: float
     confidence: float
     recorded_at: datetime
+    occurrences_without_effective_date: int | None = None
 
 
 class BehavioralIntelligence(BaseModel):

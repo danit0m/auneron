@@ -74,6 +74,9 @@ def get_account_customer_context(
                 settings.client_classification_atraso_threshold
             ),
             analysis_scope=context["analysis_scope"],
+            occurrences_without_effective_date=context.get(
+                "ocorrencias_sem_data_efetiva"
+            ),
             period_start=context.get("period_start"),
             period_end=context.get("period_end"),
         )

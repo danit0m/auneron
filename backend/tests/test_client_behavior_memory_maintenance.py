@@ -29,6 +29,7 @@ from app.models.memory import MemoryItem
 from app.services.memory_service import MemoryService
 from app.services.memory_service import RememberResult
 from app.services.memory_service import SupersedeResult
+from tests.payment_date_helpers import make_effective_payment
 
 
 def _unique_email() -> str:
@@ -61,7 +62,19 @@ def _make_paid_event(
     account: Account,
     occurred_at: datetime,
     previous_status: str = "atrasado",
+    with_effective_date: bool = True,
+    paid_on: date | None = None,
 ) -> AccountEvent:
+    # O evento e auditoria; a DATA OFICIAL e account_payments.paid_on.
+    # Por padrao paid_on = data (UTC) do evento, como nos cenarios
+    # originais; with_effective_date=False simula titulo antigo pago sem
+    # data efetiva registrada.
+    if with_effective_date:
+        make_effective_payment(
+            db,
+            account=account,
+            paid_on=paid_on or occurred_at.astimezone(timezone.utc).date(),
+        )
     event = AccountEvent(
         account_id=account.id,
         event_type="status_changed",
@@ -163,7 +176,7 @@ def test_compute_returns_correct_pattern_for_three_resolved_cycles(
     assert len(result.cycles) == 3
 
 
-def test_compute_uses_latest_pago_event_when_multiple(
+def test_compute_ignores_extra_pago_events_and_uses_paid_on(
     db_session: Session,
 ) -> None:
     email = _unique_email()
@@ -189,8 +202,9 @@ def test_compute_uses_latest_pago_event_when_multiple(
             ) + timedelta(days=2),
         )
 
-    # Correcao manual no primeiro: um segundo evento 'pago' mais recente,
-    # com atraso diferente -- o calculo deve usar este, nao o primeiro.
+    # Antes: o evento 'pago' mais recente vencia. Agora a data oficial e
+    # account_payments.paid_on (unica por titulo); um evento 'pago'
+    # extra, so de auditoria, NAO altera o atraso calculado.
     corrected_account, corrected_vencimento = accounts[0]
     _make_paid_event(
         db_session,
@@ -202,6 +216,7 @@ def test_compute_uses_latest_pago_event_when_multiple(
             tzinfo=timezone.utc,
         ) + timedelta(days=9),
         previous_status="pago",
+        with_effective_date=False,
     )
 
     db_session.commit()
@@ -219,7 +234,8 @@ def test_compute_uses_latest_pago_event_when_multiple(
         if cycle.account_id == corrected_account.id
     )
 
-    assert corrected_cycle.atraso_dias == 9
+    assert corrected_cycle.atraso_dias == 2
+    assert corrected_cycle.data_pagamento_origem == "efetiva"
 
 
 def test_compute_excludes_unresolved_cycles_from_occurrences(
@@ -326,6 +342,8 @@ def test_list_candidate_emails_excludes_email_already_up_to_date(
         + timedelta(minutes=1),
         source_type="derived",
         source_reference=f"client_behavior:{email}",
+        # Memoria ja gravada com a fonte oficial de data (marcador).
+        context_data={"ocorrencias_sem_data_efetiva": 0},
     )
     db_session.add(memory)
     db_session.commit()
@@ -335,6 +353,152 @@ def test_list_candidate_emails_excludes_email_already_up_to_date(
     )
 
     assert email not in candidates
+
+
+def test_list_candidate_emails_excludes_memory_without_effective_date_marker(
+    db_session: Session,
+) -> None:
+    # Memoria de comportamento gravada ANTES da fonte oficial (sem o
+    # marcador) NAO vira candidata so por isso: e recalculada no proximo
+    # pagamento do cliente (a memoria de comportamento pode nao gravar
+    # nada abaixo do minimo, entao o marcador causaria loop).
+    email = _unique_email()
+    account = _make_account(
+        db_session,
+        email=email,
+        vencimento=date(2026, 6, 1),
+        status="pago",
+    )
+    paid_event = _make_paid_event(
+        db_session,
+        account=account,
+        occurred_at=datetime(2026, 6, 3, tzinfo=timezone.utc),
+    )
+    db_session.commit()
+
+    db_session.add(
+        MemoryItem(
+            memory_type="observation",
+            title=f"Padrao de pagamento - {email}",
+            content="Atraso medio: 2 dias.",
+            scope_type="account",
+            account_id=account.id,
+            confidence=Decimal("0.670"),
+            status="active",
+            valid_from=paid_event.occurred_at + timedelta(minutes=1),
+            source_type="derived",
+            source_reference=f"client_behavior:{email}",
+            memory_key="client_behavior_payment_pattern",
+            context_data={"atraso_medio_dias": 2},
+        )
+    )
+    db_session.commit()
+
+    candidates = list_client_behavior_recalculation_candidate_emails(
+        db_session,
+    )
+
+    assert email not in candidates
+
+
+def test_compute_uses_paid_on_not_registration_event_date(
+    db_session: Session,
+) -> None:
+    # Pagou em 10/11, registrado (evento) em 14/11: o atraso usa 10/11;
+    # o evento mantem 14/11 para auditoria.
+    email = _unique_email()
+
+    for index in range(3):
+        vencimento = date(2026, 11, 5 + index)
+        account = _make_account(
+            db_session,
+            email=email,
+            vencimento=vencimento,
+            status="pago",
+        )
+        _make_paid_event(
+            db_session,
+            account=account,
+            occurred_at=datetime(2026, 11, 14, 12, tzinfo=timezone.utc),
+            paid_on=date(2026, 11, 10),
+        )
+
+    db_session.commit()
+
+    result = compute_client_behavior_pattern(db_session, email)
+
+    assert result is not None
+    assert sorted(c.atraso_dias for c in result.cycles) == [3, 4, 5]
+    assert {c.resolved_at for c in result.cycles} == {date(2026, 11, 10)}
+    assert result.atraso_medio_dias == 4.0
+    assert result.ocorrencias_sem_data_efetiva == 0
+
+    events = (
+        db_session.query(AccountEvent)
+        .filter(AccountEvent.new_status == "pago")
+        .filter(
+            AccountEvent.account_id.in_(
+                [c.account_id for c in result.cycles]
+            )
+        )
+        .all()
+    )
+    assert {e.occurred_at.date() for e in events} == {date(2026, 11, 14)}
+
+
+def test_compute_counts_paid_without_effective_date_outside_averages(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+
+    for index in range(3):
+        vencimento = date(2026, 2, 1 + index)
+        account = _make_account(
+            db_session,
+            email=email,
+            vencimento=vencimento,
+            status="pago",
+        )
+        _make_paid_event(
+            db_session,
+            account=account,
+            occurred_at=datetime(
+                2026, 2, 1 + index, tzinfo=timezone.utc
+            ) + timedelta(days=2),
+        )
+
+    # Titulo antigo: evento 'pago' sem account_payments. Se a data do
+    # evento fosse usada, o atraso maximo seria 40, nao 2.
+    legacy = _make_account(
+        db_session,
+        email=email,
+        vencimento=date(2026, 1, 1),
+        status="pago",
+    )
+    _make_paid_event(
+        db_session,
+        account=legacy,
+        occurred_at=datetime(2026, 2, 10, tzinfo=timezone.utc),
+        with_effective_date=False,
+    )
+    db_session.commit()
+
+    result = compute_client_behavior_pattern(db_session, email)
+
+    assert result is not None
+    assert result.ocorrencias_resolvidas == 3
+    assert result.ocorrencias_sem_data_efetiva == 1
+    assert result.atraso_max_dias == 2
+    assert result.atraso_medio_dias == 2.0
+    assert legacy.id not in {c.account_id for c in result.cycles}
+    # titulo pago sem data continua contando como pago na taxa
+    assert result.taxa_pagamento == 1.0
+
+    context = apply_client_behavior_memory_pattern(
+        db_session, MemoryService(db_session), email
+    ).memory.context_data
+    assert context["ocorrencias_sem_data_efetiva"] == 1
+    assert context["fonte_data_pagamento"] == "account_payments.paid_on"
 
 
 def _make_paid_cycles(
