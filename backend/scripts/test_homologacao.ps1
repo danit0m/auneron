@@ -407,7 +407,7 @@ sys.exit(5)
     Verificar '-Sql recusado como parametro desconhecido' ($r.Codigo -ne 0 -and $r.Saida -match 'Sql')
 
     $padraoEscrita = '(?i)\b(insert|update|delete|drop|alter|create|truncate|grant)\b'
-    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo), @('sistema', $script:SqlConsultaSistema), @('deteccao', $script:SqlConsultaDeteccao), @('shadow', $script:SqlConsultaShadow))) {
+    foreach ($par in @(@('pagamento', $script:SqlConsultaPagamento), @('catalogo', $script:SqlConsultaCatalogo), @('sistema', $script:SqlConsultaSistema), @('deteccao', $script:SqlConsultaDeteccao), @('shadow', $script:SqlConsultaShadow), @('memorias', $script:SqlConsultaMemorias))) {
         $nomeSql = [string]$par[0]
         $txtSql = [string]$par[1]
         $linhasSql = @($txtSql -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
@@ -438,7 +438,7 @@ sys.exit(5)
     Verificar 'parametros: apenas os existentes mais -Relatorio, -Conta, -Email, -PermitirUltimoAdmin e -ArquivoSenha' ($extras.Count -eq 0 -and $faltam.Count -eq 0) (($extras + $faltam) -join ',')
     $pRel = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Relatorio' })[0]
     $vsRel = @($pRel.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
-    Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema, deteccao, shadow)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema,deteccao,shadow') ($vsRel -join ',')
+    Verificar '-Relatorio: ValidateSet(pagamento, catalogo, sistema, deteccao, shadow, memorias)' (($vsRel -join ',') -eq 'pagamento,catalogo,sistema,deteccao,shadow,memorias') ($vsRel -join ',')
     $pCon = @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Conta' })[0]
     $vrCon = @($pCon.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateRange' } | ForEach-Object { $_.PositionalArguments | ForEach-Object { [string]$_.Value } })
     Verificar '-Conta: [int] com ValidateRange(1, 2147483647)' ((($vrCon -join ',') -eq '1,2147483647') -and ($pCon.StaticType.Name -eq 'Int32')) ($vrCon -join ',')
@@ -792,6 +792,55 @@ sys.exit(5)
     Verificar 'nao existe parametro -Modo no script' ($nomesParam -notcontains 'Modo')
     $pyBind = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'create_overdue_detection_binding.py'))
     Verificar 'create_overdue_detection_binding.py: banco esperado fixo, nunca apaga binding, sem print de senha/hash' ($pyBind.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyBind -notmatch '(?i)\.delete\(' -and $pyBind -notmatch '(?i)\bDELETE\b\s+FROM' -and $pyBind -notmatch 'print\([^)]*(password|hash)')
+    Write-Host '== consultar memorias / recompor-memorias-pagamento =='
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'memorias', '-Conta', '5', '-Simular') + $comuns)
+    Verificar 'memorias com -Conta: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'Conta') $r.Saida
+    $r = Rodar-Script (@('consultar', '-Relatorio', 'memorias', '-Simular') + $comuns)
+    $saidas['consultar-memorias-simular'] = $r.Saida
+    Verificar 'consultar memorias -Simular: exit 0, BEGIN READ ONLY, ROLLBACK, tabelas e marcador' ($r.Codigo -eq 0 -and $r.Saida -match 'BEGIN READ ONLY' -and $r.Saida -match 'ROLLBACK' -and $r.Saida.Contains('memory_items') -and $r.Saida.Contains('ocorrencias_sem_data_efetiva') -and $r.Saida.Contains('client_behavior_payment_pattern')) $r.Saida
+    $sqlMem = $script:SqlConsultaMemorias
+    Verificar 'SQL memorias: nao usa variaveis do psql' ($sqlMem -notmatch '(?<!:):[A-Za-z_]')
+    Verificar 'SQL memorias: so le memory_items e accounts' ((@([regex]::Matches($sqlMem, '(?im)\b(?:FROM|JOIN)\s+(\w+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique) -join ',') -eq 'accounts,memory_items')
+    Verificar 'SQL memorias: e-mail so mascarado (nunca selecionado inteiro) e sem nome/conteudo' ($sqlMem.Contains("concat(left(x.email, 3), '***@'") -and $sqlMem -notmatch '(?i)a\.cliente|\.content|\.title|whatsapp|password' -and $sqlMem -notmatch '(?im)^SELECT\s+(a|x)\.email\b' -and $sqlMem -match '(?im)^LIMIT 100;$')
+
+    $pastaRec = Join-Path $tmp 'checkout-recompor'
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaRec 'backend\scripts'))
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $pastaRec 'frontend'))
+    Set-Content -LiteralPath (Join-Path $pastaRec 'backend\alembic.ini') -Value '' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $pastaRec 'frontend\package.json') -Value '{}' -Encoding ASCII
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Simular', '-SemSondagem') + $comuns)
+    Verificar 'recompor: aceito no ValidateSet (recusa por falta de -Pasta)' ($r.Codigo -ne 0 -and $r.Saida -match 'Pasta' -and $r.Saida -notmatch 'ValidateSet') $r.Saida
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pastaRec) + $comuns)
+    Verificar 'recompor sem o .py no checkout: recusa' ($r.Codigo -ne 0 -and $r.Saida -match 'recompose_payment_memories') $r.Saida
+    Set-Content -LiteralPath (Join-Path $pastaRec 'backend\scripts\recompose_payment_memories.py') -Value '' -Encoding ASCII
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pastaRec) + $comuns)
+    $saidas['recompor-simular'] = $r.Saida
+    Verificar 'recompor -Simular: exit 0, modulo fixo em modo simular, nada gravado, saida capturavel' ($r.Codigo -eq 0 -and $r.Saida -match 'SIMULACAO' -and $r.Saida.Contains('-m scripts.recompose_payment_memories simular') -and $r.Saida -match 'invalidated' -and $r.Saida.Contains('auneron_neon_synthetic')) $r.Saida
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pastaRec, '-Modulo', 'os') + $comuns)
+    Verificar 'recompor: nenhum parametro escolhe o modulo' ($r.Codigo -ne 0 -and $r.Saida -match 'Modulo')
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Simular', '-SemSondagem', '-Pasta', $pastaRec, '-Executavel', 'x.exe') + $comuns)
+    Verificar 'recompor: nenhum parametro escolhe o executavel' ($r.Codigo -ne 0 -and $r.Saida -match 'Executavel')
+    # Execucao real com "script" FALSO: confere o modo literal repassado e o exit code (nenhum banco envolvido).
+    $falsoRec = @'
+import sys
+print("modo=" + ",".join(sys.argv[1:]))
+sys.exit(4)
+'@
+    Set-Content -LiteralPath (Join-Path $pastaRec 'backend\scripts\recompose_payment_memories.py') -Value $falsoRec -Encoding ASCII
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Pasta', $pastaRec) + $comuns)
+    $saidas['recompor-sem-confirmar'] = $r.Saida
+    Verificar 'recompor sem -Confirmar: roda em modo simular (literal) e repassa o exit code (4)' ($r.Codigo -eq 4 -and $r.Saida.Contains('modo=simular') -and $r.Saida -notmatch 'modo=confirmar') ('codigo=' + $r.Codigo + ' ' + $r.Saida)
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Pasta', $pastaRec, '-Confirmar') + $comuns)
+    $saidas['recompor-confirmar'] = $r.Saida
+    Verificar 'recompor -Confirmar: roda em modo confirmar (literal) e repassa o exit code (4)' ($r.Codigo -eq 4 -and $r.Saida.Contains('modo=confirmar')) ('codigo=' + $r.Codigo + ' ' + $r.Saida)
+    $r = Rodar-Script (@('recompor-memorias-pagamento', '-Pasta', $pastaRec, '-Confirmar', '-Simular') + $comuns)
+    Verificar 'recompor -Confirmar -Simular: nao executa o script' ($r.Codigo -eq 0 -and $r.Saida -notmatch 'modo=')
+    Set-Content -LiteralPath (Join-Path $pastaRec 'backend\scripts\recompose_payment_memories.py') -Value '' -Encoding ASCII
+    $mRec = [regex]::Match($codigo, '(?s)function Cmd-RecomporMemoriasPagamento \{.*?\r?\n\}\r?\n')
+    Verificar 'recompor: modulo literal fixo, modo literal, ambiente do backend' ($mRec.Success -and $mRec.Value.Contains("'backend\scripts\recompose_payment_memories.py'") -and $mRec.Value.Contains("@('-m', 'scripts.recompose_payment_memories', `$modoPy)") -and $mRec.Value.Contains("Montar-Ambiente 'backend'") -and $mRec.Value.Contains("'simular'") -and $mRec.Value.Contains("'confirmar'"))
+    $pyRec = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'recompose_payment_memories.py'))
+    Verificar 'recompose_payment_memories.py: banco esperado fixo, encerra por invalidate (sem DELETE), e-mail mascarado' ($pyRec.Contains('EXPECTED_DATABASE = "auneron_neon_synthetic"') -and $pyRec.Contains('service.invalidate(') -and $pyRec -notmatch '(?i)\.delete\(' -and $pyRec -notmatch '(?i)\bDELETE\b\s+FROM' -and $pyRec.Contains('mask_email(email)'))
+    Verificar 'ValidateSet de -Comando contem recompor-memorias-pagamento' ($vsCmd -contains 'recompor-memorias-pagamento') ($vsCmd -join ',')
     Verificar 'script e ASCII puro' (-not ($codigo.ToCharArray() | Where-Object { [int]$_ -gt 127 }))
 }
 finally {
