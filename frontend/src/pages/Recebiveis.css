@@ -210,6 +210,24 @@
   white-space: nowrap;
 }
 
+/* Cliente: largura mínima legível em qualquer tela; quebra só por palavra. */
+.recebiveis-table td:nth-child(1) {
+  min-width: 11rem;
+  overflow-wrap: break-word;
+}
+
+.recebiveis-table {
+  min-width: 56rem;
+}
+
+.recebiveis-contato,
+.recebiveis-acoes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+}
+
 .recebiveis-table td:nth-child(2),
 .recebiveis-table td:nth-child(3) {
   overflow-wrap: normal;
@@ -243,15 +261,6 @@
  * letra, e o selo de situação não encolhe.
  */
 @media (max-width: 900px) {
-  .recebiveis-table {
-    min-width: 52rem;
-  }
-
-  .recebiveis-table td:nth-child(1) {
-    min-width: 11rem;
-    overflow-wrap: break-word;
-  }
-
   .recebiveis-table td:nth-child(3) {
     min-width: 10rem;
   }
