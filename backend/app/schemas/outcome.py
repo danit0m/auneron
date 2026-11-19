@@ -165,6 +165,10 @@ class PaymentOutcome(BaseModel):
 class DerivedMetrics(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    # Tempo ate o REGISTRO do pagamento (evento 'pago'), nao ate a data
+    # efetiva (account_payments.paid_on).
+    days_detection_to_payment_registration: int | None
+    # Alias de compatibilidade (mesmo valor).
     days_detection_to_payment: int | None
     provenance_class: Literal["derived"] = "derived"
 

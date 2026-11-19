@@ -819,3 +819,31 @@ def test_get_outcome_episode_writes_nothing(db_session) -> None:
         "get_outcome_episode escreveu no banco -- deveria ser "
         "estritamente read-only"
     )
+
+
+def test_derived_detection_to_payment_registration_keeps_value() -> None:
+    """A medida preserva o calculo anterior (dias inteiros ate o
+    REGISTRO do pagamento, occurred_at do evento 'pago'); o nome
+    explicito e o alias de compatibilidade trazem o mesmo valor."""
+
+    from types import SimpleNamespace
+
+    from app.core.outcome_correlation import _derive
+
+    detected = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+    registered = detected + timedelta(days=3, hours=23)
+
+    derived = _derive(
+        SimpleNamespace(first_observed_at=detected),
+        SimpleNamespace(occurred_at=registered),
+    )
+
+    assert derived.days_detection_to_payment_registration == 3
+    assert derived.days_detection_to_payment == 3
+
+    empty = _derive(
+        SimpleNamespace(first_observed_at=None),
+        SimpleNamespace(occurred_at=registered),
+    )
+    assert empty.days_detection_to_payment_registration is None
+    assert empty.days_detection_to_payment is None

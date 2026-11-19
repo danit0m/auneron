@@ -63,6 +63,8 @@ export interface AutonomousEffectVerificationSummary {
 export interface GovernedOperationsSummary {
   period: GovernedOperationsSummaryPeriod;
   eligible_accounts_identified: number;
+  /** Pagas sem data efetiva (account_payments): fora de elegíveis e não elegíveis. */
+  eligible_accounts_unknown_payment_date?: number;
   autonomous_dispositions: number;
   human_governed_dispositions: number;
   manual_human_dispositions: number;

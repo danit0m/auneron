@@ -6,12 +6,13 @@ governados de account.mark_overdue (humano e policy-autonomo, DW-7) --
 nao cria nenhuma autoridade, execucao ou tabela nova.
 
 KPI-1 (eligible_accounts_identified): contas cujo vencimento cai no
-periodo E que nao estavam pagas ate o fim do dia de vencimento na
-timezone de negocio (settings.business_timezone, o mesmo valor usado
-por app.core.receivable_lifecycle.business_today() -- nao introduz uma
-segunda definicao de "hoje"). Account.status nao participa desta
-contagem: uma conta paga depois do vencimento continua contando (ver
-VALUE-1.2B, achado real com a Account 2). Conhecido: usa
+periodo E que nao estavam pagas ate o vencimento. A data de pagamento
+e a data efetiva account_payments.paid_on (decisao de Daniel); o evento
+'pago' em account_events fica para rastreabilidade e so indica que o
+titulo foi pago. Conta paga sem registro em account_payments tem data
+DESCONHECIDA: nao entra como elegivel nem como nao elegivel e e contada
+a parte em eligible_accounts_unknown_payment_date. Account.status so
+participa para reconhecer "pago" sem data. Conhecido: usa
 Account.vencimento corrente; se vencimento for alterado apos o
 episodio, KPI-1 historico de periodos passados pode exigir
 reconstrucao via account_vencimento_changes (nao implementada nesta
@@ -51,16 +52,14 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
-from sqlalchemy import Date
-from sqlalchemy import cast
 from sqlalchemy import func
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.receivable_lifecycle import business_today
 from app.models.account import Account
 from app.models.account_event import AccountEvent
+from app.models.account_payment import AccountPayment
 from app.models.business_effect_verification import (
     BusinessEffectVerification,
 )
@@ -93,6 +92,7 @@ class GovernedOperationsSummaryResult:
     period_end: datetime
     period_days: int
     eligible_accounts_identified: int
+    eligible_accounts_unknown_payment_date: int
     autonomous_dispositions: int
     human_governed_dispositions: int
     manual_human_dispositions: int
@@ -125,7 +125,10 @@ class GovernedOperationsSummaryService:
         vencimento_end = today
         vencimento_start = today - timedelta(days=period_days)
 
-        eligible_accounts_identified = self._compute_kpi1(
+        (
+            eligible_accounts_identified,
+            eligible_accounts_unknown_payment_date,
+        ) = self._compute_kpi1(
             vencimento_start=vencimento_start,
             vencimento_end=vencimento_end,
         )
@@ -184,6 +187,9 @@ class GovernedOperationsSummaryService:
             period_end=period_end,
             period_days=period_days,
             eligible_accounts_identified=eligible_accounts_identified,
+            eligible_accounts_unknown_payment_date=(
+                eligible_accounts_unknown_payment_date
+            ),
             autonomous_dispositions=autonomous,
             human_governed_dispositions=human,
             manual_human_dispositions=manual_human,
@@ -202,47 +208,75 @@ class GovernedOperationsSummaryService:
         *,
         vencimento_start: date,
         vencimento_end: date,
-    ) -> int:
-        first_payment = (
-            self.db.query(
-                AccountEvent.account_id.label("account_id"),
-                func.min(AccountEvent.occurred_at).label(
-                    "first_paid_at"
-                ),
+    ) -> tuple[int, int]:
+        eligible, unknown = self.kpi1_account_ids(
+            vencimento_start=vencimento_start,
+            vencimento_end=vencimento_end,
+        )
+
+        return len(eligible), len(unknown)
+
+    def kpi1_account_ids(
+        self,
+        *,
+        vencimento_start: date,
+        vencimento_end: date,
+    ) -> tuple[set[int], set[int]]:
+        """Classifica as contas com vencimento no periodo.
+
+        Fonte da data de pagamento: account_payments.paid_on (data
+        efetiva). O evento 'pago' (account_events) nao define a data;
+        serve apenas para reconhecer que o titulo foi pago.
+
+        - elegivel: nao paga, ou paid_on posterior ao vencimento.
+        - desconhecida: paga (evento 'pago' ou status 'pago') sem
+          registro em account_payments; fica fora das duas contagens
+          principais.
+        """
+
+        paid_event_exists = (
+            self.db.query(AccountEvent.id)
+            .filter(
+                AccountEvent.account_id == Account.id,
+                AccountEvent.new_status == "pago",
             )
-            .filter(AccountEvent.new_status == "pago")
-            .group_by(AccountEvent.account_id)
-            .subquery()
+            .exists()
         )
 
-        first_paid_business_date = cast(
-            func.timezone(
-                settings.business_timezone,
-                first_payment.c.first_paid_at,
-            ),
-            Date,
-        )
-
-        count = (
-            self.db.query(func.count(Account.id))
+        rows = (
+            self.db.query(
+                Account.id.label("id"),
+                Account.vencimento.label("vencimento"),
+                AccountPayment.paid_on.label("paid_on"),
+                or_(
+                    paid_event_exists,
+                    Account.status == "pago",
+                ).label("is_paid"),
+            )
             .outerjoin(
-                first_payment,
-                first_payment.c.account_id == Account.id,
+                AccountPayment,
+                AccountPayment.account_id == Account.id,
             )
             .filter(
                 Account.vencimento >= vencimento_start,
                 Account.vencimento < vencimento_end,
             )
-            .filter(
-                or_(
-                    first_payment.c.first_paid_at.is_(None),
-                    first_paid_business_date > Account.vencimento,
-                )
-            )
-            .scalar()
+            .all()
         )
 
-        return count or 0
+        eligible: set[int] = set()
+        unknown: set[int] = set()
+
+        for row in rows:
+            if row.paid_on is not None:
+                if row.paid_on > row.vencimento:
+                    eligible.add(row.id)
+            elif row.is_paid:
+                unknown.add(row.id)
+            else:
+                eligible.add(row.id)
+
+        return eligible, unknown
 
     def _compute_kpi2_kpi3(
         self,

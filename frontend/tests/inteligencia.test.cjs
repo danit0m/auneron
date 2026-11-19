@@ -21,6 +21,7 @@ const lib = load('lib/inteligencia.ts', (id) => {
 const {
   montarFunil,
   descreverOrigemHumana,
+  descreverSemDataPagamento,
   calcularTaxaAcerto,
   calcularMetricas,
   formatarDuracao,
@@ -66,6 +67,14 @@ test('origem humana: sem campos não inventa divisão', () => {
   assert.equal(descreverOrigemHumana({ manual_human_dispositions: 2 }), null);
   assert.equal(descreverOrigemHumana(null), null);
   assert.equal(montarFunil(resumo()).find((e) => e.chave === 'humanas').detalhe, undefined);
+});
+
+test('sem data de pagamento: detalhe discreto só quando maior que zero', () => {
+  const f = montarFunil(resumo({ eligible_accounts_unknown_payment_date: 3 }));
+  assert.equal(f.find((e) => e.chave === 'identificadas').detalhe, '3 sem data de pagamento');
+  assert.equal(f.find((e) => e.chave === 'identificadas').valor, 10);
+  assert.equal(descreverSemDataPagamento(resumo({ eligible_accounts_unknown_payment_date: 0 })), null);
+  assert.equal(descreverSemDataPagamento({}), null);
 });
 
 test('funil: vazio e nulo', () => {
