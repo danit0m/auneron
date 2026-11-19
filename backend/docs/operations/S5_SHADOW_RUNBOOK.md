@@ -20,6 +20,11 @@ nunca decide nada. Dados reais e `APP_ENV=production` sao recusados pelo codigo.
 Todos os comandos: `backend\scripts\homologacao.ps1 <comando> -Pasta <checkout>`. O cofre
 (DATABASE_URL, API_KEY) ja deve estar configurado pelo diretor.
 
+**Guardar a saida como evidencia**: a saida do script vai para o pipeline de sucesso, entao
+`homologacao.ps1 consultar -Relatorio shadow -Pasta <checkout> | Out-File <pasta-nova>\antes.txt -Encoding utf8`
+(ou `> arquivo`, ou `$s = homologacao.ps1 ...`) captura tudo. Erros (`ERRO: ...`) vao para o
+stderr; para te-los no arquivo use `2>&1`. O codigo de saida fica em `$LASTEXITCODE`.
+
 ## O que garante "uma chamada"
 
 O preco local e zero, entao o limite de dinheiro (`limit_micro = 1`, o minimo aceito) nao

@@ -48,11 +48,19 @@
       deteccao roda sozinha no backend (~60 s) e, sem -Shadow, criaria o pedido sem o shadow observar.
       Codigos: 0 ok/ja provisionada, 3 existente divergente, 4 banco errado, 9 backend no ar.
 
-    redefinir-senha -Email <email> [-PermitirUltimoAdmin]: recuperacao manual de senha. Executa o modulo fixo
-      scripts.reset_user_password (backend\scripts\reset_user_password.py): gera senha TEMPORARIA forte,
-      grava o hash, exige troca no primeiro acesso, vence em 30 min e REVOGA todas as sessoes do usuario na
-      mesma transacao. A senha temporaria aparece UMA vez, na saida deste comando (nao e gravada em log nem no
-      cofre). Recusa usuario inexistente (3), banco diferente de auneron_neon_synthetic (4), conta role=system
+    CAPTURA DE SAIDA. Toda a saida normal vai para o pipeline de sucesso (Write-Output), entao
+      `.\homologacao.ps1 status | Out-File evidencia.txt -Encoding utf8`, `.\homologacao.ps1 status > evidencia.txt`
+      e `$s = .\homologacao.ps1 status` capturam tudo (nenhum `*>` ou `6>&1` e necessario). Mensagens de erro
+      ("ERRO: ...") continuam em stderr, visiveis no console e fora do arquivo; para inclui-las use `2>&1`.
+      O codigo de saida continua em $LASTEXITCODE.
+
+    redefinir-senha -Email <email> -ArquivoSenha <arquivo novo> [-PermitirUltimoAdmin]: recuperacao manual de
+      senha. Executa o modulo fixo scripts.reset_user_password (backend\scripts\reset_user_password.py): gera
+      senha TEMPORARIA forte, grava o hash, exige troca no primeiro acesso, vence em 30 min e REVOGA todas as
+      sessoes do usuario na mesma transacao. A senha temporaria NUNCA vai para o console nem para a saida
+      capturavel: e gravada SOMENTE em -ArquivoSenha (com -Confirmar e obrigatorio; recusa se o arquivo ja
+      existir ou se a pasta dele nao existir; permissoes restritas ao usuario atual). Entregue o arquivo ao
+      usuario por canal seguro e apague-o. Recusa usuario inexistente (3), banco diferente de auneron_neon_synthetic (4), conta role=system
       (5) e o UNICO administrador ativo sem -PermitirUltimoAdmin (6). Sem -Confirmar (ou com -Simular) apenas
       mostra o que faria. Exige -Pasta e -Email. O backend pode estar no ar.
       Codigos: 0 ok, 2 uso/e-mail invalido, 3 inexistente, 4 banco errado, 5 system, 6 ultimo admin.
@@ -97,8 +105,8 @@
       .\homologacao.ps1 provisionar-orcamento-shadow -Pasta C:\auneron -Confirmar
       .\homologacao.ps1 provisionar-conta-vencida-sintetica -Pasta C:\auneron -Confirmar
       .\homologacao.ps1 consultar -Relatorio shadow   (somente leitura)
-      .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -Simular
-      .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -Confirmar
+      .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -ArquivoSenha C:\protegido\senha.txt -Simular
+      .\homologacao.ps1 redefinir-senha -Pasta C:\auneron -Email pessoa@empresa.com -ArquivoSenha C:\protegido\senha.txt -Confirmar
       .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Simular
       .\homologacao.ps1 subir-backend -Pasta C:\auneron -Shadow -DigestModelo <64 hex> -OrcamentoShadow <id> -Confirmar
       .\homologacao.ps1 parar-backend -Confirmar
@@ -149,6 +157,8 @@ param(
     [Parameter(ParameterSetName = 'Normal')][string]$Email,
     # Permite redefinir o UNICO administrador ativo (somente redefinir-senha).
     [Parameter(ParameterSetName = 'Normal')][switch]$PermitirUltimoAdmin,
+    # Arquivo NOVO onde o filho grava a senha temporaria (somente redefinir-senha; obrigatorio ali).
+    [Parameter(ParameterSetName = 'Normal')][string]$ArquivoSenha,
     [Parameter(ParameterSetName = 'Normal')][switch]$Confirmar,
     [Parameter(ParameterSetName = 'Normal')][switch]$Simular,
     # Nao consulta portas/HTTP (so com status ou -Simular; usado no autoteste).
@@ -226,7 +236,7 @@ $script:Ctx = @{
     Simular = $false; Confirmar = $false; SemSondagem = $false
     Relatorio = ''; Conta = 0
     Shadow = $false; DigestModelo = ''; OrcamentoShadow = 0
-    Email = ''; PermitirUltimoAdmin = $false
+    Email = ''; PermitirUltimoAdmin = $false; ArquivoSenha = ''
 }
 $script:Conhecidos = New-Object System.Collections.ArrayList
 
@@ -406,7 +416,9 @@ function Falhar {
 
 function Info {
     param([string]$Texto)
-    Write-Host $Texto
+    # Saida normal vai para o pipeline de sucesso (capturavel por `| Out-File`, `> arq`, `$x = ...`).
+    # Por isso funcoes que RETORNAM dados nao podem chamar Info (a mensagem poluiria o retorno).
+    Write-Output $Texto
 }
 
 function Registrar-Segredo {
@@ -925,7 +937,7 @@ function Mostrar-Pendentes {
     }
     if ($atual.Count -eq 1 -and $atual[0] -eq $heads[0]) {
         Info 'Nenhuma migracao pendente.'
-        return 0
+        return
     }
     $inicio = 'base'
     if ($atual.Count -eq 1) { $inicio = $atual[0] }
@@ -933,7 +945,6 @@ function Mostrar-Pendentes {
     $linhas = @($hist -split "`r?`n" | Where-Object { $_ -match '->' })
     Info 'Revisoes no caminho ate o head (a primeira e a atual, se houver):'
     foreach ($l in $linhas) { Info ('  ' + $l) }
-    return $linhas.Count
 }
 
 # ---------------------------------------------------------------------------
@@ -1678,7 +1689,7 @@ function Cmd-VersaoBanco {
 
 function Cmd-Pendentes {
     $raiz = Resolver-Pasta
-    [void](Mostrar-Pendentes $raiz)
+    Mostrar-Pendentes $raiz
 }
 
 function Cmd-Backup {
@@ -1764,7 +1775,7 @@ function Cmd-Migrar {
         return
     }
     Info 'Pendentes antes de migrar:'
-    [void](Mostrar-Pendentes $raiz)
+    Mostrar-Pendentes $raiz
     Info 'Aplicando: alembic upgrade head ...'
     $saida = Rodar-Alembic $raiz @('upgrade', 'head')
     $linhas = @($saida -split "`r?`n" | Where-Object { $_ -match 'Running upgrade' })
@@ -2027,7 +2038,7 @@ function Cmd-ProvisionarContaVencidaSintetica {
 function Cmd-RedefinirSenha {
     # Recuperacao manual de senha. Modulo e arquivo sao literais fixos; o e-mail e validado por regex
     # (nunca comeca com '-') e vai como argumento. Nenhum segredo do cofre vai por argumento; o filho
-    # recebe o ambiente do backend. A senha temporaria sai UMA vez na saida do filho.
+    # recebe o ambiente do backend. A senha temporaria e gravada pelo filho SO em -ArquivoSenha (nunca na saida).
     $email = ([string]$script:Ctx.Email).Trim()
     if (-not $email) { Falhar 'redefinir-senha exige -Email <e-mail do usuario>.' }
     if ($email -notmatch '^[A-Za-z0-9._%+][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' -or $email.Length -gt 254) {
@@ -2039,8 +2050,25 @@ function Cmd-RedefinirSenha {
     if (-not (Test-Path -LiteralPath $arqPy -PathType Leaf)) {
         Falhar 'Nao existe backend\scripts\reset_user_password.py no checkout informado.'
     }
+    # A senha temporaria vai SO para este arquivo (nunca para console/saida capturavel).
+    $arqSenha = ([string]$script:Ctx.ArquivoSenha).Trim()
+    if (-not $arqSenha) {
+        $script:Codigo = 2
+        Falhar 'redefinir-senha exige -ArquivoSenha <caminho de um arquivo NOVO> (a senha temporaria e gravada so ali).'
+    }
+    try { $arqSenha = [IO.Path]::GetFullPath($arqSenha) }
+    catch { $script:Codigo = 2; Falhar '-ArquivoSenha invalido.' }
+    if (Test-Path -LiteralPath $arqSenha) {
+        $script:Codigo = 2
+        Falhar '-ArquivoSenha ja existe; informe um arquivo novo (nada foi gravado).'
+    }
+    $dirSenha = Split-Path -Parent $arqSenha
+    if ((-not $dirSenha) -or (-not (Test-Path -LiteralPath $dirSenha -PathType Container))) {
+        $script:Codigo = 2
+        Falhar 'A pasta de -ArquivoSenha nao existe (nada foi gravado).'
+    }
     $py = Resolver-Python $raiz
-    $argsFilho = @('-m', 'scripts.reset_user_password', $email)
+    $argsFilho = @('-m', 'scripts.reset_user_password', $email, '--senha-arquivo', $arqSenha)
     if ($script:Ctx.PermitirUltimoAdmin) { $argsFilho += '--permitir-ultimo-admin' }
     if ($script:Ctx.Simular -or (-not $script:Ctx.Confirmar)) {
         if ($script:Ctx.Simular) { Info 'SIMULACAO: nada sera feito.' }
@@ -2138,6 +2166,7 @@ function Principal {
         $script:Ctx.OrcamentoShadow = $OrcamentoShadow
         $script:Ctx.Email = $Email
         $script:Ctx.PermitirUltimoAdmin = [bool]$PermitirUltimoAdmin
+        $script:Ctx.ArquivoSenha = $ArquivoSenha
         if (($Relatorio -or $Conta) -and ($Comando -ne 'consultar')) {
             Falhar '-Relatorio e -Conta so valem com consultar.'
         }
@@ -2150,8 +2179,8 @@ function Principal {
         if ($Shadow -and ((-not $DigestModelo) -or (-not $OrcamentoShadow))) {
             Falhar '-Shadow exige -DigestModelo <64 hex> e -OrcamentoShadow <id>.'
         }
-        if (($Email -or $PermitirUltimoAdmin) -and ($Comando -ne 'redefinir-senha')) {
-            Falhar '-Email e -PermitirUltimoAdmin so valem com redefinir-senha.'
+        if (($Email -or $PermitirUltimoAdmin -or $ArquivoSenha) -and ($Comando -ne 'redefinir-senha')) {
+            Falhar '-Email, -PermitirUltimoAdmin e -ArquivoSenha so valem com redefinir-senha.'
         }
         if ($SemSondagem -and ($Comando -ne 'status') -and (-not $Simular)) {
             Falhar '-SemSondagem so vale com status ou -Simular.'
