@@ -188,3 +188,38 @@ test('descreverPagamento mostra "Pago em" so para titulo pago com data', () => {
 test('a skill do pedido e account.mark_paid', () => {
   assert.equal(SKILL_MARK_PAID, 'account.mark_paid');
 });
+
+const pagamentoLib = load('lib/pagamento.ts');
+
+test('conta mudou: reconhece o codigo do backend e so ele', () => {
+  const erro = (detail) => ({ response: { data: { detail } } });
+  assert.equal(
+    pagamentoLib.contaMudouDepoisDaAprovacao(erro({ code: 'account_state_changed', message: 'x' })),
+    true,
+  );
+  assert.equal(pagamentoLib.contaMudouDepoisDaAprovacao(erro({ code: 'approval_conflict' })), false);
+  assert.equal(pagamentoLib.contaMudouDepoisDaAprovacao(erro('texto')), false);
+  assert.equal(pagamentoLib.contaMudouDepoisDaAprovacao(null), false);
+  assert.equal(pagamentoLib.contaMudouDepoisDaAprovacao(new Error('rede')), false);
+  assert.match(pagamentoLib.MSG_CONTA_MUDOU, /novo registro de pagamento/);
+});
+
+test('conta mudou: pedido encerrado (cancelado) volta a oferecer Registrar pagamento', () => {
+  const conta = { id: 7, status: 'atrasado' };
+  const futuro = new Date(Date.now() + 3600000).toISOString();
+  const pedido = (status) => ({
+    request_id: 1,
+    skill_key: 'account.mark_paid',
+    target_account_id: 7,
+    status,
+    expires_at: futuro,
+  });
+  assert.equal(
+    pagamentoLib.estadoPagamento(conta, [pedido('approved')], new Date()).estado,
+    'aprovado-aguardando-conclusao',
+  );
+  assert.equal(
+    pagamentoLib.estadoPagamento(conta, [pedido('cancelled')], new Date()).estado,
+    'sem-pedido',
+  );
+});

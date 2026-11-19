@@ -138,6 +138,13 @@
   gap: var(--space-0-5);
 }
 
+.approvals-concurrency-warning {
+  display: block;
+  color: var(--warning, #b45309);
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
+}
+
 .approvals-effective-date {
   display: block;
   color: var(--text-muted);

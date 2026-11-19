@@ -20,6 +20,7 @@ import { AuneronBot } from "../components/ui";
 import { humorDaAprovacao } from "../lib/inteligencia";
 import { useAuth } from "../hooks/useAuth";
 import {
+  avisoPedidoConcorrente,
   paramsListaAprovacoes,
   podeDecidirPedido,
   rotuloStatusPedido,
@@ -328,6 +329,15 @@ export default function Approvals() {
                                 item.skill_key,
                               )}
                             </span>
+                            {avisoPedidoConcorrente(item, itens) && (
+                              <small
+                                className="approvals-concurrency-warning"
+                                role="status"
+                              >
+                                <AlertTriangle size={12} />{" "}
+                                {avisoPedidoConcorrente(item, itens)}
+                              </small>
+                            )}
                             {item.effective_date && (
                               <small className="approvals-effective-date">
                                 Data do pagamento:{" "}

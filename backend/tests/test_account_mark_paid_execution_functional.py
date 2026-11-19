@@ -1336,3 +1336,168 @@ def test_same_executor_replay_with_inconsistent_receipt_is_rejected(
         before_counts=before_counts,
         before_snapshot=before_snapshot,
     )
+
+
+# ---------------------------------------------------------------------
+# 9. Conta mudou depois da aprovacao: recusa preservada + novo pedido
+#    liberado sem esperar a expiracao (24 h)
+# ---------------------------------------------------------------------
+
+
+def _approval_status(db_session: Session, request_id: int) -> str:
+    db_session.expire_all()
+    return db_session.get(ApprovalRequest, request_id).status
+
+
+def test_stale_approval_with_current_status_is_refused_cancelled_and_frees_new_request(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _make_account(
+        db_session,
+        email="cliente.mark-paid.stale-current@example.com",
+        status="aberto",
+    )
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key="mark-paid-stale-current-1",
+    )
+    # O pedido de atraso do agente foi executado antes da conclusao.
+    account.status = "atrasado"
+    db_session.commit()
+    before = _counts(db_session)
+
+    # A tela envia o status ATUAL da conta.
+    response = _execute(
+        client,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="atrasado",
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "account_state_changed"
+    assert "novo registro de pagamento" in response.json()["detail"]["message"]
+    # Governanca intacta: nada foi executado nem alterado.
+    db_session.expire_all()
+    assert db_session.get(Account, account.id).status == "atrasado"
+    assert _counts(db_session) == before
+    assert _approval_status(db_session, request_id) == "cancelled"
+
+    # Um novo pedido e aceito imediatamente (sem esperar expirar).
+    again = client.post(
+        f"/accounts/{account.id}/request-mark-paid",
+        json={"paid_on": "2026-06-10"},
+        headers={"Idempotency-Key": "mark-paid-stale-current-2"},
+    )
+    assert again.status_code == 201, again.text
+
+    # Repetir a conclusao do pedido antigo continua recusado.
+    retry = _execute(
+        client,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="atrasado",
+    )
+    assert retry.status_code == 409, retry.text
+    assert _counts(db_session) == before
+
+
+def test_stale_approval_with_approved_status_is_still_refused_and_cancelled(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _make_account(
+        db_session,
+        email="cliente.mark-paid.stale-approved@example.com",
+        status="aberto",
+    )
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key="mark-paid-stale-approved-1",
+    )
+    account.status = "atrasado"
+    db_session.commit()
+    before = _counts(db_session)
+
+    response = _execute(
+        client,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="aberto",
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "account_state_changed"
+    db_session.expire_all()
+    assert db_session.get(Account, account.id).status == "atrasado"
+    assert _counts(db_session) == before
+    assert _approval_status(db_session, request_id) == "cancelled"
+
+
+def test_unauthorized_executor_cannot_cancel_stale_approval(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _make_account(
+        db_session,
+        email="cliente.mark-paid.stale-unauthorized@example.com",
+        status="aberto",
+    )
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key="mark-paid-stale-unauthorized-1",
+    )
+    account.status = "atrasado"
+    db_session.commit()
+
+    # O proprio decisor nao pode executar: a recusa nao cancela o pedido.
+    approver = _login(APPROVER_EMAIL, APPROVER_PASSWORD)
+    response = _execute(
+        approver,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="atrasado",
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "approval_conflict"
+    assert _approval_status(db_session, request_id) == "approved"
+
+
+def test_unchanged_account_with_wrong_expected_status_does_not_cancel(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    account = _make_account(
+        db_session,
+        email="cliente.mark-paid.not-stale@example.com",
+        status="aberto",
+    )
+    request_id = _approve_mark_paid_request(
+        client,
+        db_session,
+        account=account,
+        expected_status="aberto",
+        idempotency_key="mark-paid-not-stale-1",
+    )
+
+    response = _execute(
+        client,
+        account.id,
+        approval_request_id=request_id,
+        expected_status="atrasado",
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "approval_conflict"
+    assert _approval_status(db_session, request_id) == "approved"

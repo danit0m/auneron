@@ -34,6 +34,7 @@ _APPROVAL_DETAIL_CODES = frozenset({
     "approval_not_found",
     "approval_forbidden",
     "approval_conflict",
+    "account_state_changed",
     "approval_idempotency_conflict",
     "approval_expired",
     "approval_elevation_required",

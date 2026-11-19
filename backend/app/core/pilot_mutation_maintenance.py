@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from sqlalchemy import select
+
+from app.core.approval_dispatch_exclusion import exclusive_approval_dispatch
 from app.core.authorization import has_permission
 from app.core.config import settings
 from app.core.pilot_mutation_errors import PilotMutationAuthorizationError
 from app.database.database import SessionLocal
 from app.models.authenticated_advisory_proposal import AuthenticatedAdvisoryProposal
 from app.models.user import User
+from app.models.work import WorkItem
 from app.repositories.work_repository import WorkRepository
 from app.repositories.work_skill_execution_repository import WorkSkillExecutionRepository
 from app.services.account_mark_overdue_execution_service import AccountMarkOverdueExecutionService
@@ -46,60 +50,95 @@ def run_pilot_mutation_recovery(*, limit: int | None = None) -> int:
         effect = AccountMarkOverdueExecutionService(db)
         for work_id in repo.list_pilot_recovery_candidate_work_ids(limit=effective_limit):
             try:
-                item = work_repo.lock_by_id(work_id)
-                if item is None:
-                    continue
-                context = item.context_data if isinstance(item.context_data, dict) else {}
-                proposal_id = context.get("proposal_id")
-                approval_request_id = context.get("approval_request_id")
-                skill_version_id = context.get("skill_version_id")
-                if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (proposal_id, approval_request_id, skill_version_id)):
-                    raise ValueError("Malformed pilot identity.")
-                proposal = db.get(AuthenticatedAdvisoryProposal, proposal_id)
-                if proposal is None:
-                    raise ValueError("Proposal missing.")
-                payload = _reconstruct(item)
-                request = work_exec.approval_repository.get_request(approval_request_id)
-                if request is None or request.requester_actor_type != "agent" or not request.requester_reference.startswith("agent:"):
-                    raise ValueError("Approval missing/invalid actor.")
-                if item.status == "backlog":
-                    item = work_service.transition_status(
-                        item.id, expected_version=item.version,
-                        actor=WorkActor(actor_type="system", actor_reference=f"system:work:{item.id}", actor_user_id=None),
-                        status="ready", idempotency_key=f"work:{item.id}:pilot:ready",
-                    ).work_item
-                decision = work_exec.approval_repository.get_decision(
-                    approval_request_id
+                # Mesma exclusao por pedido do despacho consultivo: se o
+                # outro varredor ja executa este pedido, sai limpo (sem
+                # lock de linha concorrente, sem OperationalError). A
+                # leitura previa e so da coluna (nao povoa o identity map),
+                # para o lock de linha ler o estado atual.
+                peek = db.execute(
+                    select(WorkItem.context_data).where(WorkItem.id == work_id)
+                ).scalar_one_or_none()
+                peek_request_id = (
+                    peek.get("approval_request_id") if isinstance(peek, dict) else None
                 )
-                if decision is None or decision.decided_by_user_id is None:
-                    raise PilotMutationAuthorizationError(
-                        "Decisor da aprovacao nao pode ser revalidado."
-                    )
-                decider = db.get(User, decision.decided_by_user_id)
+                db.rollback()
                 if (
-                    decider is None
-                    or not decider.active
-                    or not has_permission(decider.role, request.required_permission)
+                    isinstance(peek_request_id, int)
+                    and not isinstance(peek_request_id, bool)
+                    and peek_request_id > 0
                 ):
-                    raise PilotMutationAuthorizationError(
-                        "Autoridade humana da aprovacao nao esta mais valida."
+                    with exclusive_approval_dispatch(peek_request_id) as sole:
+                        if not sole:
+                            continue
+                        recovered += _recover_one(
+                            db=db, repo=repo, work_repo=work_repo,
+                            work_service=work_service, work_exec=work_exec,
+                            effect=effect, work_id=work_id,
+                        )
+                else:
+                    recovered += _recover_one(
+                        db=db, repo=repo, work_repo=work_repo,
+                        work_service=work_service, work_exec=work_exec,
+                        effect=effect, work_id=work_id,
                     )
-                if repo.get_by_work_item(item.id) is None:
-                    work_exec.configure_with_existing_approval(
-                        item.id, version_id=skill_version_id,
-                        authority_user_id=decider.id,
-                        input_payload=payload, approval_request_id=approval_request_id,
-                    )
-                effect.execute(
-                    work_item_id=item.id, approval_request_id=approval_request_id,
-                    authority_user_id=decider.id,
-                    actor_reference=request.requester_reference, input_payload=payload,
-                )
-                recovered += 1
             except Exception as error:
                 db.rollback()
                 logger.warning("pilot_mutation_recovery_failed", extra={"event": "pilot.mutation.recovery_failed", "work_item_id": work_id, "error_type": type(error).__name__})
     return recovered
+
+
+def _recover_one(*, db, repo, work_repo, work_service, work_exec, effect, work_id) -> int:
+    """Recupera um Work piloto; devolve 1 se executou, 0 se nao. Erros propagam."""
+    item = work_repo.lock_by_id(work_id)
+    if item is None:
+        return 0
+    context = item.context_data if isinstance(item.context_data, dict) else {}
+    proposal_id = context.get("proposal_id")
+    approval_request_id = context.get("approval_request_id")
+    skill_version_id = context.get("skill_version_id")
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (proposal_id, approval_request_id, skill_version_id)):
+        raise ValueError("Malformed pilot identity.")
+    proposal = db.get(AuthenticatedAdvisoryProposal, proposal_id)
+    if proposal is None:
+        raise ValueError("Proposal missing.")
+    payload = _reconstruct(item)
+    request = work_exec.approval_repository.get_request(approval_request_id)
+    if request is None or request.requester_actor_type != "agent" or not request.requester_reference.startswith("agent:"):
+        raise ValueError("Approval missing/invalid actor.")
+    if item.status == "backlog":
+        item = work_service.transition_status(
+            item.id, expected_version=item.version,
+            actor=WorkActor(actor_type="system", actor_reference=f"system:work:{item.id}", actor_user_id=None),
+            status="ready", idempotency_key=f"work:{item.id}:pilot:ready",
+        ).work_item
+    decision = work_exec.approval_repository.get_decision(
+        approval_request_id
+    )
+    if decision is None or decision.decided_by_user_id is None:
+        raise PilotMutationAuthorizationError(
+            "Decisor da aprovacao nao pode ser revalidado."
+        )
+    decider = db.get(User, decision.decided_by_user_id)
+    if (
+        decider is None
+        or not decider.active
+        or not has_permission(decider.role, request.required_permission)
+    ):
+        raise PilotMutationAuthorizationError(
+            "Autoridade humana da aprovacao nao esta mais valida."
+        )
+    if repo.get_by_work_item(item.id) is None:
+        work_exec.configure_with_existing_approval(
+            item.id, version_id=skill_version_id,
+            authority_user_id=decider.id,
+            input_payload=payload, approval_request_id=approval_request_id,
+        )
+    effect.execute(
+        work_item_id=item.id, approval_request_id=approval_request_id,
+        authority_user_id=decider.id,
+        actor_reference=request.requester_reference, input_payload=payload,
+    )
+    return 1
 
 
 async def run_pilot_mutation_recovery_async() -> int:

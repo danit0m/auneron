@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 
+from app.core.approval_dispatch_exclusion import exclusive_approval_dispatch
 from app.core.authentication import AuthenticatedSession
 from app.core.authentication import utc_now
 from app.core.authority_provenance import SystemPrincipalProvenance
@@ -61,6 +62,127 @@ def _log_orphaned(
     )
 
 
+def _dispatch_candidate(
+    *,
+    db,
+    bridge: AuthenticatedAdvisoryProposalApprovalBridgeService,
+    request,
+) -> bool:
+    """
+    Dispatches one approved advisory request. Returns True when the
+    dispatch was performed and False when the request is a permanent
+    orphan (already logged). Any other failure propagates.
+    """
+    proposal_id, binding_id = _parse_advisory_identity(
+        request.idempotency_key
+    )
+
+    if request.target_account_id is None:
+        raise ValueError(
+            "ApprovalRequest advisory sem target_account_id "
+            f"(request_id={request.id})."
+        )
+
+    proposal = db.get(
+        AuthenticatedAdvisoryProposal,
+        proposal_id,
+    )
+    if proposal is None:
+        raise ValueError(
+            f"Proposal {proposal_id} nao encontrada "
+            f"(request_id={request.id})."
+        )
+
+    account = db.get(
+        Account,
+        request.target_account_id,
+    )
+    if account is None:
+        raise ValueError(
+            f"Account {request.target_account_id} nao "
+            f"encontrada (request_id={request.id})."
+        )
+
+    input_payload = {
+        "account_id": request.target_account_id,
+        "expected_status": "aberto",
+        "expected_due_date": str(account.vencimento),
+    }
+
+    if (
+        proposal.authority_source
+        == SYSTEM_PRINCIPAL_PROVENANCE_SOURCE
+    ):
+        if proposal.auth_session_id is not None:
+            raise ValueError(
+                "system_principal proposal unexpectedly "
+                "contains auth_session_id."
+            )
+
+        principal = SystemPrincipalProvenance(
+            authority_user_id=proposal.authority_user_id,
+        )
+        bridge.dispatch_approved_system(
+            proposal_id=proposal_id,
+            principal=principal,
+            binding_id=binding_id,
+            input_payload=input_payload,
+            approval_request_id=request.id,
+        )
+        return True
+
+    auth_session = db.get(
+        AuthSession,
+        proposal.auth_session_id,
+    )
+    if auth_session is None:
+        _log_orphaned(
+            request_id=request.id,
+            proposal_id=proposal_id,
+            binding_id=binding_id,
+            reason="original_session_missing",
+        )
+        return False
+
+    if (
+        auth_session.revoked_at is not None
+        or auth_session.expires_at <= utc_now()
+    ):
+        _log_orphaned(
+            request_id=request.id,
+            proposal_id=proposal_id,
+            binding_id=binding_id,
+            reason="original_session_revoked_or_expired",
+        )
+        return False
+
+    user = db.get(
+        User,
+        proposal.authority_user_id,
+    )
+    if user is None or not user.active:
+        _log_orphaned(
+            request_id=request.id,
+            proposal_id=proposal_id,
+            binding_id=binding_id,
+            reason="original_user_unavailable",
+        )
+        return False
+
+    authenticated = AuthenticatedSession(
+        user=user,
+        session=auth_session,
+    )
+    bridge.dispatch_approved(
+        proposal_id=proposal_id,
+        authenticated=authenticated,
+        binding_id=binding_id,
+        input_payload=input_payload,
+        approval_request_id=request.id,
+    )
+    return True
+
+
 def run_advisory_dispatch_recovery(
     *,
     limit: int | None = None,
@@ -74,6 +196,11 @@ def run_advisory_dispatch_recovery(
     no-AuthSession corridor. Pagination uses a transient cursor inside
     this call only, so one permanent legacy orphan cannot monopolize
     the first row when the configured batch size is 1.
+
+    Each request is dispatched under a per-request exclusion shared with
+    the pilot mutation recovery; a request already being executed by
+    another sweeper is skipped silently (single effect is kept by the
+    ApprovalConsumption ledger either way).
     """
     effective_limit = (
         settings.work_skill_recovery_batch_size
@@ -111,116 +238,15 @@ def run_advisory_dispatch_recovery(
                 after_id = request.id
 
                 try:
-                    proposal_id, binding_id = _parse_advisory_identity(
-                        request.idempotency_key
-                    )
-
-                    if request.target_account_id is None:
-                        raise ValueError(
-                            "ApprovalRequest advisory sem target_account_id "
-                            f"(request_id={request.id})."
-                        )
-
-                    proposal = db.get(
-                        AuthenticatedAdvisoryProposal,
-                        proposal_id,
-                    )
-                    if proposal is None:
-                        raise ValueError(
-                            f"Proposal {proposal_id} nao encontrada "
-                            f"(request_id={request.id})."
-                        )
-
-                    account = db.get(
-                        Account,
-                        request.target_account_id,
-                    )
-                    if account is None:
-                        raise ValueError(
-                            f"Account {request.target_account_id} nao "
-                            f"encontrada (request_id={request.id})."
-                        )
-
-                    input_payload = {
-                        "account_id": request.target_account_id,
-                        "expected_status": "aberto",
-                        "expected_due_date": str(account.vencimento),
-                    }
-
-                    if (
-                        proposal.authority_source
-                        == SYSTEM_PRINCIPAL_PROVENANCE_SOURCE
-                    ):
-                        if proposal.auth_session_id is not None:
-                            raise ValueError(
-                                "system_principal proposal unexpectedly "
-                                "contains auth_session_id."
-                            )
-
-                        principal = SystemPrincipalProvenance(
-                            authority_user_id=proposal.authority_user_id,
-                        )
-                        bridge.dispatch_approved_system(
-                            proposal_id=proposal_id,
-                            principal=principal,
-                            binding_id=binding_id,
-                            input_payload=input_payload,
-                            approval_request_id=request.id,
-                        )
-                    else:
-                        auth_session = db.get(
-                            AuthSession,
-                            proposal.auth_session_id,
-                        )
-                        if auth_session is None:
-                            _log_orphaned(
-                                request_id=request.id,
-                                proposal_id=proposal_id,
-                                binding_id=binding_id,
-                                reason="original_session_missing",
-                            )
+                    with exclusive_approval_dispatch(request.id) as sole:
+                        if not sole:
                             continue
-
-                        if (
-                            auth_session.revoked_at is not None
-                            or auth_session.expires_at <= utc_now()
+                        if _dispatch_candidate(
+                            db=db,
+                            bridge=bridge,
+                            request=request,
                         ):
-                            _log_orphaned(
-                                request_id=request.id,
-                                proposal_id=proposal_id,
-                                binding_id=binding_id,
-                                reason=(
-                                    "original_session_revoked_or_expired"
-                                ),
-                            )
-                            continue
-
-                        user = db.get(
-                            User,
-                            proposal.authority_user_id,
-                        )
-                        if user is None or not user.active:
-                            _log_orphaned(
-                                request_id=request.id,
-                                proposal_id=proposal_id,
-                                binding_id=binding_id,
-                                reason="original_user_unavailable",
-                            )
-                            continue
-
-                        authenticated = AuthenticatedSession(
-                            user=user,
-                            session=auth_session,
-                        )
-                        bridge.dispatch_approved(
-                            proposal_id=proposal_id,
-                            authenticated=authenticated,
-                            binding_id=binding_id,
-                            input_payload=input_payload,
-                            approval_request_id=request.id,
-                        )
-
-                    dispatched += 1
+                            dispatched += 1
                     if dispatched >= effective_limit:
                         break
                 except Exception as error:

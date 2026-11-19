@@ -39,3 +39,7 @@ class ApprovalRequiredError(ApprovalStateError):
 
 class ApprovalConsumptionConflictError(ApprovalConflictError):
     """Consumo persistido diverge da ação aprovada/executada."""
+
+
+class ApprovalAccountStateChangedError(ApprovalConsumptionConflictError):
+    """A conta mudou de situação depois da aprovação; nada foi executado."""

@@ -18,8 +18,10 @@ import {
   type TipoEventoContato,
 } from "../lib/contatoPromessa";
 import {
+  contaMudouDepoisDaAprovacao,
   descreverPagamento,
   estadoPagamento,
+  MSG_CONTA_MUDOU,
   formatarDataBr,
   podeConcluirPagamento,
   type SituacaoPagamento,
@@ -440,10 +442,18 @@ export default function Recebiveis() {
       await Promise.all([carregar(true), carregarAprovacoes()]);
     } catch (error) {
       console.error("Erro ao concluir pagamento:", error);
+      const mudou = contaMudouDepoisDaAprovacao(error);
       setFeedback({
         tipo: "erro",
-        texto: mensagemDaApi(error, "Não foi possível concluir o pagamento."),
+        texto: mudou
+          ? MSG_CONTA_MUDOU
+          : mensagemDaApi(error, "Não foi possível concluir o pagamento."),
       });
+      if (mudou) {
+        // O pedido aprovado foi encerrado: recarrega a conta e os pedidos
+        // para voltar a oferecer "Registrar pagamento".
+        await Promise.all([carregar(true), carregarAprovacoes()]);
+      }
     } finally {
       setConcluindoId(null);
     }
