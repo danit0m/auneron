@@ -9,7 +9,8 @@ homologacao.ps1) a partir de backend/:
     python -m scripts.recompose_payment_memories confirmar
 
 Pendente = memoria ATIVA de comportamento, escopo account, cujo context_data
-nao tem 'ocorrencias_sem_data_efetiva' (marcador gravado pelo calculo novo).
+nao tem 'ocorrencias_sem_data_efetiva' nem 'taxa_base' = 'vencidos'
+(marcadores do calculo novo: data efetiva e taxa so sobre titulos vencidos).
 
 Regras:
 - A primeira coisa feita e conferir o banco (SELECT current_database()) na
@@ -73,7 +74,10 @@ PENDING_SQL = text(
       AND mi.scope_type = 'account'
       AND mi.status = 'active'
       AND a.email IS NOT NULL
-      AND (mi.context_data ->> 'ocorrencias_sem_data_efetiva') IS NULL
+      AND (
+        (mi.context_data ->> 'ocorrencias_sem_data_efetiva') IS NULL
+        OR (mi.context_data ->> 'taxa_base') IS DISTINCT FROM 'vencidos'
+      )
     ORDER BY mi.id
     """
 )
