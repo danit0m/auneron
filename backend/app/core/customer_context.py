@@ -89,10 +89,11 @@ class BehaviorPattern:
     average_late_days: float
     min_late_days: int
     max_late_days: int
-    payment_rate: float
+    payment_rate: float | None
     confidence: float
     recorded_at: datetime
     occurrences_without_effective_date: int | None = None
+    upcoming_titles: int | None = None
 
 
 @dataclass(frozen=True)
@@ -269,12 +270,13 @@ def _behavioral_intelligence(
             average_late_days=context["atraso_medio_dias"],
             min_late_days=context["atraso_min_dias"],
             max_late_days=context["atraso_max_dias"],
-            payment_rate=context["taxa_pagamento"],
+            payment_rate=context.get("taxa_pagamento"),
             confidence=context["confidence"],
             recorded_at=pattern_memory.created_at,
             occurrences_without_effective_date=context.get(
                 "ocorrencias_sem_data_efetiva"
             ),
+            upcoming_titles=context.get("titulos_a_vencer"),
         )
 
     classification_memory = repository.find_active_by_key(

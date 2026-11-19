@@ -193,3 +193,37 @@ def test_main_rejects_invalid_usage(capsys) -> None:
 def test_mask_email_hides_name() -> None:
     assert script.mask_email("maria.silva@empresa.com") == "mar***@empresa.com"
     assert script.mask_email("ab@x.com") == "ab***@x.com"
+
+
+def test_recomposes_memory_with_date_marker_but_old_rate_base(
+    db_session,
+) -> None:
+    # Memoria ja com 'ocorrencias_sem_data_efetiva' mas sem
+    # taxa_base='vencidos' (taxa calculada sobre todos os titulos) e
+    # pendente; a gravada pelo calculo novo nao e mais.
+    email = _unique_email()
+    accounts = _make_paid_accounts(db_session, email=email, count=3)
+    old = MemoryService(db_session).remember(
+        memory_type="observation",
+        title=f"Padrao {email}",
+        content="Taxa sobre todos os titulos.",
+        scope_type="account",
+        account_id=accounts[0].id,
+        source_type="derived",
+        source_reference=f"client_behavior:{email}",
+        confidence=0.5,
+        memory_key=MEMORY_KEY,
+        context_data={"email": email, "ocorrencias_sem_data_efetiva": 0},
+    ).memory
+    db_session.commit()
+
+    assert (old.id, email) in script._pending(db_session)
+
+    code = script.run(
+        db_session, "confirmar", expected_database=_database_name(db_session)
+    )
+
+    assert code == script.EXIT_OK
+    active = _active_for(db_session, accounts[0].id)
+    assert active[0].context_data["taxa_base"] == "vencidos"
+    assert (active[0].id, email) not in script._pending(db_session)

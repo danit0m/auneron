@@ -71,10 +71,11 @@ class ClientBehaviorPatternSummary(BaseModel):
     average_late_days: float
     min_late_days: int
     max_late_days: int
-    payment_rate: float
+    payment_rate: float | None = None
     confidence: float
     recorded_at: datetime
     occurrences_without_effective_date: int | None = None
+    upcoming_titles: int | None = None
 
 
 class BehavioralIntelligence(BaseModel):

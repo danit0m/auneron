@@ -732,3 +732,179 @@ def test_recalculation_wrappers_and_lifespan_wiring_source_contract() -> None:
         "run_client_behavior_memory_recalculation_async" in lifespan_source
     )
     assert "client_behavior_memory_maintenance_loop" in lifespan_source
+
+
+# --- Taxa de pagamento: denominador = titulos ja vencidos (+ pagos) ---
+
+_HOJE = date(2026, 6, 15)
+
+
+def _paid_account(
+    db: Session,
+    email: str,
+    vencimento: date,
+    paid_on: date,
+    *,
+    dated: bool = True,
+) -> Account:
+    account = _make_account(
+        db, email=email, vencimento=vencimento, status="pago"
+    )
+    _make_paid_event(
+        db,
+        account=account,
+        occurred_at=datetime(
+            paid_on.year, paid_on.month, paid_on.day, tzinfo=timezone.utc
+        ),
+        with_effective_date=dated,
+        paid_on=paid_on,
+    )
+    return account
+
+
+def test_taxa_usa_so_titulos_vencidos_e_conta_a_vencer(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    for day in (1, 2, 3, 4):
+        _paid_account(
+            db_session, email, date(2026, 5, day), date(2026, 5, day + 1)
+        )
+    _make_account(
+        db_session,
+        email=email,
+        vencimento=date(2026, 5, 10),
+        status="atrasado",
+    )
+    _make_account(db_session, email=email, vencimento=date(2026, 6, 20))
+    _make_account(db_session, email=email, vencimento=date(2026, 7, 20))
+    db_session.commit()
+
+    result = compute_client_behavior_pattern(
+        db_session, email, today=_HOJE
+    )
+
+    assert result is not None
+    assert result.taxa_pagamento == 4 / 5  # antes: 4/7
+    assert result.titulos_a_vencer == 2
+
+
+def test_taxa_pago_antes_do_vencimento_entra_no_denominador(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    for day in (1, 2, 3):
+        _paid_account(
+            db_session, email, date(2026, 5, day), date(2026, 5, day)
+        )
+    # vence no futuro, mas ja foi pago: resultado conhecido
+    _paid_account(db_session, email, date(2026, 7, 1), date(2026, 6, 10))
+    _make_account(db_session, email=email, vencimento=date(2026, 7, 5))
+    db_session.commit()
+
+    result = compute_client_behavior_pattern(
+        db_session, email, today=_HOJE
+    )
+
+    assert result is not None
+    assert result.taxa_pagamento == 1.0  # 4 pagos / 4
+    assert result.titulos_a_vencer == 1
+
+
+def test_taxa_titulo_vencendo_hoje_entra_no_denominador(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    for day in (1, 2, 3):
+        _paid_account(
+            db_session, email, date(2026, 5, day), date(2026, 5, day)
+        )
+    _make_account(db_session, email=email, vencimento=_HOJE)
+    _make_account(
+        db_session, email=email, vencimento=_HOJE + timedelta(days=1)
+    )
+    db_session.commit()
+
+    result = compute_client_behavior_pattern(
+        db_session, email, today=_HOJE
+    )
+
+    assert result is not None
+    assert result.taxa_pagamento == 3 / 4
+    assert result.titulos_a_vencer == 1
+
+
+def test_taxa_pagos_sem_data_efetiva_contam_como_pagos(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    for day in (1, 2, 3):
+        _paid_account(
+            db_session, email, date(2026, 5, day), date(2026, 5, day)
+        )
+    _paid_account(
+        db_session,
+        email,
+        date(2026, 4, 1),
+        date(2026, 4, 2),
+        dated=False,
+    )
+    _make_account(
+        db_session,
+        email=email,
+        vencimento=date(2026, 5, 20),
+        status="atrasado",
+    )
+    db_session.commit()
+
+    result = compute_client_behavior_pattern(
+        db_session, email, today=_HOJE
+    )
+
+    assert result is not None
+    assert result.ocorrencias_sem_data_efetiva == 1
+    assert result.taxa_pagamento == 4 / 5
+
+
+def test_taxa_ausente_quando_denominador_vazio(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Sem vencido e sem pago o denominador e 0: taxa None (nao 0 nem
+    # 100%). Minimo de ciclos zerado so para exercitar o calculo.
+    monkeypatch.setattr(
+        maintenance_module.settings,
+        "client_behavior_min_occurrences_for_pattern",
+        0,
+    )
+    email = _unique_email()
+    _make_account(db_session, email=email, vencimento=date(2026, 8, 1))
+    db_session.commit()
+
+    result = compute_client_behavior_pattern(
+        db_session, email, today=_HOJE
+    )
+
+    # Sem nenhum pago nao ha media de atraso: nenhum padrao (e sem
+    # divisao por zero). A taxa nunca vira 0 nem 100% por falta de base.
+    assert result is None
+
+
+def test_memoria_grava_titulos_a_vencer_e_marcador_taxa_base(
+    db_session: Session,
+) -> None:
+    email = _unique_email()
+    for day in (1, 2, 3):
+        _paid_account(
+            db_session, email, date(2026, 5, day), date(2026, 5, day)
+        )
+    _make_account(db_session, email=email, vencimento=date(2999, 1, 1))
+    db_session.commit()
+
+    context = apply_client_behavior_memory_pattern(
+        db_session, MemoryService(db_session), email
+    ).memory.context_data
+
+    assert context["titulos_a_vencer"] == 1
+    assert context["taxa_base"] == "vencidos"
+    assert context["taxa_pagamento"] == 1.0
