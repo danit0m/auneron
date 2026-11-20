@@ -22,6 +22,7 @@ from app.core.approval_authorization import (
 from app.core.approval_authorization import (
     visible_required_permissions,
 )
+from app.core.approval_errors import ApprovalAccountStateChangedError
 from app.core.approval_errors import ApprovalAuthorizationError
 from app.core.approval_errors import ApprovalConflictError
 from app.core.approval_errors import ApprovalElevationRequiredError
@@ -149,6 +150,16 @@ def _raise_approval_http_error(
         message = (
             "Estado de aprovação inválido "
             "para a operação."
+        )
+    elif isinstance(
+        error,
+        ApprovalAccountStateChangedError,
+    ):
+        status_code = status.HTTP_409_CONFLICT
+        code = "account_state_changed"
+        message = (
+            "A conta mudou de situação depois da aprovação; "
+            "peça um novo registro de pagamento."
         )
     elif isinstance(
         error,

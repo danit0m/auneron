@@ -4,10 +4,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.approval_errors import ApprovalAccountStateChangedError
+from app.core.approval_observability import log_approval_event
 from app.core.approval_errors import ApprovalAuthorizationError
 from app.core.approval_errors import ApprovalConsumptionConflictError
 from app.core.approval_errors import ApprovalExpiredError
@@ -40,6 +44,7 @@ CAPABILITY_KEY = "account.status.mark_paid"
 CONSUMER_ACTOR_TYPE = "system"
 CONSUMER_REFERENCE = "system:account_mark_paid_execution"
 VALID_EXPECTED_STATUSES = {"aberto", "atrasado"}
+STALE_STATE_REASON = "estado_da_conta_mudou"
 
 
 def _utc_now() -> datetime:
@@ -210,6 +215,93 @@ class AccountMarkPaidExecutionService:
                 "Executor não pode ser o mesmo usuário que decidiu a aprovação."
             )
         return decision
+
+    def _cancel_stale_request(self, *, request, effective_now: datetime) -> None:
+        """
+        Encerra como 'cancelled' um pedido aprovado e ainda nao consumido
+        cuja conta mudou de situacao. Nao executa nada de negocio. O
+        motivo fica no log estruturado (a tabela nao tem coluna de motivo
+        e esta entrega nao cria migracao). O chamador ja trava o pedido.
+        """
+        if request.status != "approved":
+            return
+        request.status = "cancelled"
+        request.resolved_at = effective_now
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        log_approval_event(
+            "approval.cancelled_account_state_changed",
+            level=logging.WARNING,
+            operation="execute",
+            approval_request_id=request.id,
+            skill_version_id=request.skill_version_id,
+            status="cancelled",
+            error_code=STALE_STATE_REASON,
+        )
+
+    def _cancel_if_account_changed(
+        self,
+        *,
+        request,
+        version,
+        capabilities,
+        authority: User,
+        account_id: int,
+        paid_on: date | None,
+        effective_now: datetime,
+    ) -> None:
+        """
+        O cliente informou um expected_status diferente do aprovado (a
+        tela envia o status atual da conta). Descobre qual status foi
+        aprovado pelo digest persistido, reaplica TODAS as validacoes da
+        aprovacao com ele (autoridade, expiracao, escopo, separacao de
+        deveres) e, so se a conta realmente mudou, cancela o pedido.
+        Qualquer outra situacao devolve sem efeito (o chamador recusa).
+        """
+        if request.status != "approved":
+            return
+        approved_status = None
+        for candidate in sorted(VALID_EXPECTED_STATUSES):
+            payload = {"account_id": account_id, "expected_status": candidate}
+            if paid_on is not None:
+                payload["paid_on"] = paid_on.isoformat()
+            normalized, digest = approval_input_identity(payload)
+            if digest == request.input_digest:
+                approved_status = candidate
+                approved_input = (normalized, digest)
+                break
+        if approved_status is None:
+            return
+        try:
+            self._validate_approved_authority(
+                request=request,
+                version=version,
+                capabilities=capabilities,
+                authority=authority,
+                account_id=account_id,
+                normalized_input=approved_input[0],
+                input_digest=approved_input[1],
+                effective_now=effective_now,
+                enforce_expiry=True,
+            )
+        except Exception:
+            return
+        account = self.db.execute(
+            select(Account).where(Account.id == account_id).with_for_update()
+        ).scalar_one_or_none()
+        if (
+            account is None
+            or account.status == "pago"
+            or account.status == approved_status
+        ):
+            return
+        self._cancel_stale_request(request=request, effective_now=effective_now)
+        raise ApprovalAccountStateChangedError(
+            "Status atual da conta diverge do status aprovado."
+        )
 
     def _replay(
         self,
@@ -397,17 +489,33 @@ class AccountMarkPaidExecutionService:
                 effective_now=effective_now,
             )
 
-        decision = self._validate_approved_authority(
-            request=request,
-            version=version,
-            capabilities=capabilities,
-            authority=authority,
-            account_id=normalized_account_id,
-            normalized_input=normalized_input,
-            input_digest=input_digest,
-            effective_now=effective_now,
-            enforce_expiry=True,
-        )
+        try:
+            decision = self._validate_approved_authority(
+                request=request,
+                version=version,
+                capabilities=capabilities,
+                authority=authority,
+                account_id=normalized_account_id,
+                normalized_input=normalized_input,
+                input_digest=input_digest,
+                effective_now=effective_now,
+                enforce_expiry=True,
+            )
+        except ApprovalConsumptionConflictError:
+            # A recusa continua: nada e executado. Se o conflito e so
+            # porque a conta mudou de situacao depois da aprovacao, o
+            # pedido aprovado vira terminal (cancelado) para liberar um
+            # novo pedido; a excecao especifica substitui a generica.
+            self._cancel_if_account_changed(
+                request=request,
+                version=version,
+                capabilities=capabilities,
+                authority=authority,
+                account_id=normalized_account_id,
+                paid_on=paid_on,
+                effective_now=effective_now,
+            )
+            raise
 
         account = self.db.execute(
             select(Account)
@@ -421,7 +529,13 @@ class AccountMarkPaidExecutionService:
                 "Conta já está paga sem recibo de consumo correspondente."
             )
         if account.status != expected_status:
-            raise ApprovalConsumptionConflictError(
+            # Protecao contra aprovacao desatualizada: a execucao e
+            # recusada. O pedido aprovado e encerrado como cancelado.
+            self._cancel_stale_request(
+                request=request,
+                effective_now=effective_now,
+            )
+            raise ApprovalAccountStateChangedError(
                 "Status atual da conta diverge do status aprovado."
             )
         if paid_on is not None and paid_on > business_today():

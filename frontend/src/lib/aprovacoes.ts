@@ -46,6 +46,46 @@ export function podeDecidirPedido(
   return !usuarioEhSolicitante(item, usuarioId);
 }
 
+/** Ações que alteram o status do título: duas pendentes na mesma conta se atropelam. */
+export const SKILLS_QUE_ALTERAM_STATUS: ReadonlyArray<string> = [
+  "account.mark_paid",
+  "account.mark_overdue",
+];
+
+export const AVISO_PEDIDO_CONCORRENTE =
+  "Há outro pedido pendente para esta conta; decidir um pode tornar o outro obsoleto.";
+
+type PedidoParaConcorrencia = Pick<
+  ApprovalRequestResponse,
+  "request_id" | "status" | "skill_key" | "target_account_id"
+>;
+
+/**
+ * Aviso (não bloqueia a decisão) quando o pedido pendente disputa o mesmo
+ * título com outro pedido pendente que também altera o status da conta.
+ * Considera apenas os pedidos da lista carregada; null quando não há aviso.
+ */
+export function avisoPedidoConcorrente(
+  item: PedidoParaConcorrencia,
+  todos: ReadonlyArray<PedidoParaConcorrencia>,
+): string | null {
+  if (
+    item.status !== "pending" ||
+    item.target_account_id == null ||
+    !SKILLS_QUE_ALTERAM_STATUS.includes(item.skill_key)
+  ) {
+    return null;
+  }
+  const concorrente = todos.some(
+    (outro) =>
+      outro.request_id !== item.request_id &&
+      outro.status === "pending" &&
+      outro.target_account_id === item.target_account_id &&
+      SKILLS_QUE_ALTERAM_STATUS.includes(outro.skill_key),
+  );
+  return concorrente ? AVISO_PEDIDO_CONCORRENTE : null;
+}
+
 /**
  * Rotulo do status na tela de Aprovacoes. Aprovado e ja executado mostra a data
  * da execucao (dia civil de Brasilia); aprovado sem consumo segue "Aprovada".

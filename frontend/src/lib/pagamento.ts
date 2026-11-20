@@ -13,6 +13,30 @@ export const MSG_DATA_OBRIGATORIA = "Informe a data do pagamento.";
 export const MSG_DATA_INVALIDA = "Data inválida. Use o formato dia/mês/ano.";
 export const MSG_DATA_FUTURA = "A data do pagamento não pode ser futura.";
 
+export const CODIGO_CONTA_MUDOU = "account_state_changed";
+export const MSG_CONTA_MUDOU =
+  "A conta mudou de situação depois da aprovação; peça um novo registro de pagamento.";
+
+/**
+ * Código de erro do backend na resposta de uma falha (detail.code), ou
+ * null. O backend recusa a conclusão quando a conta mudou de situação e
+ * encerra o pedido aprovado; a tela deve então voltar a oferecer
+ * "Registrar pagamento".
+ */
+export function codigoDoErro(error: unknown): string | null {
+  const detail = (error as { response?: { data?: { detail?: unknown } } } | null)
+    ?.response?.data?.detail;
+  if (detail && typeof detail === "object" && "code" in detail) {
+    const codigo = (detail as { code?: unknown }).code;
+    return typeof codigo === "string" ? codigo : null;
+  }
+  return null;
+}
+
+export function contaMudouDepoisDaAprovacao(error: unknown): boolean {
+  return codigoDoErro(error) === CODIGO_CONTA_MUDOU;
+}
+
 export type EstadoPagamento =
   | "sem-pedido"
   | "aguardando-aprovacao"

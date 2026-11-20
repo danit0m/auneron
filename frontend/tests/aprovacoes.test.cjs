@@ -88,3 +88,36 @@ test('rotulo: outros status ignoram consumed_at', () => {
   assert.equal(rotuloStatusPedido({ status: 'expired' }), 'Expirada');
   assert.equal(rotuloStatusPedido({ status: 'cancelled' }), 'Cancelada');
 });
+
+const { avisoPedidoConcorrente, AVISO_PEDIDO_CONCORRENTE } = load('lib/aprovacoes.ts');
+
+const pend = (id, skill, conta, status = 'pending') => ({
+  request_id: id,
+  skill_key: skill,
+  target_account_id: conta,
+  status,
+});
+
+test('concorrencia: pagamento e atraso pendentes da mesma conta avisam os dois', () => {
+  const lista = [pend(1, 'account.mark_paid', 7), pend(2, 'account.mark_overdue', 7)];
+  assert.equal(avisoPedidoConcorrente(lista[0], lista), AVISO_PEDIDO_CONCORRENTE);
+  assert.equal(avisoPedidoConcorrente(lista[1], lista), AVISO_PEDIDO_CONCORRENTE);
+  assert.match(AVISO_PEDIDO_CONCORRENTE, /outro pedido pendente para esta conta/);
+});
+
+test('concorrencia: contas diferentes, outro nao pendente ou pedido unico nao avisam', () => {
+  const lista = [
+    pend(1, 'account.mark_paid', 7),
+    pend(2, 'account.mark_overdue', 8),
+    pend(3, 'account.mark_overdue', 7, 'approved'),
+  ];
+  assert.equal(avisoPedidoConcorrente(lista[0], lista), null);
+  assert.equal(avisoPedidoConcorrente(lista[0], [lista[0]]), null);
+});
+
+test('concorrencia: pedido nao pendente, sem conta ou de outra acao nao avisa', () => {
+  const lista = [pend(1, 'account.mark_paid', 7), pend(2, 'account.mark_overdue', 7)];
+  assert.equal(avisoPedidoConcorrente({ ...lista[0], status: 'approved' }, lista), null);
+  assert.equal(avisoPedidoConcorrente({ ...lista[0], target_account_id: null }, lista), null);
+  assert.equal(avisoPedidoConcorrente({ ...lista[0], skill_key: 'outra.acao' }, lista), null);
+});
