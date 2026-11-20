@@ -66,7 +66,7 @@ services:
       APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_APPLICATION_NAME: auneron-migration-prod
-      CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}
+      CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}${CUSTOMER_DOMAIN_ALIAS:+,https://$CUSTOMER_DOMAIN_ALIAS}
       EXPECTED_DATABASE_NAME: ${EXPECTED_DATABASE_NAME:?Defina EXPECTED_DATABASE_NAME (identidade esperada do banco de producao)}
       EXPECTED_DATABASE_HOST: ${EXPECTED_DATABASE_HOST:?Defina EXPECTED_DATABASE_HOST (identidade esperada do banco de producao)}
 
@@ -102,7 +102,7 @@ services:
       APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_APPLICATION_NAME: auneron-api-prod
-      CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}
+      CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}${CUSTOMER_DOMAIN_ALIAS:+,https://$CUSTOMER_DOMAIN_ALIAS}
       EXPECTED_DATABASE_NAME: ${EXPECTED_DATABASE_NAME:?Defina EXPECTED_DATABASE_NAME (identidade esperada do banco de producao)}
       EXPECTED_DATABASE_HOST: ${EXPECTED_DATABASE_HOST:?Defina EXPECTED_DATABASE_HOST (identidade esperada do banco de producao)}
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-auneron_session}
@@ -193,7 +193,11 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=auneron_web_prod"
-      - "traefik.http.routers.auneron.rule=Host(`${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}`)"
+      # CUSTOMER_DOMAIN_ALIAS e opcional (ex.: www.<dominio>): vazio/ausente
+      # = um unico host; definido = o mesmo router atende os dois hosts e
+      # o backend aceita os dois como origens CORS (cada um exige DNS e
+      # certificado proprios).
+      - "traefik.http.routers.auneron.rule=Host(`${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}`)${CUSTOMER_DOMAIN_ALIAS:+ || Host(`$CUSTOMER_DOMAIN_ALIAS`)}"
       - "traefik.http.routers.auneron.entrypoints=websecure"
       - "traefik.http.routers.auneron.tls.certresolver=letsencrypt"
       - "traefik.http.services.auneron.loadbalancer.server.port=80"
