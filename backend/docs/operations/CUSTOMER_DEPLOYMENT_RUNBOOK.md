@@ -111,10 +111,15 @@ Contrato:
   validado pelo backend, que rejeita HTTP e wildcard em produção);
 - **sem alias `www` implícito** — o Traefik só responde ao FQDN
   literal configurado;
-- aliases adicionais ou redirects (por exemplo `www.` → apex, ou um
-  segundo domínio) estão **fora deste contrato**. Se um cliente
-  precisar disso, é uma extensão a ser desenhada separadamente, nunca
-  uma heurística automática.
+- um único alias explícito é opcional via `CUSTOMER_DOMAIN_ALIAS`
+  (por exemplo `www.<dominio>`): vazio/ausente = comportamento acima;
+  definido = o Traefik atende os dois hosts e `CORS_ORIGINS` lista os
+  dois (`https://` obrigatório, sem duplicata). O alias exige registro
+  DNS e certificado próprios e **nunca** é derivado automaticamente
+  de `CUSTOMER_DOMAIN`. Cookie de sessão é por host (sem atributo
+  `Domain`): login em um host não vale no outro;
+- mais de um alias ou redirects (por exemplo `www.` → apex) estão
+  **fora deste contrato**.
 
 `CUSTOMER_DOMAIN` é obrigatório e fail-fast: o compose usa
 `${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN}` tanto no label do Traefik
