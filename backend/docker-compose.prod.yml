@@ -69,6 +69,10 @@ services:
       CORS_ORIGINS: https://${CUSTOMER_DOMAIN:?Defina CUSTOMER_DOMAIN (dominio do cliente, sem protocolo)}${CUSTOMER_DOMAIN_ALIAS:+,https://$CUSTOMER_DOMAIN_ALIAS}
       EXPECTED_DATABASE_NAME: ${EXPECTED_DATABASE_NAME:?Defina EXPECTED_DATABASE_NAME (identidade esperada do banco de producao)}
       EXPECTED_DATABASE_HOST: ${EXPECTED_DATABASE_HOST:?Defina EXPECTED_DATABASE_HOST (identidade esperada do banco de producao)}
+      # A migracao importa os mesmos Settings do backend, que em production
+      # recusam iniciar sem os proxies empacotados. Mesma expressao do
+      # servico `backend` -- altere os dois juntos.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.28.1.10/32,172.28.0.10/32}
 
     secrets:
       - database_url
