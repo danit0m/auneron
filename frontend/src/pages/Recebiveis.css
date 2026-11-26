@@ -440,3 +440,58 @@
   background: rgb(239 68 68 / 14%);
   color: var(--text-primary);
 }
+
+/* D2.1 -- contraste, zebra e estados legiveis nos tres temas. */
+.recebiveis-table th {
+  border-bottom: 2px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+.recebiveis-table td {
+  border-bottom: 1px solid var(--border-default);
+}
+
+.recebiveis-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-primary-500) 6%, transparent);
+}
+
+.recebiveis-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-primary-500) 14%, transparent);
+}
+
+.recebiveis-valor {
+  color: var(--text-primary);
+  font-weight: var(--font-bold);
+}
+
+.recebiveis-state,
+.recebiveis-empty p,
+.recebiveis-panel h2 + p,
+.recebiveis-vazio-aba,
+.recebiveis-muted,
+.recebiveis-nota,
+.recebiveis-pagamento small,
+.recebiveis-indicadores small,
+.recebiveis-indicadores dt,
+.recebiveis-legend li {
+  color: var(--text-secondary);
+}
+
+.recebiveis-tab:focus-visible,
+.recebiveis-link:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.recebiveis-link {
+  color: var(--color-primary-700);
+  text-decoration: underline;
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .recebiveis-link {
+  color: var(--color-primary-400);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .recebiveis-error {
+  color: var(--color-danger-500);
+}
