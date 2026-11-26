@@ -9,6 +9,9 @@ import {
 import type {
   LatestDecisionResponse,
 } from "../../types/orchestrator";
+import { rotuloDecisao } from "../../design/labels";
+
+import "./styles/ExplainabilityCard.css";
 
 interface Props {
   data: LatestDecisionResponse | null;
@@ -41,7 +44,7 @@ export default function ExplainabilityCard({
   ) {
     return (
       <section className="explainability-card">
-        <h3>Explainability Engine</h3>
+        <h3>Explicabilidade da análise</h3>
 
         <div className="explainability-empty">
           Nenhuma decisão disponível.
@@ -114,7 +117,7 @@ export default function ExplainabilityCard({
 
         <div>
 
-          <h3>Explainability Engine</h3>
+          <h3>Explicabilidade da análise</h3>
 
           <span>
             Como a IA chegou
@@ -148,7 +151,7 @@ export default function ExplainabilityCard({
 
               </div>
 
-              <span className="impact-badge">
+              <span className="impact-badge" data-impacto={item.impact}>
                 {item.impact}
               </span>
 
@@ -183,7 +186,7 @@ export default function ExplainabilityCard({
         <div>
 
           <strong>
-            Executive Summary
+            Resumo da análise
           </strong>
 
           <span>
@@ -195,7 +198,7 @@ export default function ExplainabilityCard({
 
             <b>
               {" "}
-              {d.decision_name}
+              {rotuloDecisao(d.decision_name)}
             </b>
 
             .

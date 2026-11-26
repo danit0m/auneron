@@ -10,6 +10,12 @@ import {
 import type {
   LatestDecisionResponse,
 } from "../../types/orchestrator";
+import {
+  rotuloDecisao,
+  rotuloEvento,
+} from "../../design/labels";
+
+import "./styles/DecisionContextCard.css";
 
 interface DecisionContextCardProps {
   data: LatestDecisionResponse | null;
@@ -76,18 +82,6 @@ function formatarDataHora(
   ).format(dataConvertida);
 }
 
-function formatarNome(
-  nome: string,
-): string {
-  return nome
-    .replaceAll("_", " ")
-    .toLowerCase()
-    .replace(
-      /\b\w/g,
-      (letra) => letra.toUpperCase(),
-    );
-}
-
 function formatarStatus(
   status: string,
 ): string {
@@ -136,7 +130,7 @@ export default function DecisionContextCard({
 
             <div>
               <span>
-                Decision Context
+                Contexto da análise
               </span>
 
               <h3>
@@ -154,8 +148,8 @@ export default function DecisionContextCard({
           </strong>
 
           <p>
-            Os dados utilizados pelo Decision
-            Engine aparecerão após uma nova
+            Os dados utilizados pela análise
+            aparecerão após uma nova
             decisão.
           </p>
         </div>
@@ -176,7 +170,7 @@ export default function DecisionContextCard({
 
           <div>
             <span>
-              Decision Context
+              Contexto da análise
             </span>
 
             <h3>
@@ -196,9 +190,9 @@ export default function DecisionContextCard({
 
       <p className="decision-context-description">
         Este painel apresenta o contexto
-        financeiro considerado pelo Decision
-        Engine para aplicar a regra e selecionar
-        os agentes responsáveis pela análise.
+        financeiro considerado pela análise
+        para aplicar a regra e selecionar
+        os agentes responsáveis.
       </p>
 
       <div className="decision-context-grid-v2">
@@ -274,7 +268,7 @@ export default function DecisionContextCard({
             <span>Regra aplicada</span>
 
             <strong>
-              {formatarNome(
+              {rotuloDecisao(
                 decision.decision_name,
               )}
             </strong>
@@ -287,12 +281,12 @@ export default function DecisionContextCard({
           <span>Evento analisado</span>
 
           <strong>
-            {decision.event_name}
+            {rotuloEvento(decision.event_name)}
           </strong>
         </div>
 
         <div>
-          <span>Confiança da decisão</span>
+          <span>Nível de confiança</span>
 
           <strong>
             {decision.confidence_percentage.toFixed(
@@ -314,7 +308,7 @@ export default function DecisionContextCard({
       </div>
 
       <div className="decision-context-id">
-        <span>Decision ID</span>
+        <span>Identificador da análise</span>
 
         <strong title={decision.decision_id}>
           {decision.decision_id}

@@ -7,6 +7,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { rotuloDecisao } from "../../design/labels";
 import type {
   LatestDecisionResponse,
 } from "../../types/orchestrator";
@@ -63,16 +64,8 @@ function getConfidenceProfile(
   };
 }
 
-function formatDecisionName(
-  value: string,
-): string {
-  return value
-    .replaceAll("_", " ")
-    .toLowerCase()
-    .replace(
-      /\b\w/g,
-      (letter) => letter.toUpperCase(),
-    );
+function formatDecisionName(value: string): string {
+  return rotuloDecisao(value);
 }
 
 export default function ConfidenceMeter({

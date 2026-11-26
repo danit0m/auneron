@@ -36,6 +36,7 @@ import type {
 } from "../../types/nba";
 import { getActionLabel } from "../../types/nba";
 import { AuneronBot } from "../ui";
+import KindBadge from "../executive/KindBadge";
 import {
   botFromPolicy,
   textoEvidenciaAcao,
@@ -73,6 +74,20 @@ const ASSESSMENT_CODE_LABELS: Record<string, string> = {
 function formatarDataHora(valor: string): string {
   return new Date(valor).toLocaleString("pt-BR");
 }
+
+const ESTADO_APROVACAO_LABELS: Record<string, string> = {
+  rejected: "recusada",
+  expired: "expirada",
+  cancelled: "cancelada",
+};
+
+const STATUS_TAREFA_LABELS: Record<string, string> = {
+  pending: "pendente",
+  open: "aberta",
+  in_progress: "em andamento",
+  completed: "concluída",
+  cancelled: "cancelada",
+};
 
 type MarkOverdueEpisodeState =
   | "not_materialized"
@@ -643,12 +658,17 @@ export default function RecommendationDecisionCard({
         />
         <div className="recommendation-chat-bubble">
           <strong>Assistente Auneron</strong>
+          <KindBadge kind="recomendacao" />
           <p>{botPolicy.message}</p>
           <span>Confira os motivos abaixo e use as ações disponíveis para o seu perfil.</span>
         </div>
       </div>
       <div className="recommendation-card-section">
         <h4>Próximos passos recomendados</h4>
+        <p className="recommendation-kind-note">
+          <KindBadge kind="recomendacao" />
+          Sugestão da política: nenhuma ação foi executada por esta recomendação.
+        </p>
         <p className="recommendation-decision-type">
           {
             DECISION_TYPE_LABELS[
@@ -748,6 +768,11 @@ export default function RecommendationDecisionCard({
                           )}
 
                           {estadoMarkOverdue ===
+                            "approved_ready" && (
+                              <KindBadge kind="acao-aprovada" />
+                            )}
+
+                          {estadoMarkOverdue ===
                             "approved_ready" &&
                             (podeExecutarMarkOverdue ? (
                               <button
@@ -780,7 +805,7 @@ export default function RecommendationDecisionCard({
                               "cancelled") && (
                             <span className="recommendation-mark-overdue-status">
                               Aprovação{" "}
-                              {estadoMarkOverdue}.
+                              {ESTADO_APROVACAO_LABELS[estadoMarkOverdue]}.
                             </span>
                           )}
 
@@ -835,7 +860,9 @@ export default function RecommendationDecisionCard({
                 {escalonamentoTerminal
                   ? "encerrado"
                   : "em andamento"}
-                {" "}-- status: {escalationWorkItem.status}.
+                {" "}-- tarefa operacional:{" "}
+                {STATUS_TAREFA_LABELS[escalationWorkItem.status] ??
+                  escalationWorkItem.status}.
               </span>
             </div>
 
@@ -1104,7 +1131,7 @@ export default function RecommendationDecisionCard({
       <div className="recommendation-card-section recommendation-evidence">
         <h4>
           <Info size={15} />
-          Por que esta recomendação?
+          Análise: por que esta recomendação?
         </h4>
 
         <ul className="recommendation-evidence-list">
