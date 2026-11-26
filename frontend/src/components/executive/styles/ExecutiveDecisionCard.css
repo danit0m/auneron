@@ -5,12 +5,12 @@
 .executive-business-decision-card {
   overflow: hidden;
   padding: 24px;
-  border: 1px solid #ddd6fe;
+  border: 1px solid var(--color-brand-200);
   border-radius: 18px;
   background:
     radial-gradient(
       circle at top right,
-      rgb(124 58 237 / 11%),
+      rgb(37 99 235 / 11%),
       transparent 38%
     ),
     linear-gradient(
@@ -40,7 +40,7 @@
 
 .executive-business-eyebrow {
   display: block;
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 9px;
   font-weight: 850;
   letter-spacing: 0.9px;
@@ -233,7 +233,7 @@
 }
 
 .executive-business-confidence-heading strong {
-  color: #5b21b6;
+  color: var(--text-brand);
   font-size: 9px;
   font-weight: 850;
   text-transform: capitalize;
@@ -253,13 +253,13 @@
   background:
     linear-gradient(
       90deg,
-      #7c3aed,
+      var(--color-brand-600),
       #2563eb,
       #10b981
     );
   box-shadow:
     0 0 14px
-    rgb(124 58 237 / 20%);
+    rgb(37 99 235 / 20%);
   transition:
     width 450ms ease;
 }
@@ -290,7 +290,7 @@
 }
 
 .executive-business-empty svg {
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .executive-business-empty strong {
@@ -478,7 +478,7 @@
 /* Neon surfaces and readable text for legacy screens. */
 :is([data-theme="neon"], [data-theme="dark"]) .executive-business-decision-card {
   border: 1px solid var(--border-default);
-  background: radial-gradient( circle at top right, rgb(124 58 237 / 11%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 11%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .executive-business-eyebrow,

@@ -164,7 +164,7 @@
 }
 
 :is([data-theme="dark"], [data-theme="neon"]) .recebiveis-tab-ativa {
-  background: rgb(99 102 241 / 18%);
+  background: rgb(37 99 235 / 18%);
   color: var(--text-primary);
 }
 

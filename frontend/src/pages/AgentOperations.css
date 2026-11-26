@@ -61,7 +61,7 @@
     linear-gradient(
       135deg,
       #2563eb,
-      #4f46e5
+      var(--color-brand-800)
     );
   color: #ffffff;
   box-shadow:
@@ -163,7 +163,7 @@
 
 .agent-operation-purple {
   background: #f1eafe;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .agent-operation-blue {
@@ -246,7 +246,7 @@
   place-items: center;
   border-radius: 10px;
   background: #eef2ff;
-  color: #4f46e5;
+  color: var(--color-brand-700);
 }
 
 .agent-operation-panel-header h3 {
@@ -287,7 +287,7 @@
   place-items: center;
   border-radius: 9px;
   background: #eef2ff;
-  color: #4f46e5;
+  color: var(--color-brand-700);
   font-size: 10px;
   font-weight: 800;
 }
@@ -352,7 +352,7 @@
 }
 
 .agent-metric-name svg {
-  color: #6d28d9;
+  color: var(--text-brand);
 }
 
 .agent-metric-name strong {
@@ -396,12 +396,12 @@
 
 .decision-trust-center {
   overflow: hidden;
-  border: 1px solid #ddd6fe;
+  border: 1px solid var(--color-brand-200);
   border-radius: 20px;
   background:
     radial-gradient(
       circle at top right,
-      rgb(124 58 237 / 13%),
+      rgb(37 99 235 / 13%),
       transparent 34%
     ),
     linear-gradient(
@@ -426,7 +426,7 @@
 .decision-trust-eyebrow {
   display: block;
   margin-bottom: 7px;
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 10px;
   font-weight: 850;
   letter-spacing: 1px;
@@ -458,13 +458,13 @@
   background:
     linear-gradient(
       135deg,
-      #7c3aed,
-      #4f46e5
+      var(--color-brand-600),
+      var(--color-brand-800)
     );
   color: #ffffff;
   box-shadow:
     0 14px 28px
-    rgb(124 58 237 / 24%);
+    rgb(37 99 235 / 24%);
 }
 
 .decision-empty-state {
@@ -479,7 +479,7 @@
 }
 
 .decision-empty-state svg {
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .decision-empty-state h3 {
@@ -638,7 +638,7 @@
 }
 
 .decision-card-title > svg {
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .decision-card-title h3 {
@@ -726,7 +726,7 @@
   place-items: center;
   border-radius: 9px;
   background: #eee9fe;
-  color: #6d28d9;
+  color: var(--text-brand);
   font-size: 9px;
   font-weight: 850;
 }
@@ -748,7 +748,7 @@
 }
 
 .decision-agent-step > svg {
-  color: #a78bfa;
+  color: var(--color-brand-400);
 }
 
 /* =====================================
@@ -780,7 +780,7 @@
   place-items: center;
   border-radius: 10px;
   background: #f0eafe;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .decision-history-heading {
@@ -916,7 +916,7 @@
 
 .agent-telemetry-heading div > span {
   margin-top: 4px;
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 9px;
   font-weight: 700;
 }
@@ -1192,7 +1192,7 @@
 
 :is([data-theme="neon"], [data-theme="dark"]) .decision-trust-center {
   border: 1px solid var(--border-default);
-  background: radial-gradient( circle at top right, rgb(124 58 237 / 13%), transparent 34% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 13%), transparent 34% ), linear-gradient( 135deg, var(--surface), var(--surface) );
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .decision-primary-card {

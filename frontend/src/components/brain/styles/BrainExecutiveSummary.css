@@ -5,12 +5,12 @@
 .brain-executive-summary {
   overflow: hidden;
   padding: 18px 20px;
-  border: 1px solid #ddd6fe;
+  border: 1px solid var(--color-brand-200);
   border-radius: 16px;
   background:
     radial-gradient(
       circle at top right,
-      rgb(124 58 237 / 10%),
+      rgb(37 99 235 / 10%),
       transparent 38%
     ),
     linear-gradient(
@@ -51,18 +51,18 @@
   background:
     linear-gradient(
       135deg,
-      #7c3aed,
-      #4f46e5
+      var(--color-brand-600),
+      var(--color-brand-800)
     );
   color: #ffffff;
   box-shadow:
     0 10px 22px
-    rgb(124 58 237 / 22%);
+    rgb(37 99 235 / 22%);
 }
 
 .brain-executive-summary-title span {
   display: block;
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 8px;
   font-weight: 850;
   letter-spacing: 0.9px;
@@ -155,7 +155,7 @@
 .brain-executive-summary-description > svg {
   flex: 0 0 auto;
   margin-top: 1px;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .brain-executive-summary-description span,
@@ -343,7 +343,7 @@
 
 .brain-executive-agents-header span {
   display: block;
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 7px;
   font-weight: 850;
   letter-spacing: 0.7px;
@@ -407,7 +407,7 @@
   place-items: center;
   border-radius: 9px;
   background: #f1eafe;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .brain-executive-agent-main strong,
@@ -456,7 +456,7 @@
   background:
     linear-gradient(
       90deg,
-      #7c3aed,
+      var(--color-brand-600),
       #2563eb
     );
 }
@@ -515,7 +515,7 @@
 }
 
 .brain-executive-summary-empty svg {
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .brain-executive-summary-empty strong {
@@ -593,7 +593,7 @@
 /* Neon surfaces and readable text for legacy screens. */
 :is([data-theme="neon"], [data-theme="dark"]) .brain-executive-summary {
   border: 1px solid var(--border-default);
-  background: radial-gradient( circle at top right, rgb(124 58 237 / 10%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 10%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .brain-executive-summary-title span,

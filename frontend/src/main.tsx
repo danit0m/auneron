@@ -20,6 +20,7 @@ import { isThemePreference } from "./types/theme";
 
 import "./styles/design-tokens.css";
 import "./index.css";
+import "./styles/brand.css";
 
 const rootElement =
   document.getElementById("root");

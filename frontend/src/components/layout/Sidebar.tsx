@@ -10,8 +10,8 @@ import {
   Palette,
   ServerCog,
   Users,
-  WalletCards,
 } from "lucide-react";
+import { BrandLogo } from "../brand/BrandLogo";
 import type {
   LucideIcon,
 } from "lucide-react";
@@ -315,15 +315,15 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <div className="sidebar-logo">
-          <WalletCards size={25} />
+        <div className="sidebar-logo sidebar-logo--d2">
+          <BrandLogo variant="symbol" />
         </div>
 
         <div>
-          <strong>Auneron AI</strong>
+          <strong>AUNERON</strong>
 
           <span>
-            Business Intelligence
+            Digital Worker
           </span>
         </div>
       </div>

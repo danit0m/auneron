@@ -7,7 +7,7 @@ export const shadows = {
   xl: "0 22px 52px rgb(15 23 42 / 14%)",
   "2xl": "0 30px 80px rgb(15 23 42 / 22%)",
 
-  brand: "0 12px 28px rgb(124 58 237 / 20%)",
+  brand: "0 12px 28px rgb(37 99 235 / 20%)",
   primary: "0 12px 28px rgb(37 99 235 / 20%)",
   success: "0 12px 28px rgb(5 150 105 / 18%)",
   warning: "0 12px 28px rgb(217 119 6 / 18%)",

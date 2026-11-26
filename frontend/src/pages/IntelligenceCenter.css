@@ -2,7 +2,7 @@
 .intelligence-navigation nav { display: flex; flex-wrap: wrap; gap: 8px; }
 .intelligence-navigation a { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 20px; border: 1px solid var(--border-default); border-radius: 999px; color: var(--text-secondary); background: var(--surface); text-decoration: none; font-size: 13px; font-weight: 700; }
 .intelligence-navigation a[aria-current="page"] { color: var(--text-inverse); background: var(--color-primary-600); border-color: transparent; }
-[data-theme="neon"] .intelligence-navigation a[aria-current="page"] { background: linear-gradient(115deg, #67e8f9, #a5b4fc); color: #04050d; }
+[data-theme="neon"] .intelligence-navigation a[aria-current="page"] { background: linear-gradient(115deg, #67e8f9, #60a5fa); color: #04050d; }
 .intelligence-navigation p { margin: 16px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
 .intelligence-content > .page { min-height: 0; }
 .intelligence-content > .page > .header,

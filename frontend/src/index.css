@@ -1,7 +1,5 @@
 :root {
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  font-family: var(--font-family-sans);
   color: var(--text-primary);
   background: var(--background);
   font-synthesis: none;
@@ -126,7 +124,7 @@ a {
 
 .sidebar-link-active {
   color: #ffffff;
-  background: linear-gradient(135deg, var(--color-primary-600), var(--color-brand-700));
+  background: linear-gradient(135deg, var(--color-primary-600), var(--color-brand-800));
   box-shadow: 0 8px 20px rgb(37 99 235 / 25%);
 }
 
@@ -378,7 +376,7 @@ a {
 }
 
 .summary-icon-purple {
-  color: var(--color-brand-600);
+  color: var(--text-brand);
   background: var(--color-brand-100);
 }
 
@@ -801,7 +799,7 @@ tbody tr:hover {
 
 .primary-button {
   border: 0;
-  background: linear-gradient(135deg, var(--color-primary-600), var(--color-brand-700));
+  background: linear-gradient(135deg, var(--color-primary-600), var(--color-brand-800));
   color: #ffffff;
   box-shadow: var(--shadow-primary);
 }
@@ -899,7 +897,7 @@ tbody tr:hover {
 
 .clientes-summary-purple {
   background: var(--color-brand-100);
-  color: var(--color-brand-600);
+  color: var(--text-brand);
 }
 
 .clientes-summary-card span,
@@ -1326,6 +1324,13 @@ tbody tr:hover {
 :is([data-theme="neon"], [data-theme="dark"]) .sidebar-link:hover,
 :is([data-theme="neon"], [data-theme="dark"]) .sidebar-footer {
   background: var(--surface);
+}
+
+/* Item ativo do menu: texto branco sobre azul eletrico (o neon/escuro acima deixava o texto cinza). */
+:is([data-theme="neon"], [data-theme="dark"]) .sidebar-link-active,
+:is([data-theme="neon"], [data-theme="dark"]) .sidebar-link-active:hover {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--auneron-brand-blue), var(--color-brand-800));
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .placeholder-page {

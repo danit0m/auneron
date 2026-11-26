@@ -1,0 +1,47 @@
+/* Identidade visual D2: posicionamento dos logotipos oficiais (sem efeitos sobre a marca). */
+.brand-horizontal {
+  display: inline-block;
+  line-height: 0;
+}
+
+.brand-horizontal img {
+  width: 260px;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Claro por padrao; escuro nos temas escuros e no "system" com o sistema escuro. */
+.brand-horizontal-dark { display: none; }
+
+:is([data-theme="dark"], [data-theme="neon"]) .brand-horizontal-light { display: none; }
+:is([data-theme="dark"], [data-theme="neon"]) .brand-horizontal-dark { display: block; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]):not([data-theme="neon"]) .brand-horizontal-light { display: none; }
+  :root:not([data-theme="light"]):not([data-theme="dark"]):not([data-theme="neon"]) .brand-horizontal-dark { display: block; }
+}
+
+.login-brand.login-brand--d2 {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.login-brand-tagline {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Menu lateral (sempre escuro, 250 px): simbolo oficial + nome, sem o fundo em gradiente. */
+.sidebar-logo.sidebar-logo--d2 {
+  width: 44px;
+  height: 44px;
+  border-radius: 0;
+  background: none;
+}
+
+.sidebar-logo--d2 .brand-symbol {
+  width: 44px;
+  height: 44px;
+}

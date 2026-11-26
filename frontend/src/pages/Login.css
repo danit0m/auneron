@@ -59,7 +59,7 @@
 .login-theme-toggle button.active {
   color: #ffffff;
   background:
-    var(--color-brand-600, #7c3aed);
+    var(--color-brand-600);
 }
 
 .login-brand {
@@ -76,9 +76,9 @@
   flex: 0 0 auto;
   border-radius: 12px;
   color:
-    var(--text-brand, #6d28d9);
+    var(--text-brand);
   background:
-    var(--color-brand-100, #ede9fe);
+    var(--color-brand-100, var(--color-brand-100));
 }
 
 .login-brand-icon {
@@ -120,7 +120,7 @@
   display: block;
   margin-bottom: 5px;
   color:
-    var(--text-brand, #6d28d9);
+    var(--text-brand);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -218,7 +218,7 @@
   cursor: pointer;
   color: #ffffff;
   background:
-    var(--color-brand-600, #7c3aed);
+    var(--color-brand-600);
   font: inherit;
   font-weight: 800;
 }

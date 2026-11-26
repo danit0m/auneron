@@ -23,7 +23,7 @@
   background:
     radial-gradient(
       circle at top right,
-      rgb(79 70 229 / 12%),
+      rgb(37 99 235 / 12%),
       transparent 40%
     ),
     linear-gradient(
@@ -37,7 +37,7 @@
 .brain-eyebrow {
   display: block;
   margin-bottom: 5px;
-  color: #4f46e5;
+  color: var(--color-brand-700);
   font-size: 8px;
   font-weight: 850;
   letter-spacing: 0.95px;
@@ -67,9 +67,9 @@
   flex: 0 0 54px;
   place-items: center;
   border-radius: 16px;
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  background: linear-gradient(135deg, var(--color-brand-800), var(--color-brand-600));
   color: #ffffff;
-  box-shadow: 0 13px 28px rgb(79 70 229 / 24%);
+  box-shadow: 0 13px 28px rgb(37 99 235 / 24%);
 }
 
 /* =========================================
@@ -85,12 +85,12 @@
 .brain-hero + section {
   overflow: hidden;
   padding: 17px 19px;
-  border: 1px solid #ddd6fe;
+  border: 1px solid var(--color-brand-200);
   border-radius: 16px;
   background:
     radial-gradient(
       circle at top right,
-      rgb(124 58 237 / 10%),
+      rgb(37 99 235 / 10%),
       transparent 38%
     ),
     linear-gradient(135deg, #ffffff, #faf8ff);
@@ -107,7 +107,7 @@
 
 .brain-executive-eyebrow,
 .executive-brain-eyebrow {
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 8px;
   font-weight: 850;
   letter-spacing: 0.85px;
@@ -232,7 +232,7 @@
 
 .brain-purple {
   background: #f1eafe;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .brain-summary-card span,
@@ -297,7 +297,7 @@
 .brain-search:focus-within {
   border-color: #818cf8;
   background: #ffffff;
-  box-shadow: 0 0 0 3px rgb(99 102 241 / 10%);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 10%);
 }
 
 .brain-search input {
@@ -336,7 +336,7 @@
 
 .brain-filters select:focus {
   border-color: #818cf8;
-  box-shadow: 0 0 0 3px rgb(99 102 241 / 9%);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 9%);
 }
 
 .brain-filters .secondary-button {
@@ -412,9 +412,9 @@
   place-items: center;
   border: 4px solid #ffffff;
   border-radius: 12px;
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  background: linear-gradient(135deg, var(--color-brand-800), var(--color-brand-600));
   color: #ffffff;
-  box-shadow: 0 6px 15px rgb(79 70 229 / 19%);
+  box-shadow: 0 6px 15px rgb(37 99 235 / 19%);
 }
 
 .brain-knowledge-content {
@@ -430,7 +430,7 @@
 
 .brain-agent-name {
   display: block;
-  color: #4f46e5;
+  color: var(--color-brand-700);
   font-size: 7px;
   font-weight: 850;
   letter-spacing: 0.65px;
@@ -572,7 +572,7 @@
 }
 
 .brain-empty-state svg {
-  color: #4f46e5;
+  color: var(--color-brand-700);
 }
 
 .brain-empty-state h3 {
@@ -765,7 +765,7 @@
 /* Neon surfaces and readable text for legacy screens. */
 :is([data-theme="neon"], [data-theme="dark"]) .brain-hero {
   border: 1px solid var(--border-default);
-  background: radial-gradient( circle at top right, rgb(79 70 229 / 12%), transparent 40% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 12%), transparent 40% ), linear-gradient( 135deg, var(--surface), var(--surface) );
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .brain-eyebrow,
@@ -815,7 +815,7 @@
 :is([data-theme="neon"], [data-theme="dark"]) .brain-hero + article,
 :is([data-theme="neon"], [data-theme="dark"]) .brain-hero + section {
   border: 1px solid var(--border-default);
-  background: radial-gradient( circle at top right, rgb(124 58 237 / 10%), transparent 38% ), linear-gradient(135deg, var(--surface), var(--surface));
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 10%), transparent 38% ), linear-gradient(135deg, var(--surface), var(--surface));
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .brain-executive-eyebrow,
@@ -960,7 +960,7 @@
   background:
     radial-gradient(
       circle at top right,
-      rgb(124 58 237 / 10%),
+      rgb(37 99 235 / 10%),
       transparent 38%
     ),
     var(--card-background);

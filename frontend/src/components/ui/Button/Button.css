@@ -23,4 +23,4 @@
 @keyframes ui-button-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.ui-button,.ui-button-spinner{transition:none;animation:none}}
 [data-theme="neon"] .ui-button-primary{border-color:transparent;background:linear-gradient(135deg,#22d3ee,#818cf8)}
-[data-theme="neon"] .ui-button-primary:hover:not(:disabled){background:linear-gradient(135deg,#67e8f9,#a5b4fc)}
+[data-theme="neon"] .ui-button-primary:hover:not(:disabled){background:linear-gradient(135deg,#67e8f9,#60a5fa)}

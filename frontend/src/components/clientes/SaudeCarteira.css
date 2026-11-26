@@ -38,7 +38,7 @@
 
 .saude-faixa:focus-visible,
 .saude-aviso-ver:focus-visible {
-  outline: 2px solid var(--saude-cor, var(--color-primary-500));
+  outline: 2px solid var(--saude-cor);
   outline-offset: 2px;
 }
 
