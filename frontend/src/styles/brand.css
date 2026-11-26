@@ -25,12 +25,19 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 16px;
+}
+
+/* Logotipo nas telas de autenticacao: 288 px (minimo oficial 240 px), proporcao preservada. */
+.login-brand--d2 .brand-horizontal img {
+  width: 288px;
+  max-width: 100%;
 }
 
 .login-brand-tagline {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 /* Menu lateral (sempre escuro, 250 px): simbolo oficial + nome, sem o fundo em gradiente. */

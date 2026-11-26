@@ -1,5 +1,6 @@
 import axios from "axios";
 import {
+  AlertCircle,
   LockKeyhole,
   ShieldCheck,
 } from "lucide-react";
@@ -293,7 +294,8 @@ export default function TrocarSenha() {
               className="login-error"
               role="alert"
             >
-              {errorMessage}
+              <AlertCircle size={18} aria-hidden="true" />
+              <span>{errorMessage}</span>
             </div>
           )}
 
@@ -309,7 +311,7 @@ export default function TrocarSenha() {
 
           <button
             type="button"
-            className="login-submit"
+            className="login-submit login-submit--secondary"
             disabled={submitting}
             onClick={
               () => void handleSignOut()

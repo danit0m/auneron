@@ -1,5 +1,6 @@
 import axios from "axios";
 import {
+  AlertCircle,
   LockKeyhole,
   ShieldCheck,
 } from "lucide-react";
@@ -300,7 +301,8 @@ export default function Login() {
               className="login-error"
               role="alert"
             >
-              {errorMessage}
+              <AlertCircle size={18} aria-hidden="true" />
+              <span>{errorMessage}</span>
             </div>
           )}
 
