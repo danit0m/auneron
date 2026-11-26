@@ -21,6 +21,7 @@ import api, {
 } from "../api/api";
 import BrainExecutiveSummary from "../components/brain/BrainExecutiveSummary";
 import { Header } from "../components/layout/Header";
+import { rotuloAgente, rotuloEvento } from "../design/labels";
 import { useAuth } from "../hooks/useAuth";
 import type { Knowledge } from "../types/knowledge";
 
@@ -172,7 +173,7 @@ export default function Brain() {
         setErro(
           getApiErrorMessage(
             error,
-            "Não foi possível carregar o Brain.",
+            "Não foi possível carregar as análises.",
           ),
         );
       } finally {
@@ -261,6 +262,9 @@ export default function Brain() {
               .toLowerCase()
               .includes(termo) ||
             conhecimento.agent_name
+              .toLowerCase()
+              .includes(termo) ||
+            rotuloAgente(conhecimento.agent_name)
               .toLowerCase()
               .includes(termo);
 
@@ -563,7 +567,7 @@ export default function Brain() {
                       key={agente}
                       value={agente}
                     >
-                      {agente}
+                      {rotuloAgente(agente)}
                     </option>
                   ),
                 )}
@@ -669,7 +673,7 @@ export default function Brain() {
               <div className="loading-spinner" />
 
               <p>
-                Carregando o Brain...
+                Carregando as análises...
               </p>
             </div>
           ) : erro ? (
@@ -716,9 +720,9 @@ export default function Brain() {
                       <div className="brain-knowledge-header">
                         <div>
                           <span className="brain-agent-name">
-                            {
-                              conhecimento.agent_name
-                            }
+                            {rotuloAgente(
+                              conhecimento.agent_name,
+                            )}
                           </span>
 
                           <h3>
@@ -754,9 +758,9 @@ export default function Brain() {
                           Evento:{" "}
 
                           <strong>
-                            {
-                              conhecimento.event_name
-                            }
+                            {rotuloEvento(
+                              conhecimento.event_name,
+                            )}
                           </strong>
                         </span>
 

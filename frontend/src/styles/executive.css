@@ -5,12 +5,12 @@
 .executive-decision-card {
   overflow: hidden;
   padding: 22px;
-  border: 1px solid #ddd6fe;
+  border: 1px solid var(--color-brand-200);
   border-radius: 17px;
   background:
     radial-gradient(
       circle at top right,
-      rgb(124 58 237 / 10%),
+      rgb(37 99 235 / 10%),
       transparent 38%
     ),
     linear-gradient(
@@ -47,18 +47,18 @@
   background:
     linear-gradient(
       135deg,
-      #7c3aed,
-      #4f46e5
+      var(--color-brand-600),
+      var(--color-brand-800)
     );
   color: #ffffff;
   box-shadow:
     0 10px 22px
-    rgb(124 58 237 / 22%);
+    rgb(37 99 235 / 22%);
 }
 
 .executive-decision-title span {
   display: block;
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 9px;
   font-weight: 850;
   letter-spacing: 0.9px;
@@ -185,7 +185,7 @@
 
 .executive-icon-purple {
   background: #f1eafe;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .executive-decision-item span,
@@ -231,7 +231,7 @@
   padding: 11px 13px;
   border-radius: 11px;
   background: #f7f5fc;
-  color: #8b5cf6;
+  color: var(--text-brand);
 }
 
 .executive-decision-metadata span {
@@ -267,7 +267,7 @@
 }
 
 .executive-confidence-progress-header strong {
-  color: #5b21b6;
+  color: var(--text-brand);
   font-size: 9px;
 }
 
@@ -284,13 +284,13 @@
   background:
     linear-gradient(
       90deg,
-      #7c3aed,
+      var(--color-brand-600),
       #2563eb,
       #10b981
     );
   box-shadow:
     0 0 12px
-    rgb(124 58 237 / 25%);
+    rgb(37 99 235 / 25%);
   transition:
     width 450ms ease;
 }
@@ -310,7 +310,7 @@
 }
 
 .executive-decision-empty svg {
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .executive-decision-empty strong {
@@ -416,7 +416,7 @@
     linear-gradient(
       135deg,
       #2563eb,
-      #4f46e5
+      var(--color-brand-800)
     );
   color: #ffffff;
   box-shadow:
@@ -627,12 +627,12 @@
 .confidence-meter-assessment > svg {
   flex: 0 0 auto;
   margin-top: 1px;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .confidence-meter-assessment span {
   display: block;
-  color: #7c3aed;
+  color: var(--text-brand);
   font-size: 9px;
   font-weight: 850;
   letter-spacing: 0.6px;
@@ -770,7 +770,7 @@
   background:
     radial-gradient(
       circle at top right,
-      rgb(124 58 237 / 8%),
+      rgb(37 99 235 / 8%),
       transparent 38%
     ),
     linear-gradient(
@@ -791,7 +791,7 @@
 
 .section-title > svg {
   flex: 0 0 auto;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .section-title h3 {
@@ -848,7 +848,7 @@
   padding: 6px 9px;
   border-radius: 999px;
   background: #f3e8ff;
-  color: #7e22ce;
+  color: var(--text-brand);
   font-size: 8px;
   font-weight: 850;
   white-space: nowrap;
@@ -869,7 +869,7 @@
   background:
     linear-gradient(
       90deg,
-      #7c3aed,
+      var(--color-brand-600),
       #2563eb,
       #10b981
     );
@@ -1010,7 +1010,7 @@
     linear-gradient(
       135deg,
       #2563eb,
-      #4f46e5
+      var(--color-brand-800)
     );
   color: #ffffff;
   box-shadow:
@@ -1119,7 +1119,7 @@
 
 .context-icon-purple {
   background: #f1eafe;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .decision-context-item-v2 span,
@@ -1396,7 +1396,7 @@
   place-items: center;
   border-radius: 11px;
   background: #f1eafe;
-  color: #7c3aed;
+  color: var(--text-brand);
 }
 
 .agent-execution-content {
@@ -1865,7 +1865,7 @@
 /* Neon surfaces and readable text for legacy screens. */
 :is([data-theme="neon"], [data-theme="dark"]) .executive-decision-card {
   border: 1px solid var(--border-default);
-  background: radial-gradient( circle at top right, rgb(124 58 237 / 10%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 10%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .executive-decision-title span,
@@ -2038,7 +2038,7 @@
 
 :is([data-theme="neon"], [data-theme="dark"]) .explainability-card {
   border: 1px solid var(--border-default);
-  background: radial-gradient( circle at top right, rgb(124 58 237 / 8%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 8%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
 }
 
 :is([data-theme="neon"], [data-theme="dark"]) .executive-summary > svg,

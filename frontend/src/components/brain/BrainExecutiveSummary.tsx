@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 
 import { AuneronBot } from "../ui";
+import { rotuloAgente } from "../../design/labels";
+import KindBadge from "../executive/KindBadge";
 import "./styles/BrainExecutiveSummary.css";
 
 interface ExecutiveAgentSummary {
@@ -87,10 +89,7 @@ function formatarPrioridade(
 function formatarNomeAgente(
   nome: string,
 ): string {
-  return nome
-    .replace(/Agent$/i, " Agent")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .trim();
+  return rotuloAgente(nome);
 }
 
 function percentual(
@@ -123,7 +122,7 @@ export default function BrainExecutiveSummary({
         </strong>
 
         <p>
-          Assim que o Brain produzir novos
+          Assim que o sistema produzir novos
           conhecimentos, a visão executiva
           será apresentada aqui.
         </p>
@@ -169,6 +168,8 @@ export default function BrainExecutiveSummary({
             <span>
               Inteligência executiva
             </span>
+
+            <KindBadge kind="analise" />
 
             <h2>
               O que merece sua atenção

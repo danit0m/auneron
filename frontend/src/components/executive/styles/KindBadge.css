@@ -1,0 +1,24 @@
+.kind-badge {
+  --kb-color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 3px 10px;
+  border: 1px solid var(--kb-color);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--kb-color);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.kind-badge-recomendacao { --kb-color: #b45309; border-style: dashed; }
+.kind-badge-acao-aprovada { --kb-color: #047857; background: var(--surface-subtle); }
+
+:is([data-theme="dark"], [data-theme="neon"]) .kind-badge { --kb-color: #93c5fd; }
+:is([data-theme="dark"], [data-theme="neon"]) .kind-badge-recomendacao { --kb-color: #fcd34d; }
+:is([data-theme="dark"], [data-theme="neon"]) .kind-badge-acao-aprovada { --kb-color: #6ee7b7; }

@@ -10,6 +10,7 @@
 
 .approvals-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -20,12 +21,16 @@
 .approvals-toolbar select {
   min-height: 42px;
   padding: 0 34px 0 13px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   border-radius: 11px;
-  outline: 0;
   background: var(--surface);
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--text-primary);
+  font-size: var(--font-sm);
+}
+
+.approvals-toolbar select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .approvals-empty-state {
@@ -34,7 +39,8 @@
   align-items: center;
   gap: 10px;
   padding: 60px 20px;
-  color: var(--text-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
   text-align: center;
 }
 
@@ -51,24 +57,38 @@
 }
 
 .approvals-table th {
-  padding: 13px 18px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-subtle);
+  padding: 12px 18px;
+  border-bottom: 2px solid var(--border-default);
+  color: var(--text-secondary);
   text-align: left;
-  font-size: 11px;
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .approvals-table td {
   padding: 14px 18px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-default);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-sm);
+}
+
+.approvals-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-primary-500) 6%, transparent);
+}
+
+.approvals-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-primary-500) 14%, transparent);
+}
+
+.approvals-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .approvals-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -77,28 +97,36 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 12px;
+  min-height: 34px;
+  padding: 7px 14px;
   border: 1px solid transparent;
-  border-radius: 9px;
-  font-size: 11px;
-  font-weight: 700;
+  border-radius: var(--radius-md);
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
   cursor: pointer;
 }
 
+.approvals-approve-button:focus-visible,
+.approvals-reject-button:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
 .approvals-approve-button {
-  border-color: var(--color-success-300);
-  background: var(--color-success-50);
+  border-color: var(--color-success-700);
+  background: var(--color-success-100);
   color: var(--color-success-700);
 }
 
 .approvals-approve-button:hover:not(:disabled) {
-  background: var(--color-success-100);
+  background: var(--color-success-300);
 }
 
+/* Rejeitar: contorno vermelho, distinto da acao de aprovar. */
 .approvals-reject-button {
-  border-color: var(--color-danger-100);
-  background: var(--color-danger-50);
-  color: var(--color-danger-600);
+  border-color: var(--color-danger-600);
+  background: transparent;
+  color: var(--color-danger-700);
 }
 
 .approvals-reject-button:hover:not(:disabled) {
@@ -112,13 +140,13 @@
 }
 
 .approvals-decided-label {
-  color: var(--text-subtle);
+  color: var(--text-secondary);
 }
 
 .approvals-section-title {
   margin: 0;
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: var(--font-lg);
 }
 
 .approvals-action-cell {
@@ -140,14 +168,34 @@
 
 .approvals-concurrency-warning {
   display: block;
-  color: var(--warning, #b45309);
+  color: var(--color-warning-700);
   font-size: var(--font-xs);
   font-weight: var(--font-bold);
 }
 
 .approvals-effective-date {
   display: block;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-xs);
   font-weight: var(--font-bold);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .approvals-approve-button {
+  border-color: var(--color-success-500);
+  color: var(--color-success-500);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .approvals-reject-button {
+  border-color: var(--color-danger-500);
+  color: var(--color-danger-500);
+}
+
+@media (max-width: 600px) {
+  .approvals-toolbar {
+    padding: 14px;
+  }
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .approvals-concurrency-warning {
+  color: var(--color-warning-500);
 }

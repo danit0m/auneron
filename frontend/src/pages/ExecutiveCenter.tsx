@@ -22,6 +22,8 @@ import api, {
 } from "../api/api";
 import DecisionContextCard from "../components/executive/DecisionContextCard";
 import ExplainabilityCard from "../components/executive/ExplainabilityCard";
+import KindBadge from "../components/executive/KindBadge";
+import { rotuloDecisao, rotuloEvento } from "../design/labels";
 import { Header } from "../components/layout/Header";
 import { AuneronBot } from "../components/ui";
 import type {
@@ -47,54 +49,10 @@ interface ConfidenceProfile {
   className: string;
 }
 
-function formatarNome(
-  nome: string,
-): string {
-  return nome
-    .replaceAll("_", " ")
-    .toLowerCase()
-    .replace(
-      /\b\w/g,
-      (letra) => letra.toUpperCase(),
-    );
-}
-
 function traduzirDecisao(
   nome: string,
 ): string {
-  const decisoes: Record<
-    string,
-    string
-  > = {
-    ALTO_VALOR_EM_ATRASO:
-      "Cliente estratégico em atraso",
-
-    CLIENTE_EM_ATRASO:
-      "Cliente com pagamento em atraso",
-
-    CLIENTE_ALTO_VALOR:
-      "Cliente de alto valor",
-
-    CLIENTE_REGULAR:
-      "Cliente em situação regular",
-
-    BAIXO_RISCO:
-      "Baixo risco financeiro",
-
-    RISCO_MODERADO:
-      "Risco financeiro moderado",
-
-    RISCO_ALTO:
-      "Risco financeiro elevado",
-
-    RISCO_CRITICO:
-      "Risco financeiro crítico",
-  };
-
-  return (
-    decisoes[nome] ??
-    formatarNome(nome)
-  );
+  return rotuloDecisao(nome);
 }
 
 function formatarMoeda(
@@ -480,7 +438,7 @@ export default function ExecutiveCenter() {
     return (
       <div className="page">
         <Header
-          title="Executive Center"
+          title="Visão geral"
           subtitle="Visão executiva das decisões e recomendações da IA"
         />
 
@@ -500,7 +458,7 @@ export default function ExecutiveCenter() {
   return (
     <div className="page">
       <Header
-        title="Executive Center"
+        title="Visão geral"
         subtitle="Visão executiva das decisões e recomendações da IA"
       />
 
@@ -613,7 +571,7 @@ export default function ExecutiveCenter() {
 
             <div>
               <span>
-                Confiança média
+                Nível de confiança médio
               </span>
 
               <strong>
@@ -680,6 +638,7 @@ export default function ExecutiveCenter() {
           />
           <div className="executive-assistant-content">
             <span className="executive-center-eyebrow">Assistente Auneron</span>
+            {decisaoAtual && !erro && !atualizando && <KindBadge kind="analise" />}
             <h2 id="executive-assistant-title">
               {atualizando ? "Atualizando as informações" : erro ? "Não consegui atualizar a visão executiva" : decisaoAtual ? traduzirDecisao(decisaoAtual.decision_name) : "Ainda não há uma análise disponível"}
             </h2>
@@ -715,7 +674,7 @@ export default function ExecutiveCenter() {
               <div className="executive-business-decision-header">
                 <div>
                   <span className="executive-business-eyebrow">
-                    Decisão estratégica
+                    <KindBadge kind="analise" /> Decisão estratégica
                   </span>
 
                   <h3>
@@ -739,7 +698,7 @@ export default function ExecutiveCenter() {
                     </strong>
 
                     <span>
-                      Confiança{" "}
+                      Nível de confiança:{" "}
                       {perfilConfianca.label}
                     </span>
                   </div>
@@ -748,8 +707,7 @@ export default function ExecutiveCenter() {
 
               <div className="executive-business-reason">
                 <span>
-                  Por que esta decisão foi
-                  apresentada?
+                  Fundamentação da análise
                 </span>
 
                 <p>
@@ -817,11 +775,11 @@ export default function ExecutiveCenter() {
                 <div className="executive-business-confidence">
                   <div className="executive-business-confidence-heading">
                     <span>
-                      Índice de confiança
+                      Nível de confiança
                     </span>
 
                     <strong>
-                      {perfilConfianca.label}
+                      {decisaoAtual.confidence_percentage.toFixed(1)}% · {perfilConfianca.label}
                     </strong>
                   </div>
 
@@ -871,9 +829,7 @@ export default function ExecutiveCenter() {
                 </div>
 
                 <div>
-                  <span>
-                    Recomendação executiva
-                  </span>
+                  <KindBadge kind="recomendacao" />
 
                   <h3>
                     {recomendacao.title}
@@ -893,6 +849,10 @@ export default function ExecutiveCenter() {
 
             <p className="executive-recommendation-description">
               {recomendacao.description}
+            </p>
+
+            <p className="executive-recommendation-note">
+              Esta é uma recomendação: por si só, ela não executa nenhuma ação.
             </p>
 
             <div className="executive-recommendation-action">
@@ -961,9 +921,7 @@ export default function ExecutiveCenter() {
                   </span>
 
                   <strong>
-                    {
-                      decisaoAtual.decision_name
-                    }
+                    {rotuloDecisao(decisaoAtual.decision_name)}
                   </strong>
                 </div>
 
@@ -973,9 +931,7 @@ export default function ExecutiveCenter() {
                   </span>
 
                   <strong>
-                    {
-                      decisaoAtual.event_name
-                    }
+                    {rotuloEvento(decisaoAtual.event_name)}
                   </strong>
                 </div>
               </div>

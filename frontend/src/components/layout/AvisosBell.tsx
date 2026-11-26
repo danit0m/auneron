@@ -158,8 +158,8 @@ export function AvisosBell() {
         aria-controls="avisos-painel"
         onClick={alternar}
       >
-        <Bell size={20} />
-        {total !== null && <span className="avisos-contador">{total > 99 ? "99+" : total}</span>}
+        <Bell size={20} aria-hidden="true" />
+        {total !== null && <span className="notif-badge avisos-contador" aria-hidden="true">{total > 99 ? "99+" : total}</span>}
       </button>
 
       {aberto && (

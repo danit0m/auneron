@@ -1,0 +1,101 @@
+/* Identidade visual D2: posicionamento dos logotipos oficiais (sem efeitos sobre a marca). */
+.brand-horizontal {
+  display: inline-block;
+  line-height: 0;
+}
+
+.brand-horizontal img {
+  width: 260px;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Claro por padrao; escuro nos temas escuros e no "system" com o sistema escuro. */
+.brand-horizontal-dark { display: none; }
+
+:is([data-theme="dark"], [data-theme="neon"]) .brand-horizontal-light { display: none; }
+:is([data-theme="dark"], [data-theme="neon"]) .brand-horizontal-dark { display: block; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]):not([data-theme="neon"]) .brand-horizontal-light { display: none; }
+  :root:not([data-theme="light"]):not([data-theme="dark"]):not([data-theme="neon"]) .brand-horizontal-dark { display: block; }
+}
+
+.login-brand.login-brand--d2 {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+/* Logotipo nas telas de autenticacao: 288 px (minimo oficial 240 px), proporcao preservada. */
+.login-brand--d2 .brand-horizontal img {
+  width: 288px;
+  max-width: 100%;
+}
+
+.login-brand-tagline {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Menu lateral (sempre escuro, 250 px): simbolo oficial + nome, sem o fundo em gradiente. */
+.sidebar-logo.sidebar-logo--d2 {
+  width: 44px;
+  height: 44px;
+  border-radius: 0;
+  background: none;
+}
+
+.sidebar-logo--d2 .brand-symbol {
+  width: 44px;
+  height: 44px;
+}
+
+/* ---- D2.1: ajustes de contraste e tamanho medidos na revisao do PO ---- */
+/* Avatar do usuario (13 px): branco sobre azul eletrico, 5,2:1 nos tres temas. */
+.user-avatar {
+  background: var(--auneron-brand-blue);
+  color: #ffffff;
+}
+
+/* Aba ativa da Central: o "texto inverso" do escuro era navy sobre azul (3,6:1). */
+.intelligence-navigation a[aria-current="page"] { color: #ffffff; }
+[data-theme="neon"] .intelligence-navigation a[aria-current="page"] { color: #04050d; }
+
+/* Botao primario: comeca sempre no azul eletrico (no neon o primary-600 e ciano, e o branco ficava ilegivel). */
+.primary-button {
+  background: linear-gradient(135deg, var(--auneron-brand-blue), var(--color-brand-800));
+}
+
+/* Selos (badges) nos temas escuros: texto claro da mesma familia semantica. */
+:is([data-theme="dark"], [data-theme="neon"]) .ui-badge-success { color: #6ee7b7; }
+:is([data-theme="dark"], [data-theme="neon"]) .ui-badge-warning { color: #fcd34d; }
+:is([data-theme="dark"], [data-theme="neon"]) .ui-badge-danger { color: #fca5a5; }
+:is([data-theme="dark"], [data-theme="neon"]) .ui-badge-info { color: #7dd3fc; }
+:is([data-theme="dark"], [data-theme="neon"]) .ui-badge-brand { color: #93c5fd; }
+
+/* Botao "Marcar como resolvido" nos temas escuros. */
+:is([data-theme="dark"], [data-theme="neon"]) .brain-resolve-button {
+  border-color: rgb(110 231 183 / 45%);
+  background: rgb(16 185 129 / 12%);
+  color: #6ee7b7;
+}
+
+/* Aviso de seguranca do acesso elevado nos temas escuros. */
+:is([data-theme="dark"], [data-theme="neon"]) .elevated-access-security-note { color: #6ee7b7; }
+
+/* <small> herdava "smaller" do navegador (10 px) nas legendas. */
+.cockpit-legend small,
+.recebiveis-legend small { font-size: var(--font-xs); }
+
+/* Numeros dos cartoes de saude da carteira no tema claro: tom escurecido da cor semantica. */
+:root:not([data-theme="dark"]):not([data-theme="neon"]) .saude-faixa-texto strong {
+  color: color-mix(in srgb, var(--saude-cor) 60%, #0b1426);
+}
+
+/* Situacao do titulo na decisao: a regra base usa !important com tons escuros; nos temas escuros, tons claros. */
+:is([data-theme="dark"], [data-theme="neon"]) .executive-business-status-late { color: #fca5a5 !important; background: rgb(239 68 68 / 14%); }
+:is([data-theme="dark"], [data-theme="neon"]) .executive-business-status-paid { color: #6ee7b7 !important; background: rgb(16 185 129 / 14%); }
+:is([data-theme="dark"], [data-theme="neon"]) .executive-business-status-open { color: #fcd34d !important; background: rgb(245 158 11 / 14%); }

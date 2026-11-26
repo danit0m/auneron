@@ -2,13 +2,13 @@
 .ui-button:hover:not(:disabled){transform:translateY(-1px)}
 .ui-button:active:not(:disabled){transform:translateY(0)}
 .ui-button:focus-visible{outline:none;box-shadow:var(--shadow-focus)}
-.ui-button:disabled{cursor:not-allowed;opacity:.58}
-.ui-button-sm{min-height:2rem;padding:0 var(--space-3);font-size:var(--font-xs)}
-.ui-button-md{min-height:2.625rem;padding:0 var(--space-4);font-size:var(--font-sm)}
+.ui-button:disabled{cursor:not-allowed;opacity:.55;box-shadow:none;filter:grayscale(.5)}
+.ui-button-sm{min-height:2rem;padding:0 var(--space-3);font-size:.8125rem}
+.ui-button-md{min-height:2.625rem;padding:0 var(--space-4);font-size:.875rem}
 .ui-button-lg{min-height:3rem;padding:0 var(--space-5);font-size:var(--font-md)}
 .ui-button-primary{border-color:var(--color-primary-600);background:var(--color-primary-600);color:var(--text-inverse);box-shadow:var(--shadow-primary)}
 .ui-button-primary:hover:not(:disabled){border-color:var(--color-primary-700);background:var(--color-primary-700)}
-.ui-button-secondary{border-color:var(--border-subtle);background:var(--surface);color:var(--text-primary);box-shadow:var(--shadow-xs)}
+.ui-button-secondary{border-color:var(--border-default);background:var(--surface);color:var(--text-primary);box-shadow:var(--shadow-xs)}
 .ui-button-secondary:hover:not(:disabled){border-color:var(--border-default);background:var(--surface-subtle)}
 .ui-button-outline{border-color:var(--color-primary-300);background:transparent;color:var(--color-primary-700)}
 .ui-button-outline:hover:not(:disabled){border-color:var(--color-primary-500);background:var(--color-primary-50)}
@@ -23,4 +23,6 @@
 @keyframes ui-button-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.ui-button,.ui-button-spinner{transition:none;animation:none}}
 [data-theme="neon"] .ui-button-primary{border-color:transparent;background:linear-gradient(135deg,#22d3ee,#818cf8)}
-[data-theme="neon"] .ui-button-primary:hover:not(:disabled){background:linear-gradient(135deg,#67e8f9,#a5b4fc)}
+[data-theme="neon"] .ui-button-primary:hover:not(:disabled){background:linear-gradient(135deg,#67e8f9,#60a5fa)}
+[data-theme="dark"] .ui-button-primary{color:#fff}
+[data-theme="neon"] .ui-button-primary{box-shadow:0 0 14px rgb(34 211 238 / 22%)}

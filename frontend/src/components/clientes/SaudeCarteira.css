@@ -38,7 +38,7 @@
 
 .saude-faixa:focus-visible,
 .saude-aviso-ver:focus-visible {
-  outline: 2px solid var(--saude-cor, var(--color-primary-500));
+  outline: 2px solid var(--saude-cor);
   outline-offset: 2px;
 }
 
@@ -232,6 +232,46 @@
 .cliente-contact-alert {
   display: inline-flex;
   color: var(--color-warning-500);
+}
+
+/* D2.1 -- cartoes padronizados: mesma altura, alinhamento e rotulos legiveis. */
+.saude-faixas {
+  align-items: stretch;
+}
+
+.saude-faixa {
+  min-height: 7.5rem;
+  align-items: center;
+}
+
+.saude-faixa-texto {
+  justify-content: center;
+}
+
+.saude-faixa-titulo {
+  font-size: var(--font-sm);
+  line-height: 1.25;
+}
+
+.saude-faixa-numero > span {
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
+}
+
+.saude-faixa-texto small {
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.saude-faixa[aria-pressed="true"] .saude-faixa-titulo {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.saude-sub,
+.saude-barra-nome {
+  color: var(--text-secondary);
 }
 
 @media (max-width: 1100px) {

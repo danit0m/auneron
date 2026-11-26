@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import type { Account } from "../../types/account";
+import "./ClienteTable.css";
 import { situacaoConta, contaSemContato } from "../../lib/carteira";
 
 interface ClienteTableProps {
@@ -115,7 +116,8 @@ export default function ClienteTable({
                     aria-label="Sem e-mail e WhatsApp"
                     role="img"
                   >
-                    <AlertTriangle size={16} />
+                    <AlertTriangle size={14} aria-hidden="true" />
+                    Sem contato
                   </span>
                 ) : (
                 <div className="cliente-contact">

@@ -1,9 +1,10 @@
 import axios from "axios";
 import {
+  AlertCircle,
   LockKeyhole,
   ShieldCheck,
-  WalletCards,
 } from "lucide-react";
+import { BrandLogo } from "../components/brand/BrandLogo";
 import {
   type FormEvent,
   useState,
@@ -221,19 +222,11 @@ export default function Login() {
           </div>
         </div>
 
-        <div className="login-brand">
-          <div className="login-brand-icon">
-            <WalletCards size={30} />
-          </div>
-
-          <div>
-            <strong>
-              Auneron AI
-            </strong>
-            <span>
-              Business Intelligence
-            </span>
-          </div>
+        <div className="login-brand login-brand--d2">
+          <BrandLogo variant="horizontal" />
+          <span className="login-brand-tagline">
+            Inteligência que trabalha pela sua empresa.
+          </span>
         </div>
 
         <div className="login-heading">
@@ -308,7 +301,8 @@ export default function Login() {
               className="login-error"
               role="alert"
             >
-              {errorMessage}
+              <AlertCircle size={18} aria-hidden="true" />
+              <span>{errorMessage}</span>
             </div>
           )}
 
