@@ -175,7 +175,10 @@ function MenuSection({
                 : "sidebar-link"
             }
           >
-            <Icon size={20} />
+            <Icon
+              size={18}
+              aria-hidden="true"
+            />
 
             <span>{item.label}</span>
 
@@ -183,24 +186,10 @@ function MenuSection({
               "number" &&
               item.badge > 0 && (
                 <span
+                  className="notif-badge"
                   aria-label={
                     `${item.badge} aprovações pendentes`
                   }
-                  style={{
-                    marginLeft: "auto",
-                    minWidth: 18,
-                    height: 18,
-                    padding: "0 5px",
-                    display: "grid",
-                    placeItems: "center",
-                    borderRadius: 999,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    lineHeight: 1,
-                    color: "#ffffff",
-                    background:
-                      "var(--accent-danger, #dc2626)",
-                  }}
                 >
                   {item.badge > 99
                     ? "99+"
@@ -353,14 +342,12 @@ export function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <BarChart3 size={20} />
+        <BarChart3
+          size={18}
+          aria-hidden="true"
+        />
 
-        <div
-          style={{
-            minWidth: 0,
-            flex: 1,
-          }}
-        >
+        <div className="sidebar-footer-user">
           <strong>
             {user?.name ?? "Auneron AI"}
           </strong>
@@ -376,28 +363,16 @@ export function Sidebar() {
           type="button"
           title="Sair"
           aria-label="Sair"
+          className="sidebar-signout"
           disabled={signingOut}
           onClick={() =>
             void handleSignOut()
           }
-          style={{
-            width: 34,
-            height: 34,
-            display: "grid",
-            placeItems: "center",
-            flex: "0 0 auto",
-            border: "1px solid var(--border-subtle, #dbe2ea)",
-            borderRadius: 9,
-            cursor: signingOut
-              ? "wait"
-              : "pointer",
-            color: "var(--text-secondary, #475569)",
-            background:
-              "var(--surface-primary, #ffffff)",
-            opacity: signingOut ? 0.6 : 1,
-          }}
         >
-          <LogOut size={17} />
+          <LogOut
+            size={18}
+            aria-hidden="true"
+          />
         </button>
       </div>
     </aside>

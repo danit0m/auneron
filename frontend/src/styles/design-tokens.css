@@ -95,8 +95,8 @@
   /* Semantic text */
   --text-primary: var(--auneron-brand-navy);
   --text-secondary: var(--auneron-brand-muted);
-  --text-muted: var(--neutral-500);
-  --text-subtle: var(--neutral-400);
+  --text-muted: #526074;
+  --text-subtle: var(--neutral-500);
   --text-inverse: var(--neutral-0);
   --text-brand: var(--color-brand-700);
   --text-link: var(--color-primary-700);
@@ -120,7 +120,7 @@
   --card-background: var(--surface);
   --card-border: var(--border-subtle);
   --input-background: var(--surface);
-  --input-border: var(--border-default);
+  --input-border: #7b8aa1;
   --header-background: rgb(255 255 255 / 88%);
   --sidebar-background: #0b1426;
 }
@@ -177,7 +177,7 @@
   --card-background: var(--surface);
   --card-border: var(--border-subtle);
   --input-background: #0d192e;
-  --input-border: var(--border-default);
+  --input-border: #5b7099;
   --header-background: rgb(11 20 38 / 88%);
   --sidebar-background: #080f1f;
 }
@@ -244,7 +244,12 @@
     Consolas,
     monospace;
 
+  /* Escala D2.1: secundario 12-14, texto 14-16, secao 18-20, pagina 24-28, indicadores 24-32 */
   --font-xs: 0.75rem;
+  --font-btn: 0.8125rem;
+  --font-page-title: 1.5rem;
+  --font-section-title: 1.125rem;
+  --font-kpi: 1.75rem;
   --font-sm: 0.875rem;
   --font-md: 1rem;
   --font-lg: 1.125rem;
@@ -386,20 +391,20 @@
   --card-background: var(--surface);
   --card-border: var(--border-subtle);
   --input-background: rgb(8 15 30 / 70%);
-  --input-border: var(--border-default);
+  --input-border: rgb(125 175 255 / 60%);
   --header-background: rgb(11 20 38 / 72%);
   --sidebar-background: #060d1c;
   --scrollbar-track: transparent;
 
   --shadow-xs: 0 0 0 1px rgb(96 165 250 / 8%);
   --shadow-sm: 0 8px 24px rgb(0 0 0 / 40%);
-  --shadow-md: 0 0 28px rgb(34 211 238 / 18%);
-  --shadow-lg: 0 0 36px rgb(37 99 235 / 28%);
+  --shadow-md: 0 4px 18px rgb(34 211 238 / 9%);
+  --shadow-lg: 0 6px 24px rgb(37 99 235 / 14%);
   --shadow-card: 0 8px 24px rgb(0 0 0 / 40%);
-  --shadow-card-hover: 0 0 28px rgb(34 211 238 / 18%);
-  --shadow-primary: 0 0 24px rgb(34 211 238 / 45%);
-  --shadow-danger: 0 0 24px rgb(225 29 72 / 45%);
-  --shadow-modal: 0 0 60px rgb(37 99 235 / 35%);
+  --shadow-card-hover: 0 6px 20px rgb(34 211 238 / 10%);
+  --shadow-primary: 0 0 12px rgb(34 211 238 / 22%);
+  --shadow-danger: 0 0 12px rgb(225 29 72 / 22%);
+  --shadow-modal: 0 20px 60px rgb(0 0 0 / 50%), 0 0 24px rgb(37 99 235 / 18%);
   --shadow-focus: 0 0 0 3px rgb(34 211 238 / 35%);
 }
 
