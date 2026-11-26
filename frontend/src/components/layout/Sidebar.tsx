@@ -5,12 +5,10 @@ import {
   FileUp,
   HandCoins,
   LayoutDashboard,
-  Lightbulb,
   LockKeyhole,
   LogOut,
   Palette,
   ServerCog,
-  ShieldCheck,
   Users,
   WalletCards,
 } from "lucide-react";
@@ -89,22 +87,10 @@ const principalItems: MenuItem[] = [
 
 const intelligenceItems: MenuItem[] = [
   {
-    label: "Executive Center",
-    path: "/executive-center",
-    icon: ShieldCheck,
-    permission: "executive.view",
-  },
-  {
-    label: "Brain",
-    path: "/brain",
+    label: "Central de Inteligência",
+    path: "/inteligencia",
     icon: BrainCircuit,
     permission: "brain.view",
-  },
-  {
-    label: "Recomendações",
-    path: "/recomendacoes",
-    icon: Lightbulb,
-    permission: "approval:read",
   },
   {
     label: "Aprovações",
@@ -116,7 +102,7 @@ const intelligenceItems: MenuItem[] = [
 
 const administrationItems: MenuItem[] = [
   {
-    label: "AI Operations",
+    label: "Saúde do sistema",
     path: "/agent-operations",
     icon: ServerCog,
     permission:

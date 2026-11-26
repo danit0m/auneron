@@ -282,15 +282,10 @@
   align-content: center;
   gap: 9px;
   padding: 30px;
-  border: 1px dashed #d8cfee;
+  border: 1px solid var(--card-border);
   border-radius: 18px;
-  background:
-    linear-gradient(
-      135deg,
-      #ffffff,
-      #faf8ff
-    );
-  color: #8a96a8;
+  background: var(--card-background);
+  color: var(--text-muted);
   text-align: center;
 }
 
@@ -299,7 +294,7 @@
 }
 
 .executive-business-empty strong {
-  color: #344158;
+  color: var(--text-primary);
   font-size: 13px;
 }
 
@@ -478,4 +473,70 @@
   .executive-business-grid > div {
     min-height: 50px;
   }
+}
+
+/* Neon surfaces and readable text for legacy screens. */
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-decision-card {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(124 58 237 / 11%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-eyebrow,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-confidence-heading strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-empty svg {
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-decision-header h3,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-grid strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-empty strong {
+  color: var(--text-primary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-level-excellent,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-status-paid {
+  background: var(--surface);
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-level-high {
+  background: var(--surface);
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-level-medium,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-status-open {
+  background: var(--surface);
+  color: var(--color-warning-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-level-low,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-status-late {
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-reason,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-grid > div,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-confidence {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-reason span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-reason p,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-grid span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-confidence-heading span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-confidence p {
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-confidence-track {
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-business-empty {
+  border: 1px dashed var(--border-default);
+  background: linear-gradient( 135deg, var(--surface), var(--surface) );
+  color: var(--text-secondary);
 }

@@ -17,6 +17,7 @@ export interface AuneronBotProps extends HTMLAttributes<HTMLDivElement> {
   size?: BotSize;
   /** Fala exibida num balão ao lado do robô. */
   message?: string;
+  iconOnly?: boolean;
   /** Texto acessível; o padrão descreve o humor. */
   label?: string;
 }

@@ -121,6 +121,7 @@ export function AuneronBot({
   mood = "atento",
   size = "md",
   message,
+  iconOnly = false,
   label,
   className,
   ...props
@@ -153,7 +154,7 @@ export function AuneronBot({
         </g>
         <Extras mood={mood} />
       </svg>
-      <p className="ui-bot-message">{message ?? text}</p>
+      {!iconOnly && <p className="ui-bot-message">{message ?? text}</p>}
     </div>
   );
 }

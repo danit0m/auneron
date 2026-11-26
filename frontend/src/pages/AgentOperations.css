@@ -1043,3 +1043,206 @@
     padding: 16px;
   }
 }
+
+/* Neon surfaces and readable text for legacy screens. */
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operations-hero {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 15%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operations-eyebrow {
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operations-hero h2,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-orchestrator-status strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-summary-card strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-panel-header h3,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-registry-item strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-metric-name strong,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-trust-header h2,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-empty-state h3,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-primary-heading h3,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-grid strong,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-card-title h3,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-signal-item strong,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-agent-step strong,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-history-heading strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-heading strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operations-empty h3 {
+  color: var(--text-primary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operations-hero p,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-orchestrator-status span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-summary-card span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-summary-card small,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-panel-header p,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-registry-item span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-metrics-table th,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-metrics-table td,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-empty-table,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-trust-header p,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-empty-state,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-primary-heading > div > span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-reason,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-grid span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-timestamp,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-card-title p,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-signal-item span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-signal-item small,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-agent-step span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-history-heading div > span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-history-main > p,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-history-meta,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-meta,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operations-empty {
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operations-error {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-summary-card,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-registry-panel,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-metrics-panel,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-panel,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-history-panel,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-grid > div,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-signals-card,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-agents-card,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-agent-step {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-purple,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-agent-number,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-history-icon {
+  background: var(--surface);
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-blue,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-panel-header > div > span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-registry-position,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-confidence-high {
+  background: var(--surface);
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-green,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-confidence-excellent,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-icon-success,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-success {
+  background: var(--surface);
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-orange,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-confidence-medium {
+  background: var(--surface);
+  color: var(--color-warning-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-red,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-failure-active,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-confidence-low,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-icon-error,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-error,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-error-message {
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-operation-panel-header,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-registry-item,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-metrics-table th,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-metrics-table td,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-trust-header,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-signal-item,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-history-item,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-toolbar,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-item {
+  border-bottom: 1px solid var(--border-default);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-registry-item svg,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-success-rate,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-signal-item > svg {
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-metric-name svg,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-trust-eyebrow,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-empty-state svg,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-card-title > svg,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-agent-step > svg,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-heading div > span {
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-failure-count {
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .decision-trust-center {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(124 58 237 / 13%), transparent 34% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .decision-primary-card {
+  border: 1px solid var(--border-default);
+  background: linear-gradient( 135deg, var(--surface), rgb(248 245 255 / 92%) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-filters select {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-telemetry-count {
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+/* Compact service health overview and optional support diagnostics. */
+.agent-operations-page .agent-operations-hero { padding: 20px 24px; }
+.agent-operations-page .agent-operations-hero h2 { font-size: 23px; }
+.agent-operations-page .agent-operations-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.agent-operations-page .agent-operation-summary-card strong { white-space: normal; overflow-wrap: anywhere; font-size: clamp(16px, 1.7vw, 23px); }
+
+.system-health-notices {
+  padding: 22px;
+  border: 1px solid var(--border-default);
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+.system-health-notices h2 { margin: 0 0 12px; font-size: 17px; }
+.system-health-notices p { margin: 0 0 14px; color: var(--text-secondary); line-height: 1.7; font-size: 13px; }
+.system-health-notices a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text-link); font-size: 12px; font-weight: 600; }
+
+.system-health-diagnostics {
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: 20px;
+  background: var(--surface);
+}
+.system-health-diagnostics > summary { cursor: pointer; min-height: 28px; color: var(--text-primary); font-size: 15px; font-weight: 700; }
+.system-health-diagnostics > p { margin: 12px 0 20px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.system-health-diagnostics > .agent-operations-grid { margin-bottom: 20px; }
+.system-health-diagnostics .agent-operations-empty { min-height: 0; padding: 22px; }
+.system-health-diagnostics .agent-operations-empty > svg { display: none; }
+.system-health-diagnostics .agent-operations-empty h3 { margin: 0; font-size: 13px; }
+.system-health-diagnostics .agent-empty-table { height: auto; padding: 22px; }
+@media (max-width: 950px) { .agent-operations-page .agent-operations-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .agent-operations-page .agent-operations-summary { grid-template-columns: 1fr; }
+  .system-health-diagnostics { padding: 14px; }
+}

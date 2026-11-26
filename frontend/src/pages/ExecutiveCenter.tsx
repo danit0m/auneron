@@ -23,6 +23,7 @@ import api, {
 import DecisionContextCard from "../components/executive/DecisionContextCard";
 import ExplainabilityCard from "../components/executive/ExplainabilityCard";
 import { Header } from "../components/layout/Header";
+import { AuneronBot } from "../components/ui";
 import type {
   DecisionHistoryResponse,
   LatestDecisionResponse,
@@ -485,7 +486,7 @@ export default function ExecutiveCenter() {
 
         <section className="page-content">
           <div className="state-container">
-            <div className="loading-spinner" />
+            <AuneronBot mood="pensando" size="lg" message="Consultando as análises registradas..." />
 
             <p>
               Carregando visão executiva...
@@ -671,20 +672,44 @@ export default function ExecutiveCenter() {
           </article>
         </div>
 
-        {!decisaoAtual ? (
-          <article className="executive-business-empty">
-            <BrainCircuit size={38} />
+        <section className="executive-assistant" aria-labelledby="executive-assistant-title">
+          <AuneronBot
+            mood={atualizando ? "pensando" : erro ? "preocupado" : decisaoAtual ? "atento" : "dormindo"}
+            size="lg"
+            label="AuneronBot, assistente do Auneron"
+          />
+          <div className="executive-assistant-content">
+            <span className="executive-center-eyebrow">Assistente Auneron</span>
+            <h2 id="executive-assistant-title">
+              {atualizando ? "Atualizando as informações" : erro ? "Não consegui atualizar a visão executiva" : decisaoAtual ? traduzirDecisao(decisaoAtual.decision_name) : "Ainda não há uma análise disponível"}
+            </h2>
+            <div className="executive-assistant-message" role="status">
+              {atualizando ? (
+                <p>Estou consultando os resultados registrados. Aguarde a atualização.</p>
+              ) : erro ? (
+                <p>Ocorreu uma falha ao consultar os dados. Use “Atualizar visão” para tentar novamente.</p>
+              ) : decisaoAtual ? (
+                <>
+                  <p>{decisaoAtual.reason}</p>
+                  <span>Análise registrada em {formatarData(decisaoAtual.created_at)}. Consulte o contexto e as evidências abaixo.</span>
+                </>
+              ) : (
+                <p>Não encontrei análises registradas para apresentar. Quando houver uma avaliação disponível, o resultado e seus motivos aparecerão aqui.</p>
+              )}
+            </div>
+            {decisaoAtual && !erro && !atualizando && (
+              <a
+                className="executive-assistant-details"
+                href="#executive-analysis-details"
+                onClick={() => setDetalhesAbertos(true)}
+              >
+                Ver detalhes da análise
+              </a>
+            )}
+          </div>
+        </section>
 
-            <strong>
-              Nenhuma análise disponível
-            </strong>
-
-            <p>
-              Cadastre ou atualize um cliente
-              para gerar uma nova avaliação.
-            </p>
-          </article>
-        ) : (
+        {decisaoAtual && (
           <>
             <article className="executive-business-decision-card">
               <div className="executive-business-decision-header">
@@ -887,7 +912,7 @@ export default function ExecutiveCenter() {
         )}
 
         {decisaoAtual && (
-          <article className="executive-analysis-details">
+          <article id="executive-analysis-details" className="executive-analysis-details">
             <button
               type="button"
               className="executive-analysis-details-toggle"

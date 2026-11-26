@@ -284,3 +284,40 @@
   align-items: flex-start;
   gap: 8px;
 }
+
+/* Recommendations presented as a conversation with recorded evidence. */
+.recommendation-chat-intro,
+.recommendation-chat-reply {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.recommendation-chat-intro { padding: 24px; border: 1px solid var(--border-subtle); border-radius: 24px; background: var(--surface); }
+.recommendation-chat-reply { grid-template-columns: 100px minmax(0, 1fr); margin-bottom: 12px; }
+.recommendation-chat-intro > .ui-bot,
+.recommendation-chat-reply > .ui-bot { flex-direction: column; text-align: center; }
+.recommendation-chat-intro .ui-bot-message,
+.recommendation-chat-reply .ui-bot-message { margin: 0; font-size: 11px; }
+.recommendation-chat-bubble { min-width: 0; padding: 20px; border: 1px solid var(--border-subtle); border-radius: 6px 22px 22px; background: var(--surface-subtle); color: var(--text-primary); overflow-wrap: anywhere; }
+.recommendation-chat-bubble > strong { color: var(--text-link); font-size: 12px; }
+.recommendation-chat-bubble p { margin: 12px 0 0; font-size: 14px; line-height: 1.8; }
+.recommendation-chat-bubble > span { display: block; margin-top: 12px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.recommendation-conversations { display: grid; gap: 20px; }
+.recommendation-conversation { min-width: 0; border: 1px solid var(--border-default); border-radius: 22px; background: var(--surface); }
+.recommendation-account-context { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; padding: 24px; }
+.recommendation-account-context > div { min-width: 0; overflow-wrap: anywhere; }
+.recommendation-account-context span { color: var(--text-muted); font-size: 11px; }
+.recommendation-account-context h2 { margin: 8px 0; font-size: 17px; }
+.recommendation-account-context p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.recommendation-chat-loading { padding: 24px; }
+[data-theme="neon"] .recommendation-chat-intro { background: radial-gradient(ellipse at 5% 45%, rgb(6 182 212 / 15%), transparent 48%), #0a1022; border-color: rgb(103 232 249 / 30%); }
+[data-theme="neon"] .recommendation-chat-bubble { background: rgb(6 14 32 / 75%); }
+@media (max-width: 680px) {
+  .recommendation-chat-intro,
+  .recommendation-chat-reply { grid-template-columns: 1fr; gap: 16px; }
+  .recommendation-chat-intro > .ui-bot,
+  .recommendation-chat-reply > .ui-bot { justify-self: start; flex-direction: row; }
+  .recommendation-chat-intro .ui-bot-figure { width: 88px; height: 88px; }
+  .recommendation-account-context { padding: 18px; }
+}

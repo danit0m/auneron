@@ -398,8 +398,8 @@ export default function Brain() {
   return (
     <div className="page">
       <Header
-        title="Brain Center"
-        subtitle="Acompanhe os conhecimentos produzidos pelos agentes"
+        title="Central de Inteligência"
+        subtitle="Acompanhe as análises, os alertas e as recomendações do Auneron"
       />
 
       <section className="page-content brain-page">
@@ -410,13 +410,13 @@ export default function Brain() {
             </span>
 
             <h2>
-              O cérebro do Auneron AI
+              Informações para decidir melhor
             </h2>
 
             <p>
               Visualize alertas, análises
-              e recomendações geradas pelos
-              agentes em tempo real.
+              e recomendações
+              registradas no sistema.
             </p>
           </div>
 
@@ -429,6 +429,7 @@ export default function Brain() {
           report={executiveReport}
         />
 
+        {!executiveReport && (
         <div className="brain-summary-grid">
           <article className="brain-summary-card">
             <div className="brain-summary-icon brain-blue">
@@ -520,6 +521,7 @@ export default function Brain() {
             </div>
           </article>
         </div>
+        )}
 
         <section className="panel brain-panel">
           <div className="brain-toolbar">
@@ -529,8 +531,8 @@ export default function Brain() {
               <input
                 type="search"
                 value={pesquisa}
-                placeholder="Pesquisar conhecimentos..."
-                aria-label="Pesquisar conhecimentos"
+                placeholder="Pesquisar análises e alertas..."
+                aria-label="Pesquisar análises e alertas"
                 onChange={(event) =>
                   setPesquisa(
                     event.target.value,
@@ -540,6 +542,8 @@ export default function Brain() {
             </div>
 
             <div className="brain-filters">
+              <details className="brain-agent-filter">
+                <summary>Detalhes técnicos</summary>
               <select
                 value={filtroAgente}
                 aria-label="Filtrar por agente"
@@ -564,10 +568,11 @@ export default function Brain() {
                   ),
                 )}
               </select>
+              </details>
 
               <select
                 value={filtroSeveridade}
-                aria-label="Filtrar por severidade"
+                aria-label="Filtrar por prioridade"
                 onChange={(event) =>
                   setFiltroSeveridade(
                     event.target.value,
@@ -575,7 +580,7 @@ export default function Brain() {
                 }
               >
                 <option value="todas">
-                  Todas as severidades
+                  Todas as prioridades
                 </option>
 
                 <option value="critical">

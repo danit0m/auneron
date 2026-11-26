@@ -30,7 +30,6 @@ import {
   CardFooter,
   CardHeader,
   Input,
-  MOOD_LABEL,
   moodFromInvoice,
   Spinner,
 } from "../../components/ui";
@@ -792,7 +791,6 @@ export default function UIShowcase() {
               {botMoods.map((mood) => (
                 <div key={mood}>
                   <AuneronBot mood={mood} size="md" />
-                  <span>{MOOD_LABEL[mood]}</span>
                 </div>
               ))}
             </div>

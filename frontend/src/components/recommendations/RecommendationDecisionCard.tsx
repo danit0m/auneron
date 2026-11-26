@@ -635,14 +635,20 @@ export default function RecommendationDecisionCard({
 
   return (
     <div className="recommendation-card">
-      <AuneronBot
-        size="sm"
-        mood={botPolicy.mood}
-        message={botPolicy.message}
-      />
-
+      <div className="recommendation-chat-reply">
+        <AuneronBot
+          size="md"
+          mood={botPolicy.mood}
+          label="AuneronBot"
+        />
+        <div className="recommendation-chat-bubble">
+          <strong>Assistente Auneron</strong>
+          <p>{botPolicy.message}</p>
+          <span>Confira os motivos abaixo e use as ações disponíveis para o seu perfil.</span>
+        </div>
+      </div>
       <div className="recommendation-card-section">
-        <h4>Decisão NBA</h4>
+        <h4>Próximos passos recomendados</h4>
         <p className="recommendation-decision-type">
           {
             DECISION_TYPE_LABELS[

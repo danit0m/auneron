@@ -1861,3 +1861,213 @@
     padding: 14px;
   }
 }
+
+/* Neon surfaces and readable text for legacy screens. */
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-card {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(124 58 237 / 10%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-title span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-progress-header strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-empty svg,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-assessment > svg,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-assessment span,
+:is([data-theme="neon"], [data-theme="dark"]) .section-title > svg {
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-title h3,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-item strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-empty strong,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-title h3,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-number,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-progress-header strong,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-evidence-item strong,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-empty strong,
+:is([data-theme="neon"], [data-theme="dark"]) .section-title h3,
+:is([data-theme="neon"], [data-theme="dark"]) .explainability-header strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary strong,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-title h3,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-item-v2 strong,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-empty strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-title h3,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-summary strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-heading div > strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-empty strong {
+  color: var(--text-primary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-excellent,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-icon-green,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-excellent
+  .confidence-meter-label,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-status-paid,
+:is([data-theme="neon"], [data-theme="dark"]) .context-icon-green,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-strategy,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-status-success {
+  background: var(--surface);
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-high,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-icon-blue,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-decision,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-high
+  .confidence-meter-label,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-evidence-icon,
+:is([data-theme="neon"], [data-theme="dark"]) .context-icon-blue,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-order {
+  background: var(--surface);
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-medium,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-icon-orange,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-medium
+  .confidence-meter-label,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-status-open,
+:is([data-theme="neon"], [data-theme="dark"]) .context-icon-orange,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-status-pending {
+  background: var(--surface);
+  color: var(--color-warning-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-low,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-low
+  .confidence-meter-label,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-status-late,
+:is([data-theme="neon"], [data-theme="dark"]) .context-icon-red,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-status-error,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-error {
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-reason,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-item,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-score,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-assessment,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-evidence-item,
+:is([data-theme="neon"], [data-theme="dark"]) .explainability-item,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-item-v2,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-id,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-summary > div,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-step,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-footer {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-reason span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-reason p,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-item span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-metadata span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-metadata strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-progress-header span,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-percent,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-progress-header span,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-scale,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-assessment p,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-evidence-item span,
+:is([data-theme="neon"], [data-theme="dark"]) .section-title span,
+:is([data-theme="neon"], [data-theme="dark"]) .explainability-header div > span,
+:is([data-theme="neon"], [data-theme="dark"]) .explainability-item p,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-description,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-item-v2 span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-audit span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-audit strong,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-id span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-id strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-summary span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-heading div > span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-meta,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-meta strong,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-connector,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-footer span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-footer strong {
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-icon-purple,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-metadata > div,
+:is([data-theme="neon"], [data-theme="dark"]) .impact-badge,
+:is([data-theme="neon"], [data-theme="dark"]) .context-icon-purple,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-icon {
+  background: var(--surface);
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-confidence-progress-track,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-track,
+:is([data-theme="neon"], [data-theme="dark"]) .impact-bar,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-audit > div,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-progress,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-connector span {
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-decision-empty {
+  border: 1px dashed var(--border-default);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-card {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 9%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-title span,
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-empty svg,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-title span,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-empty svg,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-summary svg {
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .confidence-meter-empty,
+:is([data-theme="neon"], [data-theme="dark"]) .explainability-empty,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-empty,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-empty {
+  border: 1px dashed var(--border-default);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .explainability-card {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(124 58 237 / 8%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary > svg,
+:is([data-theme="neon"], [data-theme="dark"]) .decision-flags > div:nth-child(1) svg,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-title span,
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-empty svg {
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .decision-flags > div {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .decision-flags > div:nth-child(2) svg {
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .decision-flags > div:nth-child(3) svg {
+  color: var(--color-warning-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .decision-context-card {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(37 99 235 / 8%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .agent-execution-flow-card {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(16 185 129 / 8%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}

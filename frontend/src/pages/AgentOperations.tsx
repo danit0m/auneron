@@ -2,14 +2,12 @@ import {
   Activity,
   AlertTriangle,
   Bot,
-  BrainCircuit,
   CheckCircle2,
   Clock3,
   Cpu,
   RefreshCw,
   ServerCog,
   ShieldCheck,
-  Sparkles,
   Workflow,
   XCircle,
 } from "lucide-react";
@@ -20,19 +18,14 @@ import {
   useState,
 } from "react";
 
+import { Link } from "react-router-dom";
+
 import api, {
   getApiErrorMessage,
 } from "../api/api";
-import AgentExecutionFlow from "../components/executive/AgentExecutionFlow";
-import ConfidenceMeter from "../components/executive/ConfidenceMeter";
-import DecisionContextCard from "../components/executive/DecisionContextCard";
-import ExecutiveDecisionCard from "../components/executive/ExecutiveDecisionCard";
-import ExplainabilityCard from "../components/executive/ExplainabilityCard";
 import { Header } from "../components/layout/Header";
 import type {
   AgentMetrics,
-  DecisionHistoryResponse,
-  LatestDecisionResponse,
   OrchestratorHealth,
   OrchestratorMetrics,
   OrchestratorRegistry,
@@ -82,54 +75,12 @@ function formatarData(
   ).format(date);
 }
 
-function formatarMoeda(
-  valor: number,
-): string {
-  return new Intl.NumberFormat(
-    "pt-BR",
-    {
-      style: "currency",
-      currency: "BRL",
-    },
-  ).format(valor);
-}
-
-function formatarNome(
-  nome: string,
-): string {
-  return nome
-    .replaceAll("_", " ")
-    .toLowerCase()
-    .replace(
-      /\b\w/g,
-      (letra) => letra.toUpperCase(),
-    );
-}
-
 function classeStatus(
   status: string,
 ): string {
   return status === "SUCCESS"
     ? "agent-operation-status agent-operation-success"
     : "agent-operation-status agent-operation-error";
-}
-
-function classeConfianca(
-  confianca: number,
-): string {
-  if (confianca >= 95) {
-    return "decision-confidence decision-confidence-excellent";
-  }
-
-  if (confianca >= 85) {
-    return "decision-confidence decision-confidence-high";
-  }
-
-  if (confianca >= 70) {
-    return "decision-confidence decision-confidence-medium";
-  }
-
-  return "decision-confidence decision-confidence-low";
 }
 
 export default function AgentOperations() {
@@ -152,20 +103,6 @@ export default function AgentOperations() {
     useState<OrchestratorTelemetry | null>(
       null,
     );
-
-  const [
-    latestDecision,
-    setLatestDecision,
-  ] = useState<LatestDecisionResponse | null>(
-    null,
-  );
-
-  const [
-    decisionHistory,
-    setDecisionHistory,
-  ] = useState<DecisionHistoryResponse | null>(
-    null,
-  );
 
   const [carregando, setCarregando] =
     useState(true);
@@ -200,8 +137,6 @@ export default function AgentOperations() {
           registryResponse,
           metricsResponse,
           telemetryResponse,
-          latestDecisionResponse,
-          decisionHistoryResponse,
         ] = await Promise.all([
           api.get<OrchestratorHealth>(
             "/orchestrator/health",
@@ -224,18 +159,6 @@ export default function AgentOperations() {
             },
           ),
 
-          api.get<LatestDecisionResponse>(
-            "/orchestrator/decision/latest",
-          ),
-
-          api.get<DecisionHistoryResponse>(
-            "/orchestrator/decisions",
-            {
-              params: {
-                limit: 25,
-              },
-            },
-          ),
         ]);
 
         setHealth(healthResponse.data);
@@ -248,12 +171,6 @@ export default function AgentOperations() {
         setTelemetry(
           telemetryResponse.data,
         );
-        setLatestDecision(
-          latestDecisionResponse.data,
-        );
-        setDecisionHistory(
-          decisionHistoryResponse.data,
-        );
       } catch (error) {
         console.error(
           "Erro ao carregar Agent Operations:",
@@ -263,7 +180,7 @@ export default function AgentOperations() {
         setErro(
           getApiErrorMessage(
             error,
-            "Não foi possível carregar as informações do AI Orchestrator.",
+            "Não foi possível carregar as informações do Serviço de processamento.",
           ),
         );
       } finally {
@@ -349,8 +266,8 @@ export default function AgentOperations() {
     return (
       <div className="page">
         <Header
-          title="Agent Operations"
-          subtitle="Observabilidade e confiança nas decisões da IA"
+          title="Saúde do sistema"
+          subtitle="Disponibilidade, execuções e ocorrências do serviço"
         />
 
         <section className="page-content">
@@ -370,26 +287,23 @@ export default function AgentOperations() {
   return (
     <div className="page">
       <Header
-        title="Agent Operations"
-        subtitle="Observabilidade e confiança nas decisões da IA"
+        title="Saúde do sistema"
+        subtitle="Disponibilidade, execuções e ocorrências do serviço"
       />
 
       <section className="page-content agent-operations-page">
         <div className="agent-operations-hero">
           <div>
             <span className="agent-operations-eyebrow">
-              AI Operations Center
+              Administração do Auneron
             </span>
 
             <h2>
-              Operação dos agentes em
-              tempo real
+              Acompanhe a saúde do Auneron
             </h2>
 
             <p>
-              Monitore saúde, decisões,
-              confiança, execução e
-              desempenho do AI Orchestrator.
+              Consulte a disponibilidade do serviço e as ocorrências que exigem atenção.
             </p>
           </div>
 
@@ -409,7 +323,7 @@ export default function AgentOperations() {
           <div className="agent-orchestrator-status">
             <span
               className={
-                health?.status ===
+                !erro && health?.status ===
                 "healthy"
                   ? "agent-status-dot agent-status-online"
                   : "agent-status-dot agent-status-offline"
@@ -418,14 +332,14 @@ export default function AgentOperations() {
 
             <div>
               <strong>
-                AI Orchestrator
+                Serviço de processamento
               </strong>
 
               <span>
-                {health?.status ===
+                {!erro && health?.status ===
                 "healthy"
                   ? "Operacional"
-                  : "Indisponível"}
+                  : "Sem confirmação de disponibilidade"}
               </span>
             </div>
           </div>
@@ -454,26 +368,7 @@ export default function AgentOperations() {
         </div>
 
         <div className="agent-operations-summary">
-          <article className="agent-operation-summary-card">
-            <div className="agent-operation-summary-icon agent-operation-purple">
-              <Bot size={21} />
-            </div>
 
-            <div>
-              <span>
-                Agentes registrados
-              </span>
-
-              <strong>
-                {health?.registered_agents ??
-                  0}
-              </strong>
-
-              <small>
-                Disponíveis no Registry
-              </small>
-            </div>
-          </article>
 
           <article className="agent-operation-summary-card">
             <div className="agent-operation-summary-icon agent-operation-blue">
@@ -484,7 +379,7 @@ export default function AgentOperations() {
               <span>Execuções</span>
 
               <strong>
-                {health?.executions ?? 0}
+                {erro || !health ? "Indisponível" : health.executions}
               </strong>
 
               <small>
@@ -504,15 +399,11 @@ export default function AgentOperations() {
               </span>
 
               <strong>
-                {(
-                  health?.success_rate ??
-                  0
-                ).toFixed(1)}
-                %
+                {erro || !health ? "Indisponível" : health.executions > 0 ? `${health.success_rate.toFixed(1)}%` : "Sem medições"}
               </strong>
 
               <small>
-                Execuções concluídas
+                Desde a inicialização do serviço
               </small>
             </div>
           </article>
@@ -526,14 +417,10 @@ export default function AgentOperations() {
               <span>Tempo médio</span>
 
               <strong>
-                {formatarDuracao(
-                  metrics?.summary
-                    .average_duration_seconds ??
-                    0,
-                )}
+                {erro || !metrics ? "Indisponível" : metrics.summary.executions > 0 ? formatarDuracao(metrics.summary.average_duration_seconds) : "Sem medições"}
               </strong>
 
-              <small>Por execução</small>
+              <small>Desde a inicialização do serviço</small>
             </div>
           </article>
 
@@ -546,7 +433,7 @@ export default function AgentOperations() {
               <span>Falhas</span>
 
               <strong>
-                {health?.failures ?? 0}
+                {erro || !health ? "Indisponível" : health.failures}
               </strong>
 
               <small>
@@ -556,58 +443,21 @@ export default function AgentOperations() {
           </article>
         </div>
 
-        <section className="decision-trust-center">
-          <div className="decision-trust-header">
-            <div>
-              <span className="decision-trust-eyebrow">
-                Executive Trust Center
-              </span>
-
-              <h2>
-                Transparência das decisões
-                da IA
-              </h2>
-
-              <p>
-                Entenda o que o Auneron
-                decidiu, quais sinais foram
-                considerados e por que os
-                agentes foram acionados.
-              </p>
-            </div>
-
-            <div className="decision-trust-icon">
-              <BrainCircuit size={30} />
-            </div>
-          </div>
-
-          <div className="decision-trust-content">
-            <ExecutiveDecisionCard
-              data={latestDecision}
-            />
-
-            <ConfidenceMeter
-              data={latestDecision}
-            />
-
-            <div className="decision-support-grid">
-              <ExplainabilityCard
-                data={latestDecision}
-              />
-
-              <DecisionContextCard
-                data={latestDecision}
-              />
-            </div>
-
-            <AgentExecutionFlow
-              decisionData={latestDecision}
-              telemetryData={telemetry}
-            />
-
-          </div>
+        <section className="system-health-notices" aria-labelledby="system-health-notices-title">
+          <h2 id="system-health-notices-title">Ocorrências que exigem atenção</h2>
+          {erro || !health ? (
+            <p>Não foi possível confirmar o estado do serviço. Tente atualizar a consulta.</p>
+          ) : health.failures > 0 ? (
+            <p>Há {health.failures} falhas registradas desde a inicialização do serviço. Consulte o diagnóstico técnico para investigar.</p>
+          ) : (
+            <p>Nenhuma falha de execução registrada desde a inicialização do serviço.</p>
+          )}
+          <Link to="/inteligencia">Consultar análises e recomendações na Central de Inteligência</Link>
         </section>
 
+        <details className="system-health-diagnostics">
+          <summary>Diagnóstico técnico</summary>
+          <p>Agentes configurados, desempenho e registros recentes de execução para administração e suporte.</p>
         <div className="agent-operations-grid">
           <section className="panel agent-registry-panel">
             <div className="agent-operation-panel-header">
@@ -618,7 +468,7 @@ export default function AgentOperations() {
 
                 <div>
                   <h3>
-                    Agent Registry
+                    Agentes configurados
                   </h3>
 
                   <p>
@@ -729,17 +579,12 @@ export default function AgentOperations() {
 
                           <td>
                             <span className="agent-success-rate">
-                              {metric.success_rate.toFixed(
-                                1,
-                              )}
-                              %
+                              {metric.executions > 0 ? `${metric.success_rate.toFixed(1)}%` : "Sem medições"}
                             </span>
                           </td>
 
                           <td>
-                            {formatarDuracao(
-                              metric.average_duration_seconds,
-                            )}
+                            {metric.executions > 0 ? formatarDuracao(metric.average_duration_seconds) : "Sem medições"}
                           </td>
 
                           <td>
@@ -765,125 +610,6 @@ export default function AgentOperations() {
             </div>
           </section>
         </div>
-
-        <section className="panel decision-history-panel">
-          <div className="agent-operation-panel-header">
-            <div>
-              <span>
-                <Sparkles size={19} />
-              </span>
-
-              <div>
-                <h3>
-                  Histórico de decisões
-                </h3>
-
-                <p>
-                  Decisões recentes produzidas
-                  pelo Decision Engine.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {(decisionHistory?.records
-            .length ?? 0) === 0 ? (
-            <div className="agent-operations-empty">
-              <Sparkles size={32} />
-
-              <h3>
-                Nenhuma decisão armazenada
-              </h3>
-
-              <p>
-                Novas análises aparecerão aqui
-                automaticamente.
-              </p>
-            </div>
-          ) : (
-            <div className="decision-history-list">
-              {decisionHistory?.records.map(
-                (decision) => (
-                  <article
-                    key={decision.decision_id}
-                    className="decision-history-item"
-                  >
-                    <div className="decision-history-icon">
-                      <BrainCircuit
-                        size={18}
-                      />
-                    </div>
-
-                    <div className="decision-history-main">
-                      <div className="decision-history-heading">
-                        <div>
-                          <strong>
-                            {formatarNome(
-                              decision.decision_name,
-                            )}
-                          </strong>
-
-                          <span>
-                            {
-                              decision.context
-                                .cliente
-                            }
-                          </span>
-                        </div>
-
-                        <span
-                          className={classeConfianca(
-                            decision.confidence_percentage,
-                          )}
-                        >
-                          {decision.confidence_percentage.toFixed(
-                            1,
-                          )}
-                          %
-                        </span>
-                      </div>
-
-                      <p>
-                        {decision.reason}
-                      </p>
-
-                      <div className="decision-history-meta">
-                        <span>
-                          {formatarMoeda(
-                            decision.context
-                              .valor,
-                          )}
-                        </span>
-
-                        <span>
-                          {
-                            decision.context
-                              .dias_atraso
-                          }{" "}
-                          dias em atraso
-                        </span>
-
-                        <span>
-                          {
-                            decision.selected_agents
-                              .length
-                          }{" "}
-                          agentes
-                        </span>
-
-                        <span>
-                          {formatarData(
-                            decision.created_at,
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  </article>
-                ),
-              )}
-            </div>
-          )}
-        </section>
 
         <section className="panel agent-telemetry-panel">
           <div className="agent-telemetry-toolbar">
@@ -976,8 +702,7 @@ export default function AgentOperations() {
               </h3>
 
               <p>
-                Cadastre um cliente para
-                gerar dados de telemetria.
+                Os registros aparecerão quando houver execuções correspondentes aos filtros.
               </p>
             </div>
           ) : (
@@ -1097,6 +822,7 @@ export default function AgentOperations() {
             </div>
           )}
         </section>
+        </details>
       </section>
     </div>
   );

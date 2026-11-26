@@ -761,3 +761,217 @@
     transition: none;
   }
 }
+
+/* Neon surfaces and readable text for legacy screens. */
+:is([data-theme="neon"], [data-theme="dark"]) .brain-hero {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(79 70 229 / 12%), transparent 40% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-eyebrow,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-agent-name,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-empty-state svg {
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-hero h2,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-card h2,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-card h3,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-card h2,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-card h3,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive h2,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive h3,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-grid strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-grid strong,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-metrics strong,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-summary-card strong,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-search input,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-knowledge-header h3,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-empty-state h3,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-hero + * strong {
+  color: var(--text-primary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-hero p,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-card p,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-card p,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive p,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-grid span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-grid span,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-metrics span,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-summary-card span,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-summary-card small,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-search input::placeholder,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-results-info strong,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-knowledge-content > p,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-knowledge-footer strong,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-empty-state {
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-card,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-card,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-hero + article,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-hero + section {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(124 58 237 / 10%), transparent 38% ), linear-gradient(135deg, var(--surface), var(--surface));
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-eyebrow,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-eyebrow {
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-grid > div,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-brain-grid > div,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-executive-metrics > div,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-summary-card,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-panel,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-knowledge-card {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-blue,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-severity-info {
+  background: var(--surface);
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-orange,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-severity-high,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-severity-medium {
+  background: var(--surface);
+  color: var(--color-warning-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-red,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-severity-critical {
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-green {
+  background: var(--surface);
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-purple {
+  background: var(--surface);
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-toolbar {
+  border-bottom: 1px solid var(--border-default);
+  background: linear-gradient(135deg, var(--surface), var(--surface));
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-search,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-filters select,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-reopen-button,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-hero + * li {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-search:focus-within,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-timeline::before,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-knowledge-resolved,
+:is([data-theme="neon"], [data-theme="dark"]) .brain-resolve-button:hover {
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-results-info {
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-knowledge-card:hover {
+  border-color: var(--border-default);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-timeline-marker {
+  border: 4px solid var(--border-default);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-knowledge-footer {
+  border-top: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-resolve-button {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-reopen-button:hover {
+  border-color: var(--border-default);
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .brain-error-state {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+/* Brain Center — identidade visual AUNERON aprovada; legibilidade de textos. */
+.brain-hero,
+.brain-summary-card,
+.brain-panel,
+.brain-toolbar,
+.brain-knowledge-card {
+  background: var(--card-background);
+  border-color: var(--card-border);
+}
+.brain-hero h2,
+.brain-summary-card strong,
+.brain-knowledge-header h3,
+.brain-results-info strong { color: var(--text-primary); }
+.brain-hero p,
+.brain-summary-card span,
+.brain-summary-card small,
+.brain-knowledge-content > p,
+.brain-results-info,
+.brain-knowledge-footer { color: var(--text-muted); }
+.brain-hero p { font-size: 11px; }
+.brain-summary-card span { font-size: 11px; }
+.brain-summary-card small { font-size: 10px; }
+.brain-summary-card strong { font-size: 18px; }
+.brain-toolbar { border-bottom-color: var(--card-border); }
+.brain-search,
+.brain-filters select { background: var(--surface); border-color: var(--card-border); color: var(--text-primary); }
+.brain-search input { color: var(--text-primary); font-size: 11px; }
+.brain-filters select { font-size: 11px; }
+.brain-knowledge-content > p { font-size: 11px; }
+.brain-knowledge-header h3 { font-size: 13px; }
+.brain-results-info { border-bottom-color: var(--card-border); font-size: 10px; }
+
+/* Seletores estruturais antigos (.brain-hero + *) usavam cores fixas claras e
+   venciam o tema escuro; passam a seguir os tokens do tema ativo. */
+.brain-executive-card,
+.executive-brain-card,
+.brain-executive,
+.brain-hero + article,
+.brain-hero + section {
+  border-color: var(--card-border);
+  background:
+    radial-gradient(
+      circle at top right,
+      rgb(124 58 237 / 10%),
+      transparent 38%
+    ),
+    var(--card-background);
+}
+
+.brain-hero + * strong {
+  color: var(--text-primary);
+}
+
+.brain-hero + * li {
+  border-color: var(--card-border);
+  background: var(--surface);
+  color: var(--text-muted);
+}

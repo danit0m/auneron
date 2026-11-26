@@ -1,5 +1,6 @@
 import {
   BrowserRouter,
+  Navigate,
   Route,
   Routes,
 } from "react-router-dom";
@@ -13,14 +14,12 @@ import {
 } from "./routes/ProtectedRoute";
 import AgentOperations from "./pages/AgentOperations";
 import Approvals from "./pages/Approvals";
-import Brain from "./pages/Brain";
 import Clientes from "./pages/Clientes";
 import { Cockpit } from "./pages/Cockpit";
-import ExecutiveCenter from "./pages/ExecutiveCenter";
+import IntelligenceCenter from "./pages/IntelligenceCenter";
 import Login from "./pages/Login";
 import TrocarSenha from "./pages/TrocarSenha";
 import Recebiveis from "./pages/Recebiveis";
-import Recomendacoes from "./pages/Recomendacoes";
 import { Upload } from "./pages/Upload";
 import AccessDenied from "./pages/AccessDenied";
 import UIShowcase from "./pages/admin/UIShowcase";
@@ -40,6 +39,14 @@ function App() {
         />
 
         <Route element={<Layout />}>
+          <Route
+            path="/inteligencia"
+            element={
+              <ProtectedRoute anyPermissions={["executive.view", "brain.view", "approval:read"]}>
+                <IntelligenceCenter />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/"
             element={
@@ -71,7 +78,7 @@ function App() {
             path="/executive-center"
             element={
               <ProtectedRoute permission="executive.view">
-                <ExecutiveCenter />
+                <Navigate to="/inteligencia?visao=resumo" replace />
               </ProtectedRoute>
             }
           />
@@ -80,7 +87,7 @@ function App() {
             path="/brain"
             element={
               <ProtectedRoute permission="brain.view">
-                <Brain />
+                <Navigate to="/inteligencia?visao=analises" replace />
               </ProtectedRoute>
             }
           />
@@ -107,7 +114,7 @@ function App() {
             path="/recomendacoes"
             element={
               <ProtectedRoute permission="approval:read">
-                <Recomendacoes />
+                <Navigate to="/inteligencia?visao=recomendacoes" replace />
               </ProtectedRoute>
             }
           />
@@ -117,7 +124,7 @@ function App() {
             element={
               <ElevatedRoute
                 permission="administration.ai-operations"
-                resourceLabel="AI Operations"
+                resourceLabel="Saúde do sistema"
               >
                 <AgentOperations />
               </ElevatedRoute>
