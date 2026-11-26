@@ -1,0 +1,179 @@
+/* D2.1 -- refinamento visual da tabela de clientes (somente apresentacao).
+   Seletores com especificidade maior que a de index.css para prevalecer. */
+
+.clientes-table-wrapper .clientes-table {
+  min-width: 960px;
+}
+
+.clientes-table-wrapper .clientes-table th {
+  padding: 12px 16px;
+  border-bottom: 2px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
+}
+
+.clientes-table-wrapper .clientes-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  vertical-align: middle;
+}
+
+.clientes-table-wrapper .clientes-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-primary-500) 6%, transparent);
+}
+
+.clientes-table-wrapper .clientes-table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-primary-500) 14%, transparent);
+}
+
+.clientes-table-wrapper .clientes-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Valor: coluna alinhada a direita, numeros tabulares e peso forte. */
+.clientes-table-wrapper .clientes-table th:nth-child(4),
+.clientes-table-wrapper .clientes-table td:nth-child(4) {
+  text-align: right;
+}
+
+.clientes-table-wrapper .cliente-value {
+  color: var(--text-primary);
+  font-size: var(--font-md);
+  font-weight: var(--font-extrabold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.1px;
+}
+
+.clientes-table-wrapper .cliente-name span {
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+}
+
+.clientes-table-wrapper .cliente-contact span {
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+}
+
+.clientes-table-wrapper .cliente-contact span.cliente-contact-empty {
+  color: var(--text-muted) !important;
+}
+
+.clientes-table-wrapper .cliente-date {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-table-wrapper .clientes-table .status-badge {
+  padding: 5px 11px;
+  font-size: var(--font-xs);
+}
+
+/* Sem contato: icone + texto, nao so um icone solto. */
+.clientes-table-wrapper .cliente-contact-alert {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-warning-500);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-warning-500) 14%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
+  white-space: nowrap;
+}
+
+.clientes-table-wrapper .cliente-contact-alert svg {
+  flex-shrink: 0;
+  color: var(--color-warning-500);
+}
+
+/* Botoes de acao padronizados. */
+.clientes-table-wrapper .cliente-row-actions {
+  align-items: center;
+  gap: 8px;
+}
+
+.clientes-table-wrapper .cliente-action-button {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--radius-md);
+  font-size: var(--font-xs);
+  font-weight: var(--font-bold);
+  cursor: pointer;
+}
+
+.clientes-table-wrapper .cliente-action-button.cliente-contact-button {
+  width: auto;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.clientes-table-wrapper .cliente-action-button:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.clientes-table-wrapper .cliente-edit-button {
+  border-color: var(--color-primary-600);
+  background: color-mix(in srgb, var(--color-primary-500) 10%, var(--surface));
+  color: var(--color-primary-700);
+}
+
+.clientes-table-wrapper .cliente-edit-button:hover {
+  background: color-mix(in srgb, var(--color-primary-500) 20%, var(--surface));
+}
+
+/* Acao destrutiva: contorno vermelho, claramente distinta da acao comum. */
+.clientes-table-wrapper .cliente-delete-button {
+  border: 1.5px solid var(--color-danger-600);
+  background: transparent;
+  color: var(--color-danger-700);
+}
+
+.clientes-table-wrapper .cliente-delete-button:hover {
+  background: color-mix(in srgb, var(--color-danger-500) 16%, transparent);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .clientes-table-wrapper .cliente-edit-button {
+  color: var(--color-primary-400);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .clientes-table-wrapper .cliente-delete-button {
+  border-color: var(--color-danger-500);
+  color: var(--color-danger-500);
+}
+
+:is([data-theme="dark"], [data-theme="neon"]) .clientes-table-wrapper .cliente-contact-alert {
+  color: var(--text-primary);
+}
+
+@media (max-width: 900px) {
+  .clientes-table-wrapper .clientes-table {
+    min-width: 0;
+  }
+
+  .clientes-table-wrapper .clientes-table th,
+  .clientes-table-wrapper .clientes-table td {
+    padding: 10px 8px;
+  }
+
+  .clientes-table-wrapper .cliente-action-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .clientes-table-wrapper .cliente-contact-alert {
+    white-space: normal;
+  }
+}
