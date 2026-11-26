@@ -743,7 +743,7 @@ export default function Recebiveis() {
                               <span>{sugestao.texto}</span>
                             )}
                             {item.vencida && (
-                              <Link className="recebiveis-link" to="/recomendacoes">
+                              <Link className="recebiveis-link" to="/inteligencia?visao=recomendacoes">
                                 Ver recomendação
                               </Link>
                             )}

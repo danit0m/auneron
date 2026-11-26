@@ -493,3 +493,15 @@
   color: var(--text-muted);
   font-size: var(--font-xs);
 }
+
+.ui-showcase-bot-grid .ui-bot {
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ui-showcase-bot-grid .ui-bot-message {
+  margin: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

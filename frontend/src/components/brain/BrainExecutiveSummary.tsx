@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  BrainCircuit,
   CheckCircle2,
   Clock3,
   ShieldAlert,
@@ -8,6 +7,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { AuneronBot } from "../ui";
 import "./styles/BrainExecutiveSummary.css";
 
 interface ExecutiveAgentSummary {
@@ -116,7 +116,7 @@ export default function BrainExecutiveSummary({
   if (!report) {
     return (
       <article className="brain-executive-summary brain-executive-summary-empty">
-        <BrainCircuit size={36} />
+        <AuneronBot mood="pensando" size="lg" message="O resumo das análises ainda não está disponível." />
 
         <strong>
           Resumo executivo indisponível
@@ -131,10 +131,14 @@ export default function BrainExecutiveSummary({
     );
   }
 
-  const prioridade =
-    formatarPrioridade(
-      report.priority,
-    );
+  const semAnalises = report.total === 0;
+  const prioridade = semAnalises
+    ? {
+        label: "Sem análises",
+        className: "brain-executive-priority brain-executive-priority-normal",
+        description: "Ainda não há resultados suficientes para avaliar a situação.",
+      }
+    : formatarPrioridade(report.priority);
 
   const totalAgentes =
     report.agents.length;
@@ -155,9 +159,11 @@ export default function BrainExecutiveSummary({
     <article className="brain-executive-summary">
       <div className="brain-executive-summary-header">
         <div className="brain-executive-summary-title">
-          <div className="brain-executive-summary-icon">
-            <BrainCircuit size={24} />
-          </div>
+          <AuneronBot
+            mood={semAnalises ? "dormindo" : report.critical > 0 ? "critico" : report.pending > 0 ? "atento" : "feliz"}
+            size="lg"
+            label="AuneronBot, assistente do Auneron"
+          />
 
           <div>
             <span>
@@ -165,11 +171,11 @@ export default function BrainExecutiveSummary({
             </span>
 
             <h2>
-              Resumo do Brain Center
+              O que merece sua atenção
             </h2>
 
             <p>
-              {report.summary}
+              {semAnalises ? "Ainda não há análises registradas para apresentar. Quando houver resultados, você poderá acompanhar aqui os alertas, as recomendações e suas justificativas." : report.summary}
             </p>
           </div>
         </div>
@@ -207,7 +213,7 @@ export default function BrainExecutiveSummary({
 
           <div>
             <span>
-              Conhecimentos
+              Análises registradas
             </span>
 
             <strong>
@@ -281,6 +287,8 @@ export default function BrainExecutiveSummary({
         </div>
       </div>
 
+      <details className="intelligence-technical">
+        <summary>Detalhes técnicos das análises</summary>
       <div className="brain-executive-progress-grid">
         <div className="brain-executive-progress-card">
           <div className="brain-executive-progress-header">
@@ -414,6 +422,8 @@ export default function BrainExecutiveSummary({
           )}
         </div>
       </div>
+
+      </details>
 
       {report.critical > 0 && (
         <div className="brain-executive-alert">

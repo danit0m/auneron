@@ -872,3 +872,185 @@
     padding: 12px;
   }
 }
+
+/* Neon surfaces and readable text for legacy screens. */
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-hero {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(124 58 237 / 15%), transparent 38% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-eyebrow,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-header span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-empty svg {
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-hero h2,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-status strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-summary strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-title h3,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-action strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-header h3,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-main div > strong,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-empty strong {
+  color: var(--text-primary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-hero p,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-status span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-summary span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-summary small,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-description,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-action span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-header p,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-main div > span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-item > p,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-meta,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-empty {
+  color: var(--text-secondary);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-error {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-center-summary > article,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-action,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-panel {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary-blue,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-medium {
+  background: var(--surface);
+  color: var(--text-link);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary-green,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-confidence {
+  background: var(--surface);
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary-orange,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-high {
+  background: var(--surface);
+  color: var(--color-warning-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-summary-purple {
+  background: var(--surface);
+  color: var(--text-brand);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-card {
+  border: 1px solid var(--border-default);
+  background: radial-gradient( circle at top right, rgb(16 185 129 / 11%), transparent 36% ), linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-title span,
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-action > svg {
+  color: var(--color-success-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-recommendation-critical {
+  background: var(--surface);
+  color: var(--color-danger-700);
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-header {
+  border-bottom: 1px solid var(--border-default);
+  background: linear-gradient( 135deg, var(--surface), var(--surface) );
+}
+
+:is([data-theme="neon"], [data-theme="dark"]) .executive-history-item {
+  border-bottom: 1px solid var(--border-default);
+}
+
+/* Assistant presents recorded analysis beside the mascot. */
+.executive-assistant {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: 28px;
+  padding: 28px;
+  border: 1px solid var(--card-border);
+  border-radius: 24px;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card);
+}
+
+.executive-assistant > .ui-bot {
+  flex-direction: column;
+  text-align: center;
+}
+
+.executive-assistant .ui-bot-message {
+  margin: 0;
+  font-size: 12px;
+}
+
+.executive-assistant-content { min-width: 0; }
+.executive-assistant h2 { margin: 8px 0 16px; font-size: clamp(20px, 2vw, 28px); line-height: 1.3; }
+.executive-assistant-message { padding: 18px; border: 1px solid var(--border-subtle); border-radius: 16px; background: var(--surface-subtle); line-height: 1.7; overflow-wrap: anywhere; }
+.executive-assistant-message p { margin: 0; font-size: 14px; }
+.executive-assistant-message span { display: block; margin-top: 12px; color: var(--text-secondary); font-size: 12px; }
+.executive-assistant-details { display: inline-flex; align-items: center; min-height: 44px; margin-top: 16px; padding: 10px 18px; border: 1px solid var(--border-default); border-radius: 999px; color: var(--text-link); font-size: 12px; font-weight: 700; text-decoration: none; }
+
+[data-theme="neon"] .executive-assistant {
+  border-color: rgb(103 232 249 / 30%);
+  background: radial-gradient(ellipse at 8% 50%, rgb(6 182 212 / 16%), transparent 42%), radial-gradient(ellipse at 95% 10%, rgb(139 92 246 / 17%), transparent 55%), #0a1022;
+  box-shadow: inset 0 1px 0 rgb(165 243 252 / 10%), 0 0 28px rgb(34 211 238 / 8%);
+}
+
+@media (max-width: 680px) {
+  .executive-assistant { grid-template-columns: 1fr; padding: 24px 18px; gap: 18px; }
+  .executive-assistant > .ui-bot { justify-self: center; }
+/* MVP visual: Executive Center segue o tema escuro aprovado, sem mudar a escala tipografica. */
+.executive-center-hero,
+.executive-center-summary > article,
+.executive-recommendation-card,
+.executive-history-panel,
+.executive-history-header {
+  background: var(--card-background);
+  border-color: var(--card-border);
+  box-shadow: var(--shadow-card);
+}
+.executive-center-hero h2,
+.executive-center-summary strong,
+.executive-recommendation-title h3,
+.executive-recommendation-action strong,
+.executive-history-header h3,
+.executive-history-main div > strong,
+.executive-history-empty strong,
+.executive-center-status strong {
+  color: var(--text-primary);
+}
+.executive-center-hero p,
+.executive-center-summary span,
+.executive-center-summary small,
+.executive-recommendation-description,
+.executive-recommendation-action span,
+.executive-history-header p,
+.executive-history-main div > span,
+.executive-history-item > p,
+.executive-history-meta,
+.executive-history-empty,
+.executive-center-status span {
+  color: var(--text-muted);
+}
+.executive-recommendation-action,
+.executive-analysis-details,
+.executive-analysis-details-toggle,
+.executive-analysis-details-content > div {
+  background: var(--surface);
+  border-color: var(--card-border);
+}
+.executive-history-header,
+.executive-history-item {
+  border-bottom-color: var(--card-border);
+}

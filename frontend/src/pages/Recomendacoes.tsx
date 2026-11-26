@@ -1,12 +1,8 @@
 import {
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  Lightbulb,
   RefreshCw,
 } from "lucide-react";
 import {
-  Fragment,
   useCallback,
   useEffect,
   useState,
@@ -16,6 +12,7 @@ import api, {
   getApiErrorMessage,
 } from "../api/api";
 import { Header } from "../components/layout/Header";
+import { AuneronBot } from "../components/ui";
 import RecommendationDecisionCard from "../components/recommendations/RecommendationDecisionCard";
 import { useAuth } from "../hooks/useAuth";
 import type { Account } from "../types/account";
@@ -211,8 +208,7 @@ export default function Recomendacoes() {
         />
 
         <div className="state-container">
-          <div className="loading-spinner" />
-          <p>Carregando contas atrasadas...</p>
+          <AuneronBot mood="pensando" size="lg" message="Estou consultando as contas para apresentar as recomendações disponíveis." />
         </div>
       </div>
     );
@@ -226,142 +222,75 @@ export default function Recomendacoes() {
       />
 
       <section className="page-content recomendacoes-page">
-        {erro && (
-          <div className="error-message">
-            <AlertTriangle size={22} />
-            <span>{erro}</span>
+        <section className="recommendation-chat-intro" aria-label="Assistente Auneron">
+          <AuneronBot mood={atualizando ? "pensando" : erro ? "preocupado" : "atento"} size="lg" label="AuneronBot" />
+          <div className="recommendation-chat-bubble" role="status">
+            <strong>Assistente Auneron</strong>
+            <p>
+              {atualizando
+                ? "Estou atualizando a consulta das contas."
+                : erro
+                  ? "Não consegui consultar as contas. Tente atualizar para continuar."
+                  : contas.length === 0
+                    ? "Não encontrei contas em atraso nesta consulta. Quando houver contas disponíveis, você poderá consultar minhas recomendações aqui."
+                    : "Escolha uma conta abaixo. Vou apresentar a recomendação disponível, explicar os motivos e mostrar os próximos passos."}
+            </p>
           </div>
-        )}
+        </section>
 
-        <div className="panel recomendacoes-panel">
-          <div className="recomendacoes-toolbar">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={atualizando}
-              onClick={() =>
-                void carregarContas(false)
-              }
-            >
-              <RefreshCw
-                size={16}
-                className={
-                  atualizando
-                    ? "rotating-icon"
-                    : ""
-                }
-              />
-              Atualizar
-            </button>
-          </div>
+        {erro && <div className="error-message"><AlertTriangle size={22} /><span>{erro}</span></div>}
 
-          {contas.length === 0 ? (
-            <div className="recomendacoes-empty-state">
-              <Lightbulb size={38} />
-              <p>
-                Nenhuma conta atrasada no
-                momento.
-              </p>
-            </div>
-          ) : (
-            <div className="recomendacoes-table-wrapper">
-              <table className="recomendacoes-table">
-                <thead>
-                  <tr>
-                    <th />
-                    <th>Cliente</th>
-                    <th>Valor</th>
-                    <th>Vencimento</th>
-                  </tr>
-                </thead>
+        <div className="recomendacoes-toolbar">
+          <button type="button" className="secondary-button" disabled={atualizando} onClick={() => void carregarContas(false)}>
+            <RefreshCw size={16} className={atualizando ? "rotating-icon" : ""} />
+            Atualizar contas
+          </button>
+        </div>
 
-                <tbody>
-                  {contas.map((conta) => {
-                    const linha =
-                      linhas[conta.id];
-
-                    return (
-                      <Fragment key={conta.id}>
-                        <tr
-                          className="recomendacoes-row"
-                          onClick={() =>
-                            void alternarLinha(
-                              conta,
-                            )
-                          }
-                        >
-                          <td className="recomendacoes-expand-cell">
-                            {linha?.expandido ? (
-                              <ChevronDown
-                                size={16}
-                              />
-                            ) : (
-                              <ChevronRight
-                                size={16}
-                              />
-                            )}
-                          </td>
-                          <td>{conta.cliente}</td>
-                          <td>
-                            {formatarMoeda(
-                              conta.valor,
-                            )}
-                          </td>
-                          <td>
-                            {formatarData(
-                              conta.vencimento,
-                            )}
-                          </td>
-                        </tr>
-
-                        {linha?.expandido && (
-                          <tr className="recomendacoes-detail-row">
-                            <td
-                              colSpan={4}
-                            >
-                              {linha.carregandoNba ? (
-                                <div className="recomendacoes-detail-loading">
-                                  <div className="loading-spinner" />
-                                  <span>
-                                    Carregando
-                                    recomendação...
-                                  </span>
-                                </div>
-                              ) : linha.erroNba ? (
-                                <div className="error-message">
-                                  <AlertTriangle
-                                    size={18}
-                                  />
-                                  <span>
-                                    {
-                                      linha.erroNba
-                                    }
-                                  </span>
-                                </div>
-                              ) : linha.nba ? (
-                                <RecommendationDecisionCard
-                                  accountId={
-                                    conta.id
-                                  }
-                                  dueDate={
-                                    conta.vencimento
-                                  }
-                                  nba={linha.nba}
-                                  podeMaterializarEscalonamento={
-                                    podeMaterializarEscalonamento
-                                  }
-                                />
-                              ) : null}
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="recommendation-conversations">
+          {!erro && !atualizando && contas.map((conta) => {
+            const linha = linhas[conta.id];
+            return (
+              <article className="recommendation-conversation" key={conta.id}>
+                <div className="recommendation-account-context">
+                  <div>
+                    <span>Conta para acompanhamento</span>
+                    <h2>{conta.cliente}</h2>
+                    <p>{formatarMoeda(conta.valor)} · Vencimento em {formatarData(conta.vencimento)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    aria-expanded={linha?.expandido ?? false}
+                    aria-controls={`recommendation-reply-${conta.id}`}
+                    onClick={() => void alternarLinha(conta)}
+                  >
+                    {linha?.expandido ? "Recolher conversa" : "Consultar recomendação"}
+                  </button>
+                </div>
+                <div id={`recommendation-reply-${conta.id}`} hidden={!linha?.expandido}>
+                  {linha?.expandido && (
+                    linha.carregandoNba ? (
+                      <AuneronBot className="recommendation-chat-loading" mood="pensando" size="md" message="Estou consultando a recomendação para esta conta..." />
+                    ) : linha.erroNba ? (
+                      <div className="recommendation-chat-bubble" role="alert">
+                        <strong>Assistente Auneron</strong>
+                        <p>Não consegui obter a recomendação. {linha.erroNba}</p>
+                        <p>Recolha a conversa e consulte novamente para tentar outra vez.</p>
+                      </div>
+                    ) : linha.nba ? (
+                      <RecommendationDecisionCard
+                        accountId={conta.id}
+                        dueDate={conta.vencimento}
+                        nba={linha.nba}
+                        podeMaterializarEscalonamento={podeMaterializarEscalonamento}
+                      />
+                    ) : null
+                  )}
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
     </div>
