@@ -1010,6 +1010,8 @@
 @media (max-width: 680px) {
   .executive-assistant { grid-template-columns: 1fr; padding: 24px 18px; gap: 18px; }
   .executive-assistant > .ui-bot { justify-self: center; }
+}
+
 /* MVP visual: Executive Center segue o tema escuro aprovado, sem mudar a escala tipografica. */
 .executive-center-hero,
 .executive-center-summary > article,
