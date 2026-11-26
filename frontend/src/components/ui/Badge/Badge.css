@@ -1,5 +1,5 @@
 .ui-badge{display:inline-flex;width:fit-content;max-width:100%;align-items:center;justify-content:center;gap:var(--space-1-5);border:1px solid transparent;border-radius:var(--radius-full);font-weight:var(--font-bold);line-height:1;white-space:nowrap}
-.ui-badge-sm{min-height:1.375rem;padding:0 var(--space-2);font-size:.6875rem}
+.ui-badge-sm{min-height:1.375rem;padding:0 var(--space-2);font-size:var(--font-xs)}
 .ui-badge-md{min-height:1.625rem;padding:0 var(--space-2-5);font-size:var(--font-xs)}
 .ui-badge-neutral{border-color:var(--border-subtle);background:var(--surface-subtle);color:var(--text-secondary)}
 .ui-badge-brand{border-color:var(--color-brand-200);background:var(--color-brand-50);color:var(--color-brand-700)}
@@ -15,4 +15,4 @@
 .ui-badge-dot{width:.45rem;height:.45rem;flex:0 0 .45rem;border-radius:var(--radius-full);background:currentColor}
 .ui-badge-icon{display:inline-flex;flex:0 0 auto}
 .ui-badge-label{overflow:hidden;text-overflow:ellipsis}
-[data-theme="neon"] .ui-badge-brand{box-shadow:0 0 12px rgb(34 211 238 / 35%)}
+[data-theme="neon"] .ui-badge-brand{box-shadow:0 0 8px rgb(34 211 238 / 18%)}
