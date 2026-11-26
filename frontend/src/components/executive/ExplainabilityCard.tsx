@@ -2,14 +2,14 @@ import {
   AlertTriangle,
   BadgeCheck,
   CalendarClock,
-  CheckCircle2,
-  CircleDollarSign,
+  Info,
 } from "lucide-react";
 
 import type {
   LatestDecisionResponse,
 } from "../../types/orchestrator";
-import { rotuloDecisao } from "../../design/labels";
+import { rotuloDecisao, rotuloSinal } from "../../design/labels";
+import { montarExplicabilidade } from "./explicabilidade";
 
 import "./styles/ExplainabilityCard.css";
 
@@ -17,24 +17,8 @@ interface Props {
   data: LatestDecisionResponse | null;
 }
 
-interface ExplainabilityItem {
-  title: string;
-  value: string;
-  impact: "Alto" | "Muito Alto" | "Moderado";
-  description: string;
-  percentage: number;
-}
-
-function currency(value: number) {
-  return new Intl.NumberFormat(
-    "pt-BR",
-    {
-      style: "currency",
-      currency: "BRL",
-    },
-  ).format(value);
-}
-
+// Mostra apenas o que a analise registrou (sinais, dados do titulo, justificativa e confianca).
+// Nada e presumido sobre o cliente; o que nao veio nos dados e omitido ou sinalizado.
 export default function ExplainabilityCard({
   data,
 }: Props) {
@@ -54,197 +38,80 @@ export default function ExplainabilityCard({
   }
 
   const d = data.decision;
-
-  const items: ExplainabilityItem[] = [
-    {
-      title: "Valor Financeiro",
-      value: currency(
-        d.context.valor,
-      ),
-      impact:
-        d.context.valor >= 30000
-          ? "Muito Alto"
-          : "Moderado",
-      description:
-        "O valor financeiro posiciona este cliente como estratégico para a empresa.",
-      percentage:
-        d.context.valor >= 30000
-          ? 100
-          : 60,
-    },
-    {
-      title: "Status Financeiro",
-      value:
-        d.context.status.toUpperCase(),
-      impact:
-        d.context.status ===
-        "atrasado"
-          ? "Alto"
-          : "Moderado",
-      description:
-        d.context.status ===
-        "atrasado"
-          ? "Foi identificada inadimplência ativa."
-          : "Cliente encontra-se em situação regular.",
-      percentage:
-        d.context.status ===
-        "atrasado"
-          ? 90
-          : 50,
-    },
-    {
-      title: "Dias em atraso",
-      value: `${d.context.dias_atraso} dias`,
-      impact:
-        d.context.dias_atraso >= 3
-          ? "Alto"
-          : "Moderado",
-      description:
-        "O tempo de atraso aumenta o risco financeiro.",
-      percentage:
-        d.context.dias_atraso >= 3
-          ? 85
-          : 45,
-    },
-  ];
+  const x = montarExplicabilidade(d, rotuloSinal);
 
   return (
     <section className="explainability-card">
-
       <div className="section-title">
-
-        <BadgeCheck size={20} />
+        <BadgeCheck size={20} aria-hidden="true" />
 
         <div>
-
           <h3>Explicabilidade da análise</h3>
-
           <span>
-            Como a IA chegou
-            nesta decisão
+            O que a análise registrou para
+            {" "}
+            {rotuloDecisao(d.decision_name)}
           </span>
-
         </div>
-
       </div>
 
-      <div className="explainability-list">
-
-        {items.map((item) => (
-
-          <article
-            key={item.title}
-            className="explainability-item"
-          >
-
-            <div className="explainability-header">
-
-              <div>
-
-                <strong>
-                  {item.title}
-                </strong>
-
-                <span>
-                  {item.value}
-                </span>
-
+      {x.semDados ? (
+        <div className="explainability-empty">
+          <Info size={16} aria-hidden="true" />
+          {" "}
+          A análise não registrou fatores detalhados para este caso.
+        </div>
+      ) : (
+        <div className="explainability-list">
+          {x.fatores.map((f) => (
+            <article key={f.chave} className="explainability-item">
+              <div className="explainability-header">
+                <div>
+                  <strong>{f.titulo}</strong>
+                  <span>{f.valor}</span>
+                </div>
               </div>
 
-              <span className="impact-badge" data-impacto={item.impact}>
-                {item.impact}
-              </span>
-
-            </div>
-
-            <div className="impact-bar">
-
-              <div
-                className="impact-value"
-                style={{
-                  width:
-                    `${item.percentage}%`,
-                }}
-              />
-
-            </div>
-
-            <p>
-              {item.description}
-            </p>
-
-          </article>
-
-        ))}
-
-      </div>
+              {f.descricao && <p>{f.descricao}</p>}
+            </article>
+          ))}
+        </div>
+      )}
 
       <div className="executive-summary">
-
-        <CheckCircle2 size={18} />
+        <Info size={18} aria-hidden="true" />
 
         <div>
-
-          <strong>
-            Resumo da análise
-          </strong>
+          <strong>Resumo da análise</strong>
 
           <span>
-
-            A IA identificou um conjunto
-            consistente de evidências
-            financeiras que justificam
-            a aplicação da estratégia
-
-            <b>
-              {" "}
-              {rotuloDecisao(d.decision_name)}
-            </b>
-
-            .
-
+            {x.justificativa ?? "A análise não registrou uma justificativa em texto."}
+            {x.confianca && (
+              <>
+                {" "}
+                Nível de confiança registrado:
+                {" "}
+                <b>{x.confianca}</b>.
+              </>
+            )}
           </span>
-
         </div>
-
       </div>
 
-      <div className="decision-flags">
-
-        <div>
-
-          <CircleDollarSign
-            size={17}
-          />
-
-          Cliente estratégico
-
+      {x.marcadores.length > 0 && (
+        <div className="decision-flags">
+          {x.marcadores.map((m, i) => (
+            <div key={m}>
+              {i === 0 ? (
+                <AlertTriangle size={17} aria-hidden="true" />
+              ) : (
+                <CalendarClock size={17} aria-hidden="true" />
+              )}
+              {m}
+            </div>
+          ))}
         </div>
-
-        <div>
-
-          <AlertTriangle
-            size={17}
-          />
-
-          Pagamento atrasado
-
-        </div>
-
-        <div>
-
-          <CalendarClock
-            size={17}
-          />
-
-          {d.context.dias_atraso}
-          {" "}
-          dias em atraso
-
-        </div>
-
-      </div>
-
+      )}
     </section>
   );
 }
