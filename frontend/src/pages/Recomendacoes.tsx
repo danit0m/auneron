@@ -11,6 +11,7 @@ import {
 import api, {
   getApiErrorMessage,
 } from "../api/api";
+import KindBadge from "../components/executive/KindBadge";
 import { Header } from "../components/layout/Header";
 import { AuneronBot } from "../components/ui";
 import RecommendationDecisionCard from "../components/recommendations/RecommendationDecisionCard";
@@ -226,6 +227,7 @@ export default function Recomendacoes() {
           <AuneronBot mood={atualizando ? "pensando" : erro ? "preocupado" : "atento"} size="lg" label="AuneronBot" />
           <div className="recommendation-chat-bubble" role="status">
             <strong>Assistente Auneron</strong>
+            <KindBadge kind="recomendacao" />
             <p>
               {atualizando
                 ? "Estou atualizando a consulta das contas."

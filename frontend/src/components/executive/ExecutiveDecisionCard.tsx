@@ -9,6 +9,7 @@ import {
   WalletCards,
 } from "lucide-react";
 
+import { rotuloDecisao } from "../../design/labels";
 import type {
   LatestDecisionResponse,
 } from "../../types/orchestrator";
@@ -53,16 +54,8 @@ function formatarData(
   ).format(dataConvertida);
 }
 
-function formatarNome(
-  nome: string,
-): string {
-  return nome
-    .replaceAll("_", " ")
-    .toLowerCase()
-    .replace(
-      /\b\w/g,
-      (letra) => letra.toUpperCase(),
-    );
+function formatarNome(value: string): string {
+  return rotuloDecisao(value);
 }
 
 function classificarConfianca(

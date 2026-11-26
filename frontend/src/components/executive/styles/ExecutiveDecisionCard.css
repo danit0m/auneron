@@ -41,7 +41,7 @@
 .executive-business-eyebrow {
   display: block;
   color: var(--text-brand);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 850;
   letter-spacing: 0.9px;
   text-transform: uppercase;
@@ -49,7 +49,7 @@
 
 .executive-business-decision-header h3 {
   margin: 7px 0 0;
-  color: #172033;
+  color: var(--text-primary);
   font-size: 23px;
   font-weight: 800;
   letter-spacing: -0.4px;
@@ -85,7 +85,7 @@
 
 .executive-confidence-level span {
   margin-top: 5px;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 750;
 }
 
@@ -123,8 +123,8 @@
 
 .executive-business-reason span {
   display: block;
-  color: #8a96a8;
-  font-size: 9px;
+  color: var(--text-secondary);
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.4px;
   text-transform: uppercase;
@@ -132,8 +132,8 @@
 
 .executive-business-reason p {
   margin: 8px 0 0;
-  color: #59667a;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: 12px;
   line-height: 1.7;
 }
 
@@ -163,15 +163,15 @@
 }
 
 .executive-business-grid span {
-  color: #8b96a8;
-  font-size: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .executive-business-grid strong {
   margin-top: 6px;
   overflow: hidden;
-  color: #253147;
-  font-size: 10px;
+  color: var(--text-primary);
+  font-size: 12px;
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -187,7 +187,7 @@
   align-items: center;
   padding: 6px 9px;
   border-radius: 999px;
-  font-size: 8px !important;
+  font-size: 12px !important;
   font-weight: 850 !important;
   text-transform: uppercase;
 }
@@ -227,14 +227,14 @@
 }
 
 .executive-business-confidence-heading span {
-  color: #7d899b;
-  font-size: 9px;
+  color: var(--text-secondary);
+  font-size: 12px;
   font-weight: 750;
 }
 
 .executive-business-confidence-heading strong {
   color: var(--text-brand);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 850;
   text-transform: capitalize;
 }
@@ -266,8 +266,8 @@
 
 .executive-business-confidence p {
   margin: 11px 0 0;
-  color: #667386;
-  font-size: 9px;
+  color: var(--text-secondary);
+  font-size: 12px;
   line-height: 1.65;
 }
 
@@ -301,7 +301,7 @@
 .executive-business-empty p {
   max-width: 390px;
   margin: 0;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.6;
 }
 
@@ -366,7 +366,7 @@
 }
 
 .executive-business-eyebrow {
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .executive-business-decision-header h3 {
@@ -389,7 +389,7 @@
 
 .executive-confidence-level span {
   margin-top: 3px;
-  font-size: 7px;
+  font-size: 12px;
 }
 
 /* Motivo */
@@ -401,12 +401,12 @@
 }
 
 .executive-business-reason span {
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .executive-business-reason p {
   margin-top: 5px;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -424,17 +424,17 @@
 }
 
 .executive-business-grid span {
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .executive-business-grid strong {
   margin-top: 4px;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .executive-business-status {
   padding: 4px 7px;
-  font-size: 7px !important;
+  font-size: 12px !important;
 }
 
 /* Confiabilidade */
@@ -447,7 +447,7 @@
 
 .executive-business-confidence-heading span,
 .executive-business-confidence-heading strong {
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .executive-business-confidence-track {
@@ -457,7 +457,7 @@
 
 .executive-business-confidence p {
   margin-top: 7px;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.5;
 }
 

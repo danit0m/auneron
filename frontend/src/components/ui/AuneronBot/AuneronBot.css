@@ -12,16 +12,16 @@
 .ui-bot-dormindo{--bot-glow:var(--neutral-400);--bot-ink:var(--neutral-300)}
 
 .ui-bot-figure *{transform-box:fill-box;transform-origin:center}
-.ui-bot-halo{fill:var(--bot-glow);opacity:.14;filter:blur(8px)}
+.ui-bot-halo{fill:var(--bot-glow);opacity:.06;filter:blur(8px)}
 .ui-bot-shell-top{stop-color:var(--color-primary-900)}
 .ui-bot-shell-bottom{stop-color:var(--sidebar-background)}
 .ui-bot-shell{stroke:var(--bot-glow);stroke-width:1.5;stroke-opacity:.7}
 .ui-bot-visor{fill:#05060f;stroke:var(--bot-glow);stroke-opacity:.35}
 .ui-bot-ear,.ui-bot-torso{fill:var(--color-primary-900);stroke:var(--bot-glow);stroke-opacity:.5}
 .ui-bot-antenna{stroke:var(--bot-glow);stroke-width:2.5;stroke-linecap:round}
-.ui-bot-antenna-tip,.ui-bot-core{fill:var(--bot-glow);filter:drop-shadow(0 0 4px var(--bot-glow))}
-.ui-bot-stroke{fill:none;stroke:var(--bot-ink);stroke-width:4;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 3px var(--bot-glow))}
-.ui-bot-fill{fill:var(--bot-ink);filter:drop-shadow(0 0 4px var(--bot-glow))}
+.ui-bot-antenna-tip,.ui-bot-core{fill:var(--bot-glow);filter:drop-shadow(0 0 1.5px var(--bot-glow))}
+.ui-bot-stroke{fill:none;stroke:var(--bot-ink);stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.ui-bot-fill{fill:var(--bot-ink)}
 .ui-bot-sparkles path{fill:var(--color-primary-300);animation:ui-bot-twinkle 1.2s ease-in-out infinite}
 .ui-bot-sparkles path:nth-child(2){animation-delay:.3s}
 .ui-bot-sparkles path:nth-child(3){animation-delay:.6s}
@@ -70,3 +70,8 @@
 @keyframes ui-bot-breathe{50%{transform:scale(1.03)}}
 @keyframes ui-bot-blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
 @media(prefers-reduced-motion:reduce){.ui-bot *{animation:none!important}}
+
+/* D2.1: no neon o brilho do robo e ainda mais discreto */
+[data-theme="neon"] .ui-bot-halo{opacity:.04}
+[data-theme="neon"] .ui-bot-antenna-tip,[data-theme="neon"] .ui-bot-core{filter:none}
+[data-theme="neon"] .ui-bot-shell{stroke-opacity:.5}
