@@ -164,6 +164,7 @@ function MenuSection({
             key={item.path}
             to={item.path}
             end={item.end}
+            onClick={() => window.dispatchEvent(new Event("auneron:fechar-menu"))}
             title={
               privileged
                 ? `${item.label} — acesso privilegiado`

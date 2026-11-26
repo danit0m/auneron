@@ -263,6 +263,9 @@ export default function Brain() {
               .includes(termo) ||
             conhecimento.agent_name
               .toLowerCase()
+              .includes(termo) ||
+            rotuloAgente(conhecimento.agent_name)
+              .toLowerCase()
               .includes(termo);
 
           const correspondeAgente =

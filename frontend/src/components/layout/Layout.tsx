@@ -7,6 +7,14 @@ export function Layout() {
     <div className="app-layout">
       <Sidebar />
 
+      <button
+        type="button"
+        className="menu-lateral-fundo"
+        aria-label="Fechar menu"
+        tabIndex={-1}
+        onClick={() => window.dispatchEvent(new Event("auneron:fechar-menu"))}
+      />
+
       <main className="main-content">
         <Outlet />
       </main>

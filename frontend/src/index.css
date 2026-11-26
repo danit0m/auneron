@@ -1499,3 +1499,26 @@ tbody tr:hover {
 :is([data-theme="neon"], [data-theme="dark"]) .placeholder-page h2 {
   color: var(--text-primary);
 }
+
+/* Menu lateral em telas estreitas: aberto pelo botao do cabecalho, sobre um fundo escurecido. */
+.menu-lateral-fundo { display: none; }
+
+@media (max-width: 950px) {
+  .menu-lateral-aberto .sidebar {
+    display: flex;
+    z-index: 1001;
+    width: min(280px, 86vw);
+    overflow-y: auto;
+    box-shadow: 0 24px 60px rgb(2 6 23 / 55%);
+  }
+
+  .menu-lateral-aberto .menu-lateral-fundo {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    border: 0;
+    background: rgb(2 6 23 / 55%);
+    cursor: pointer;
+  }
+}

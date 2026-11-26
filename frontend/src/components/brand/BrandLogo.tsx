@@ -22,11 +22,15 @@ export function BrandLogo({ variant, className }: BrandLogoProps) {
   }
 
   return (
-    <span className={["brand-horizontal", className].filter(Boolean).join(" ")}>
+    <span
+      className={["brand-horizontal", className].filter(Boolean).join(" ")}
+      role="img"
+      aria-label={NOME}
+    >
       <img
         className="brand-horizontal-light"
         src="/brand/04_horizontal_transparente_claro.svg"
-        alt={NOME}
+        alt=""
         width={260}
         height={78}
       />
@@ -34,7 +38,6 @@ export function BrandLogo({ variant, className }: BrandLogoProps) {
         className="brand-horizontal-dark"
         src="/brand/03_horizontal_transparente_escuro.svg"
         alt=""
-        aria-hidden="true"
         width={260}
         height={78}
       />

@@ -667,7 +667,7 @@ export default function RecommendationDecisionCard({
         <h4>Próximos passos recomendados</h4>
         <p className="recommendation-kind-note">
           <KindBadge kind="recomendacao" />
-          Sugestão da política: nenhuma ação foi executada por esta recomendação.
+          Sugestão da política: a recomendação, por si só, não executa nenhuma ação.
         </p>
         <p className="recommendation-decision-type">
           {

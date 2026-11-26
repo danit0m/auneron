@@ -674,7 +674,7 @@ export default function ExecutiveCenter() {
               <div className="executive-business-decision-header">
                 <div>
                   <span className="executive-business-eyebrow">
-                    <KindBadge kind="analise" />
+                    <KindBadge kind="analise" /> Decisão estratégica
                   </span>
 
                   <h3>
@@ -852,7 +852,7 @@ export default function ExecutiveCenter() {
             </p>
 
             <p className="executive-recommendation-note">
-              Esta é uma recomendação: nenhuma ação foi executada por ela.
+              Esta é uma recomendação: por si só, ela não executa nenhuma ação.
             </p>
 
             <div className="executive-recommendation-action">

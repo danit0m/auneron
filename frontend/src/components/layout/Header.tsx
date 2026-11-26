@@ -1,4 +1,5 @@
 import { Menu, Search } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { AvisosBell } from "./AvisosBell";
 
@@ -46,6 +47,25 @@ export function Header({
     user,
   } = useAuth();
 
+  // Menu lateral em telas estreitas (<= 950 px): o botao abre a mesma navegacao do menu, sobreposta.
+  const [menuAberto, setMenuAberto] = useState(false);
+
+  useEffect(() => {
+    const fechar = () => setMenuAberto(false);
+    const tecla = (e: KeyboardEvent) => { if (e.key === "Escape") fechar(); };
+    window.addEventListener("auneron:fechar-menu", fechar);
+    window.addEventListener("keydown", tecla);
+    return () => {
+      window.removeEventListener("auneron:fechar-menu", fechar);
+      window.removeEventListener("keydown", tecla);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("menu-lateral-aberto", menuAberto);
+    return () => document.documentElement.classList.remove("menu-lateral-aberto");
+  }, [menuAberto]);
+
   const userName =
     user?.name ?? "Auneron AI";
 
@@ -63,7 +83,9 @@ export function Header({
         <button
           type="button"
           className="mobile-menu-button"
-          aria-label="Abrir menu"
+          aria-label={menuAberto ? "Fechar menu" : "Abrir menu"}
+          aria-expanded={menuAberto}
+          onClick={() => setMenuAberto((aberto) => !aberto)}
         >
           <Menu size={22} />
         </button>
