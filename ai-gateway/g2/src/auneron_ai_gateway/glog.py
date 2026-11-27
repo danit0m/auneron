@@ -28,6 +28,9 @@ _EXTRA_CODES = frozenset(
         "connection_limit",
         "unexpected_exception",
         "loop_exception",
+        "ollama_exposed",
+        "exposure_unverifiable",
+        "exposure_recovered",
     }
 )
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{7,63}$")

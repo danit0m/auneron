@@ -18,6 +18,9 @@ CEIL_QUEUE = 2
 CEIL_PER_MINUTE = 10
 CEIL_TOTAL_TIMEOUT = 120.0
 CEIL_CONNECTIONS = 4
+MIN_RECHECK = 10.0  # reverificacao da exposicao do Ollama: piso (nao sobrecarregar) e teto
+MAX_RECHECK = 3600.0
+DEFAULT_RECHECK = 60.0
 
 
 def is_allowed_bind_host(host: object) -> bool:
@@ -52,6 +55,7 @@ class Config:
     retention_days: int
     enabled_profiles: frozenset[str]
     exposure_unverifiable: str  # "refuse" (padrao) ou "allow"
+    exposure_recheck_seconds: float = 60.0  # reverificacao periodica da exposicao do Ollama
 
 
 _SPEC: dict[str, dict[str, type | tuple[type, ...]]] = {
@@ -76,7 +80,7 @@ _SPEC: dict[str, dict[str, type | tuple[type, ...]]] = {
     "limits": {"queue_size": int, "per_minute": int, "total_timeout": (int, float)},
     "logging": {"dir": str, "retention_days": int},
     "profiles": {"enabled": list},
-    "startup": {"exposure_unverifiable": str},
+    "startup": {"exposure_unverifiable": str, "exposure_recheck_seconds": (int, float)},
 }
 
 
@@ -112,6 +116,9 @@ def load_config(path: Path) -> Config:
     unverifiable = raw.get("startup", {}).get("exposure_unverifiable", "refuse")
     if unverifiable not in ("refuse", "allow"):
         raise ConfigError("startup.exposure_unverifiable deve ser refuse ou allow")
+    recheck = float(raw.get("startup", {}).get("exposure_recheck_seconds", DEFAULT_RECHECK))
+    if not (MIN_RECHECK <= recheck <= MAX_RECHECK):
+        raise ConfigError("startup.exposure_recheck_seconds fora da faixa (10 a 3600)")
     s, t, o, lim, lg = (raw[k] for k in ("server", "tls", "ollama", "limits", "logging"))
     base = Path(path).resolve().parent
 
@@ -185,4 +192,5 @@ def load_config(path: Path) -> Config:
         retention_days=retention,
         enabled_profiles=frozenset(enabled),
         exposure_unverifiable=unverifiable,
+        exposure_recheck_seconds=recheck,
     )

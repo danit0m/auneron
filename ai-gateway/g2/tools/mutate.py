@@ -15,11 +15,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-PY = ROOT / ".venv" / "Scripts" / "python.exe"
+PY = Path(os.environ.get("AUNERON_GW_PY") or ROOT / ".venv" / "Scripts" / "python.exe")
 FAST = ["tests/test_boundary.py", "tests/test_units.py", "tests/test_mem_mtls.py"]  # sem porta/processo
 NET = ["tests/test_boundary.py", "tests/test_startup.py", "-k", "exclusive or no_listen or loopback_only"]
 
 S = "server.py"
+R3 = ["tests/test_r3.py"]  # os pontos novos do G2 r3 sao mortos pelos testes novos
 M = {
     # --- identidade / TLS (mTLS antes de qualquer parsing)
     "tls_cert_optional": ("CERT_REQUIRED -> CERT_OPTIONAL", [("startup.py", "ctx.verify_mode = ssl.CERT_REQUIRED\n    ctx.verify_flags", "ctx.verify_mode = ssl.CERT_OPTIONAL\n    ctx.verify_flags")], None),
@@ -92,6 +93,34 @@ M = {
     "ollama_response_unbounded": ("resposta do Ollama sem limite de leitura", [("ollama.py", "data = resp.read(max_bytes + 1)  # limite real de bytes lidos", "data = resp.read()")], None),
     "ollama_no_real_cancel": ("cancelamento nao fecha o socket do Ollama", [("ollama.py", "            cancel.cancel()  # cancelamento real: fecha o socket com o Ollama\n            raise", "            raise")], None),
     "stream_true": ("stream=True no corpo do Ollama", [("ollama.py", '"stream": False,', '"stream": True,')], None),
+    # --- G2 r3: permissao de escrita do certificado/CA e reverificacao periodica do Ollama
+    "r3_public_check_skipped": ("pula a permissao do certificado e da CA", [("startup.py", "            public_check(path)  # leitura publica ok; escrita por outros recusada", "            pass")], R3),
+    "r3_ca_not_checked": ("so confere o certificado, nao a CA", [("startup.py", '("certificado do servidor", cfg.cert_file), ("CA de clientes", cfg.ca_file)):', '("certificado do servidor", cfg.cert_file),):')], R3),
+    "r3_cert_not_checked": ("so confere a CA, nao o certificado", [("startup.py", '("certificado do servidor", cfg.cert_file), ("CA de clientes", cfg.ca_file)):', '("CA de clientes", cfg.ca_file),):')], R3),
+    "r3_posix_group_write_ok": ("POSIX publico: escrita por grupo aceita", [("fsperm.py", "if mode & (stat.S_IWGRP | stat.S_IWOTH):", "if mode & stat.S_IWOTH:")], R3),
+    "r3_posix_other_write_ok": ("POSIX publico: escrita por outros aceita", [("fsperm.py", "if mode & (stat.S_IWGRP | stat.S_IWOTH):", "if mode & stat.S_IWGRP:")], R3),
+    "r3_posix_public_read_refused": ("POSIX publico: leitura por outros recusada", [("fsperm.py", "if mode & (stat.S_IWGRP | stat.S_IWOTH):", "if mode & (stat.S_IRWXG | stat.S_IRWXO):")], R3),
+    "r3_win_write_filter_off": ("Windows publico: leitura por outros recusada", [("fsperm.py", "if write_only and mask is not None and not (mask & WRITE_MASK):", "if False:")], R3),
+    "r3_win_write_only_off": ("Windows: arquivo publico conferido como chave", [("fsperm.py", "bad = windows_violations(aces, allowed, write_only=public)", "bad = windows_violations(aces, allowed)")], R3),
+    "r3_win_delete_bit_dropped": ("Windows: DELETE nao conta como escrita", [("fsperm.py", "0x100 | 0x10000 | 0x40000", "0x100 | 0x40000")], R3),
+    "r3_win_generic_write_dropped": ("Windows: GENERIC_WRITE nao conta como escrita", [("fsperm.py", "0x10000000 | 0x40000000", "0x10000000")], R3),
+    "r3_win_no_mask_open": ("Windows: ACE sem mascara aceita", [("fsperm.py", "if write_only and mask is not None and not (mask & WRITE_MASK):", "if write_only and not ((mask or 0) & WRITE_MASK):")], R3),
+    "r3_public_unverifiable_open": ("verificacao impossivel = aceito", [("fsperm.py", '        raise KeyPermissionError("permissao nao verificavel") from None', "        return")], R3),
+    "r3_recheck_min_removed": ("piso de 10 s removido", [("config.py", "MIN_RECHECK = 10.0", "MIN_RECHECK = 0.0")], R3),
+    "r3_recheck_max_removed": ("teto de 3600 s removido", [("config.py", "MAX_RECHECK = 3600.0", "MAX_RECHECK = 1e12")], R3),
+    "r3_recheck_default_600": ("padrao 600 s em vez de 60 s", [("config.py", "DEFAULT_RECHECK = 60.0", "DEFAULT_RECHECK = 600.0")], R3),
+    "r3_recheck_config_ignored": ("intervalo do TOML ignorado", [("exposure_watch.py", "self.interval = cfg.exposure_recheck_seconds if interval is None else interval", "self.interval = 60.0 if interval is None else interval")], R3),
+    "r3_refusal_off": ("modo recusa nunca recusa", [("app.py", "if self.guard is not None and self.guard.refusing:", "if False:")], R3),
+    "r3_refusal_health_open": ("modo recusa deixa /v1/health chamar o Ollama", [("app.py", "if self.guard is not None and self.guard.refusing:", 'if self.guard is not None and self.guard.refusing and route != "/v1/health":')], R3),
+    "r3_no_recovery": ("nao volta ao normal sozinho", [("exposure_watch.py", "                self.refusing = False\n", "                pass\n")], R3),
+    "r3_exposed_seen_as_ok": ("exposicao detectada e ignorada", [("exposure_watch.py", 'return REASON_UNVERIFIABLE if "nao verificavel" in str(exc) else REASON_EXPOSED', "return None")], R3),
+    "r3_exception_seen_as_ok": ("excecao do verificador = ok", [("exposure_watch.py", "        except Exception:\n            return REASON_UNVERIFIABLE", "        except Exception:\n            return None")], R3),
+    "r3_reason_not_logged": ("motivo da recusa nao registrado", [("exposure_watch.py", "        if not self.refusing or reason != self.reason:\n            self.log.event(\"internal\", code=reason)", "        if False:\n            self.log.event(\"internal\", code=reason)")], R3),
+    "r3_interval_zero": ("verifica sem esperar o intervalo", [("exposure_watch.py", "await asyncio.sleep(self.interval)", "await asyncio.sleep(0.001)")], R3),
+    "r3_wrong_ollama_port": ("verifica a porta do Gateway, nao a do Ollama", [("exposure_watch.py", "check_ollama_not_exposed(cfg.ollama_port, on_unverifiable", "check_ollama_not_exposed(cfg.port, on_unverifiable")], R3),
+    "r3_watch_not_started": ("tarefa periodica nunca iniciada", [("server.py", "self.watch_task = loop.create_task(self.exposure_watch.run())", "self.watch_task = None")], R3),
+    "r3_watch_not_cancelled": ("desligamento nao cancela a tarefa", [("server.py", "                self.watch_task.cancel()\n                await asyncio.gather(self.watch_task, return_exceptions=True)\n", "                pass\n")], R3),
+    "r3_main_unwired": ("__main__ nao liga a tarefa periodica", [("__main__.py", "server = GatewayServer(cfg, ctx, ollama, log, exposure_watch=ExposureWatch(cfg, log))", "server = GatewayServer(cfg, ctx, ollama, log)")], R3),
     # --- perfis
     "think_profile_on_by_default": ("perfil think ligado por padrao", [("profiles.py", "DEFAULT_ENABLED = (PROFILE_ID,)", "DEFAULT_ENABLED = (PROFILE_ID, PROFILE_THINK_ID)")], None),
     "think_flag_wrong": ("think=True no perfil padrao", [("profiles.py", "        think=False,\n        temperature=0,", "        think=True,\n        temperature=0,")], None),

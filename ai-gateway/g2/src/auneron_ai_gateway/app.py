@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from .config import Config
 from .contract import MAX_BODY_BYTES, GenerateRequest, JsonError, strict_json_loads
 from .errors import GatewayError
+from .exposure_watch import ExposureWatch
 from .glog import AuditLog
 from .limits import RateLimiter
 from .ollama import OllamaClient
@@ -29,7 +30,10 @@ def _error_body(code: str) -> bytes:
 
 
 class GatewayApp:
-    def __init__(self, cfg: Config, ollama: OllamaClient, log: AuditLog) -> None:
+    def __init__(
+        self, cfg: Config, ollama: OllamaClient, log: AuditLog, guard: ExposureWatch | None = None
+    ) -> None:
+        self.guard = guard  # modo recusa: exposicao do Ollama reverificada periodicamente
         self.cfg = cfg
         self.ollama = ollama
         self.log = log
@@ -98,6 +102,11 @@ class GatewayApp:
             return
         if scope["method"] != expected:
             await self._error(send, "method_not_allowed", allow=expected)
+            return
+        if self.guard is not None and self.guard.refusing:
+            # modo recusa: nao le o corpo e NAO chama o Ollama (nem para /v1/health)
+            self._log_request({}, "unavailable", t0, None)
+            await self._error(send, "unavailable", close=True, retry_after=int(self.guard.interval))
             return
         headers: dict[str, list[str]] = {}
         for k, v in scope["headers"]:

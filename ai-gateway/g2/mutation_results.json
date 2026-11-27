@@ -640,6 +640,276 @@
   "exit": 1
  },
  {
+  "name": "r3_public_check_skipped",
+  "desc": "pula a permissao do certificado e da CA",
+  "result": "KILLED",
+  "secs": 2.8,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_preflight_checks_cert_and_ca_with_public_check"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_ca_not_checked",
+  "desc": "so confere o certificado, nao a CA",
+  "result": "KILLED",
+  "secs": 2.8,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_preflight_checks_cert_and_ca_with_public_check"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_cert_not_checked",
+  "desc": "so confere a CA, nao o certificado",
+  "result": "KILLED",
+  "secs": 2.7,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_preflight_checks_cert_and_ca_with_public_check"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_posix_group_write_ok",
+  "desc": "POSIX publico: escrita por grupo aceita",
+  "result": "KILLED",
+  "secs": 1.7,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_posix_write_rule_allows_public_read_and_refuses_write_by_others"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_posix_other_write_ok",
+  "desc": "POSIX publico: escrita por outros aceita",
+  "result": "KILLED",
+  "secs": 1.6,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_posix_write_rule_allows_public_read_and_refuses_write_by_others"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_posix_public_read_refused",
+  "desc": "POSIX publico: leitura por outros recusada",
+  "result": "KILLED",
+  "secs": 1.6,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_posix_write_rule_allows_public_read_and_refuses_write_by_others"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_win_write_filter_off",
+  "desc": "Windows publico: leitura por outros recusada",
+  "result": "KILLED",
+  "secs": 1.7,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_windows_write_rule_pure_logic - AssertionError:..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_win_write_only_off",
+  "desc": "Windows: arquivo publico conferido como chave",
+  "result": "KILLED",
+  "secs": 1.7,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_windows_public_file_read_ok_write_refused - aun..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_win_delete_bit_dropped",
+  "desc": "Windows: DELETE nao conta como escrita",
+  "result": "KILLED",
+  "secs": 1.7,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_windows_write_rule_pure_logic - assert (65536 &..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_win_generic_write_dropped",
+  "desc": "Windows: GENERIC_WRITE nao conta como escrita",
+  "result": "KILLED",
+  "secs": 1.6,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_windows_write_rule_pure_logic - assert (1073741..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_win_no_mask_open",
+  "desc": "Windows: ACE sem mascara aceita",
+  "result": "KILLED",
+  "secs": 1.7,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_windows_write_rule_pure_logic - AssertionError:..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_public_unverifiable_open",
+  "desc": "verificacao impossivel = aceito",
+  "result": "KILLED",
+  "secs": 1.6,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_public_check_fails_closed_when_verification_is_impossible"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_recheck_min_removed",
+  "desc": "piso de 10 s removido",
+  "result": "KILLED",
+  "secs": 3.0,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_recheck_interval_config_default_min_and_bounds"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_recheck_max_removed",
+  "desc": "teto de 3600 s removido",
+  "result": "KILLED",
+  "secs": 2.8,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_recheck_interval_config_default_min_and_bounds"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_recheck_default_600",
+  "desc": "padrao 600 s em vez de 60 s",
+  "result": "KILLED",
+  "secs": 2.8,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_recheck_interval_config_default_min_and_bounds"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_recheck_config_ignored",
+  "desc": "intervalo do TOML ignorado",
+  "result": "KILLED",
+  "secs": 3.8,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_watch_evaluate_reasons - AssertionError: assert..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_refusal_off",
+  "desc": "modo recusa nunca recusa",
+  "result": "KILLED",
+  "secs": 3.0,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_refusal_mode_returns_503_json_without_calling_ollama_then_recovers"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_refusal_health_open",
+  "desc": "modo recusa deixa /v1/health chamar o Ollama",
+  "result": "KILLED",
+  "secs": 3.0,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_refusal_mode_returns_503_json_without_calling_ollama_then_recovers"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_no_recovery",
+  "desc": "nao volta ao normal sozinho",
+  "result": "KILLED",
+  "secs": 5.3,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_refusal_mode_returns_503_json_without_calling_ollama_then_recovers"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_exposed_seen_as_ok",
+  "desc": "exposicao detectada e ignorada",
+  "result": "KILLED",
+  "secs": 5.3,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_refusal_mode_returns_503_json_without_calling_ollama_then_recovers"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_exception_seen_as_ok",
+  "desc": "excecao do verificador = ok",
+  "result": "KILLED",
+  "secs": 5.4,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_check_failure_or_impossible_verification_enters_refusal_mode"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_reason_not_logged",
+  "desc": "motivo da recusa nao registrado",
+  "result": "KILLED",
+  "secs": 2.8,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_refusal_mode_returns_503_json_without_calling_ollama_then_recovers"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_interval_zero",
+  "desc": "verifica sem esperar o intervalo",
+  "result": "KILLED",
+  "secs": 3.0,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_watch_respects_interval_between_checks - assert..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_wrong_ollama_port",
+  "desc": "verifica a porta do Gateway, nao a do Ollama",
+  "result": "KILLED",
+  "secs": 4.0,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_default_watch_check_uses_real_exposure_check_with_config_port"
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_watch_not_started",
+  "desc": "tarefa periodica nunca iniciada",
+  "result": "KILLED",
+  "secs": 8.6,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_server_shutdown_cancels_watch_task_cleanly - as..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_watch_not_cancelled",
+  "desc": "desligamento nao cancela a tarefa",
+  "result": "KILLED",
+  "secs": 4.0,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_server_shutdown_cancels_watch_task_cleanly - As..."
+  ],
+  "exit": 1
+ },
+ {
+  "name": "r3_main_unwired",
+  "desc": "__main__ nao liga a tarefa periodica",
+  "result": "KILLED",
+  "secs": 4.0,
+  "killed_by": [
+   "FAILED tests/test_r3.py::test_main_wires_exposure_watch - assert 'exposure_wa..."
+  ],
+  "exit": 1
+ },
+ {
   "name": "think_profile_on_by_default",
   "desc": "perfil think ligado por padrao",
   "result": "KILLED",

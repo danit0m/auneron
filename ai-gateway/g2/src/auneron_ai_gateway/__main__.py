@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .config import ConfigError, load_config
+from .exposure_watch import ExposureWatch
 from .glog import AuditLog
 from .ollama import OllamaClient
 from .server import GatewayServer
@@ -26,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     log = AuditLog(cfg.log_dir, cfg.retention_days)
     ollama = OllamaClient(cfg.ollama_port, chat_timeout=cfg.total_timeout + 5)
-    server = GatewayServer(cfg, ctx, ollama, log)
+    server = GatewayServer(cfg, ctx, ollama, log, exposure_watch=ExposureWatch(cfg, log))
     try:
         port = server.bind()
     except OSError:

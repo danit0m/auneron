@@ -25,6 +25,7 @@ from uvicorn.server import ServerState
 
 from .app import ROUTES, GatewayApp  # noqa: F401  (ROUTES reexportado para testes)
 from .config import Config, is_allowed_bind_host
+from .exposure_watch import ExposureWatch
 from .glog import AuditLog
 from .identity import check_identity
 from .netbind import bind_exclusive
@@ -139,6 +140,7 @@ class GatewayServer:
         ollama: OllamaClient,
         log: AuditLog,
         protocol_base: type[GatewayProtocol] = GatewayProtocol,
+        exposure_watch: ExposureWatch | None = None,
     ) -> None:
         if not is_allowed_bind_host(cfg.host):
             raise ValueError("host nao permitido")
@@ -147,7 +149,9 @@ class GatewayServer:
         self.cfg = cfg
         self.ssl_ctx: ssl.SSLContext | None = ssl_ctx
         self.log = log
-        self.app = GatewayApp(cfg, ollama, log)
+        self.exposure_watch = exposure_watch
+        self.watch_task: asyncio.Task[Any] | None = None
+        self.app = GatewayApp(cfg, ollama, log, exposure_watch)
         self._protocol_class = make_protocol_class(cfg, log, protocol_base)
         self._active_conns = 0
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -183,6 +187,8 @@ class GatewayServer:
         assert self._lsock is not None
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(self._loop_exception)
+        if self.exposure_watch is not None:
+            self.watch_task = loop.create_task(self.exposure_watch.run())
         try:
             while True:
                 conn, _addr = await loop.sock_accept(self._lsock)
@@ -195,6 +201,9 @@ class GatewayServer:
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
         finally:
+            if self.watch_task is not None:
+                self.watch_task.cancel()
+                await asyncio.gather(self.watch_task, return_exceptions=True)
             for t in list(self._tasks):
                 t.cancel()
             if self._lsock is not None:

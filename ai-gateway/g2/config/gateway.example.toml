@@ -39,6 +39,9 @@ enabled = ["qwen3-4b-instruct-2507"]   # "qwen3-4b-think" existe, mas fica desli
 # do sistema indisponivel E nenhum endereco local para sondar). "refuse" (padrao) recusa a partida;
 # "allow" e uma decisao explicita e documentada de quem opera.
 exposure_unverifiable = "refuse"
+# Reverificacao periodica da exposicao do Ollama. Se ele passar a escutar fora de loopback (ou a
+# conferencia ficar impossivel), o Gateway responde 503 sem chamar o Ollama, ate voltar ao normal.
+exposure_recheck_seconds = 60   # padrao 60, minimo 10, maximo 3600
 
 [logging]
 dir = "C:/AUNERON-GW/logs"

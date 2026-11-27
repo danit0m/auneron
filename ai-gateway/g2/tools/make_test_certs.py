@@ -69,6 +69,7 @@ def restrict_private_file(path: Path) -> None:
 def _write(root: Path, name: str, cert: x509.Certificate, key: ec.EllipticCurvePrivateKey) -> Pair:
     cp, kp = root / f"{name}.pem", root / f"{name}.key.pem"
     cp.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    restrict_private_file(cp)  # G2 r3: a partida recusa certificado gravavel por outros
     kp.write_bytes(
         key.private_bytes(
             serialization.Encoding.PEM,
@@ -158,6 +159,8 @@ class make_test_pki:
         bad, bad_key = _make_ca("EVIL TEST CA")
         (root / "ca.pem").write_bytes(ca.public_bytes(serialization.Encoding.PEM))
         (root / "wrong_ca.pem").write_bytes(bad.public_bytes(serialization.Encoding.PEM))
+        restrict_private_file(root / "ca.pem")
+        restrict_private_file(root / "wrong_ca.pem")
         pki = TestPKI(root, root / "ca.pem", root / "wrong_ca.pem")
         S, C = ExtendedKeyUsageOID.SERVER_AUTH, ExtendedKeyUsageOID.CLIENT_AUTH
         d = dt.timedelta

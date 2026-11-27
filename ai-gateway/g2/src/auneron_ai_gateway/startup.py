@@ -14,7 +14,7 @@ from .exposure import (
     local_candidate_addresses,
     system_listeners,
 )
-from .fsperm import KeyPermissionError, check_private_key_permissions
+from .fsperm import KeyPermissionError, check_private_key_permissions, check_public_file_not_writable
 from .ollama import OLLAMA_HOST
 
 
@@ -43,6 +43,7 @@ def preflight(
     addresses: Callable[[], list[str]] = local_candidate_addresses,
     probe: Callable[..., bool] | None = None,
     key_check: Callable[[Any], None] = check_private_key_permissions,
+    public_check: Callable[[Any], None] = check_public_file_not_writable,
     now: float | None = None,
 ) -> tuple[ssl.SSLContext, str]:
     if not is_allowed_bind_host(cfg.host) or OLLAMA_HOST != "127.0.0.1":
@@ -61,6 +62,11 @@ def preflight(
         key_check(cfg.key_file)
     except KeyPermissionError as exc:
         raise StartupError(f"permissao da chave privada: {exc}") from None
+    for label, path in (("certificado do servidor", cfg.cert_file), ("CA de clientes", cfg.ca_file)):
+        try:
+            public_check(path)  # leitura publica ok; escrita por outros recusada
+        except KeyPermissionError as exc:
+            raise StartupError(f"permissao de escrita do {label}: {exc}") from None
     for label, path in (("cert_file", cfg.cert_file), ("ca_file", cfg.ca_file)):
         try:
             check_currently_valid(path, now)

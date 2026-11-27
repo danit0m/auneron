@@ -46,3 +46,19 @@ Teste: cryptography 50.0.2 (Apache-2.0 OR BSD-3), cffi 2.1.1 (MIT-0), pycparser 
 
 ## Limpeza
 Nenhum processo do Gateway/pytest/mutacao meu ativo; porta 8443 livre; pastas `aigw-*` temporarias apagadas; sem `__pycache__`; certificados de teste so em pasta temporaria apagada. SOMAS.txt (LF, 52 arquivos) lista os SHA-256; RELATORIO.md fica fora do SOMAS.
+
+## G2 r3: itens A e B
+Base: `origin/trabalho/ai-gateway` (cef351c). Escopo so estes dois itens.
+
+**A. Permissao de ESCRITA do certificado do servidor e da CA de clientes, na partida (falha fechada).**
+`fsperm.check_public_file_not_writable` reaproveita a mesma leitura de ACL/modo da chave (`_check`, `_read_windows_acl`, `windows_violations(write_only=True)`); a leitura de ACL agora tambem devolve a mascara de acesso.
+Leitura por outros e aceita (arquivos publicos). Windows: recusa ACE de permitir com qualquer bit de escrita (dados, anexar, EA, atributos, DELETE, WRITE_DAC, WRITE_OWNER, GENERIC_WRITE/ALL) para SID que nao seja dono, usuario do processo, SYSTEM, Administradores ou CREATOR OWNER; ACE de objeto, DACL nula e ACE sem mascara = recusa.
+POSIX: sem escrita para grupo/outros e dono = usuario do processo ou root (decisao minha, alem do pedido: dono de outro usuario tambem recusa). Verificacao impossivel (arquivo ausente, erro de API) = recusa. `preflight` ganhou `public_check` (injetavel) e recusa com `permissao de escrita do certificado do servidor` / `... da CA de clientes`.
+Apoio de teste: `tools/make_test_certs.py` passou a restringir a ACL do certificado e da CA de teste (a pasta temporaria herda escrita de outros SIDs e a partida agora corretamente recusaria).
+
+**B. Reverificacao periodica da exposicao do Ollama.** `[startup] exposure_recheck_seconds` (padrao 60, minimo 10, maximo 3600; fora da faixa ou tipo errado = configuracao recusada). `exposure_watch.ExposureWatch` repete `check_ollama_not_exposed` (a mesma funcao da partida) numa unica tarefa asyncio (conferencia bloqueante no executor do laco), iniciada em `serve_forever` e cancelada e aguardada no `finally` (sem threads proprias).
+Exposto, nao verificavel ou excecao = modo recusa: toda rota valida (inclusive `/v1/health`) responde 503 `{"error":{"code":"unavailable"}}` com `Connection: close` e `Retry-After`, sem ler o corpo e sem chamar o Ollama; 404/405 seguem iguais. Motivo no log (`ollama_exposed`, `exposure_unverifiable`) e a volta (`exposure_recovered`); volta ao normal sozinho quando a conferencia passa. Ligado em `__main__`.
+
+**Testes:** `tests/test_r3.py` (20 novos; 1 so POSIX, pulado aqui). Suite completa 2x: 452 passed, 29 skipped por rodada (28 `needs_tls` + 1 POSIX), 0 falhas.
+**Mutacao:** 27 mutantes novos `r3_*`, 27 mortos (97/97 em `mutation_results.json`); 1 sobreviveu na 1a passada (`r3_main_unwired`: o teste lia a fonte real e nao a copia mutada) e morreu apos corrigir o teste.
+**Nao provado:** ACL real em POSIX (so logica pura e teste de modos que roda fora do Windows); reverificacao contra um Ollama real escutando em 0.0.0.0 (so verificador injetado); mTLS por socket real segue pulado (Avast).
