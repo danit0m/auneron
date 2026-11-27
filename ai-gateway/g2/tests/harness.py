@@ -10,6 +10,7 @@ import subprocess
 import sysconfig
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -315,7 +316,28 @@ retention_days = 30
         return Conn(self, self.pki[name] if name else None, **kw)
 
     def attempt(self, name: str | None, raw: bytes, **kw: Any) -> Resp | None:
-        """Tenta uma requisicao; None = recusado (handshake ou fechamento sem resposta HTTP)."""
+        """Tenta uma requisicao; None = recusado (handshake ou fechamento sem resposta HTTP).
+
+        Roda num thread proprio: a fila de erros do OpenSSL e por thread, e o erro de uma tentativa
+        recusada (alerta TLS) ficava nela e contaminava a leitura seguinte de OUTRA conexao do mesmo
+        thread no cliente de teste (Python 3.11.18 + OpenSSL 3.5.9; achado no container, 27/11/2026).
+        O servidor nao e afetado: recebeu e respondeu normalmente."""
+        box: list[Any] = [None, None]
+
+        def run() -> None:
+            try:
+                box[0] = self._attempt(name, raw, **kw)
+            except BaseException as exc:  # erro inesperado nao pode virar "recusado"
+                box[1] = exc
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join()
+        if box[1] is not None:
+            raise box[1]
+        return box[0]
+
+    def _attempt(self, name: str | None, raw: bytes, **kw: Any) -> Resp | None:
         try:
             c = Conn(self, self.pki[name] if name else None, **kw)
         except (OSError, ssl.SSLError):

@@ -62,3 +62,13 @@ Exposto, nao verificavel ou excecao = modo recusa: toda rota valida (inclusive `
 **Testes:** `tests/test_r3.py` (20 novos; 1 so POSIX, pulado aqui). Suite completa 2x: 452 passed, 29 skipped por rodada (28 `needs_tls` + 1 POSIX), 0 falhas.
 **Mutacao:** 27 mutantes novos `r3_*`, 27 mortos (97/97 em `mutation_results.json`); 1 sobreviveu na 1a passada (`r3_main_unwired`: o teste lia a fonte real e nao a copia mutada) e morreu apos corrigir o teste.
 **Nao provado:** ACL real em POSIX (so logica pura e teste de modos que roda fora do Windows); reverificacao contra um Ollama real escutando em 0.0.0.0 (so verificador injetado); mTLS por socket real segue pulado (Avast).
+
+## G2 r3: ciclo no container (27/11/2026)
+Imagem descartavel `python:3.11-slim@sha256:61e01f72680f86a5279ad510818ab7b2ee9f049822589d4e34e33e044360356c` (Python 3.11.18, OpenSSL 3.5.9), wheelhouse baixado no host com `--require-hashes`, build com `--network none`, execucao com `--network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 --memory 1g --user 10001:10001`, sem montagens e sem portas.
+
+**1a rodada:** 476 passed, 4 skipped, **1 falha**: `test_fingerprint_bound_to_connection_no_swap_on_keepalive` (deterministica, 5/5).
+**Causa (provada no container):** no CLIENTE de teste. A fila de erros do OpenSSL e por thread; o alerta TLS de uma tentativa recusada ficava nela e a leitura seguinte de OUTRA conexao (a boa, ja aberta) no mesmo thread devolvia `BrokenPipeError`. Provas: o servidor recebeu e respondeu 200 a requisicao (rastreado em `data_received` e no app); nenhum fechamento do socket bom no servidor; com `ERR_clear_error()` no cliente ou com a tentativa num outro thread, a conexao boa responde 200. Vale para qualquer recusa (nao listado, vencido, sem certificado, CA errada).
+**Correcao:** so no harness de teste: `Gateway.attempt` roda num thread proprio e repassa qualquer excecao inesperada (nao vira "recusado"). Nenhum codigo do Gateway mudou.
+**Rodadas finais (2x):** 477 passed, 4 skipped (ACL do Windows), 0 falhas, cerca de 74 s cada. Total 481 = igual ao Windows; os 28 `needs_tls` rodaram e passaram. Windows apos a correcao: 452 passed, 0 falhas.
+**Para o G1:** o cliente real (`client.py`) abre uma conexao nova por requisicao, mas roda no mesmo thread; uma falha TLS anterior pode, em tese, contaminar a chamada seguinte com um erro falso. Testar no G1 (falha seguida de sucesso no mesmo processo).
+Imagem e contexto apagados ao fim; evidencias em pasta propria fora do repositorio.

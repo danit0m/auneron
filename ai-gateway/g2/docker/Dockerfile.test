@@ -1,7 +1,7 @@
-# PREPARADO, NAO EXECUTADO. Imagem DESCARTAVEL so para rodar a suite onde nao ha interceptacao de TLS.
-# Preencher o digest da imagem base ANTES de construir (nao ha digest inventado aqui):
+# EXECUTADO em 27/11/2026 (G2 r3). Imagem DESCARTAVEL so para rodar a suite onde nao ha interceptacao de TLS.
+# Digest da imagem base conferido em 27/11/2026 (python:3.11-slim, criada em 24/11/2026). Para trocar:
 #   docker pull python:3.11-slim ; docker image inspect python:3.11-slim --format "{{index .RepoDigests 0}}"
-ARG PYTHON_IMAGE=python:3.11-slim@sha256:PREENCHER_DIGEST_DA_IMAGEM_BASE
+ARG PYTHON_IMAGE=python:3.11-slim@sha256:61e01f72680f86a5279ad510818ab7b2ee9f049822589d4e34e33e044360356c
 FROM ${PYTHON_IMAGE}
 
 # usuario sem root, sem shell de login, sem home gravavel alem de /tmp
