@@ -1,11 +1,10 @@
 from abc import ABC
 from abc import abstractmethod
 from dataclasses import dataclass
-from datetime import date
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from app.core.receivable_analysis import evaluate_receivable_analysis
 from app.core.money import money_or_zero
 from app.core.money import money_to_json_number
 from app.orchestrator.decision import (
@@ -145,6 +144,23 @@ class UnsupportedEventRule(DecisionRule):
                     ),
                 ),
             ),
+        )
+
+
+class InvalidReceivableFactsRule(DecisionRule):
+    name = "DADOS_FINANCEIROS_INSUFICIENTES"
+    priority = 2
+
+    def matches(self, context: DecisionContext) -> bool:
+        return context.event_name == "cliente_criado" and context.status == "indeterminado"
+
+    def build_decision(self, context: DecisionContext) -> OrchestrationDecision:
+        return OrchestrationDecision(
+            decision_name=self.name,
+            selected_agents=tuple(),
+            reason="Status ou vencimento ausente ou invalido. Revise os dados antes da analise.",
+            confidence=0.0,
+            signals=tuple(),
         )
 
 
@@ -508,7 +524,7 @@ class StandardClientRule(DecisionRule):
                     name="status",
                     value=context.status,
                     description=(
-                        "Status financeiro atual."
+                        "Situacao operacional observada no calendario de negocio."
                     ),
                 ),
             ),
@@ -539,10 +555,12 @@ def build_context(
         payload.get("vencimento", "")
     ).strip()
 
-    dias_atraso = _calculate_overdue_days(
-        status=status,
+    observation = evaluate_receivable_analysis(
+        financial_status=status,
         vencimento=vencimento,
     )
+    status = observation.operational_status if observation is not None else "indeterminado"
+    dias_atraso = observation.days_overdue if observation is not None else 0
 
     return DecisionContext(
         event_name=event_name,
@@ -566,28 +584,11 @@ def _calculate_overdue_days(
     status: str,
     vencimento: str,
 ) -> int:
-    if (
-        status != "atrasado"
-        or not vencimento
-    ):
-        return 0
-
-    try:
-        due_date = datetime.strptime(
-            vencimento,
-            "%Y-%m-%d",
-        ).date()
-
-    except ValueError:
-        return 0
-
-    return max(
-        (
-            date.today()
-            - due_date
-        ).days,
-        0,
+    observation = evaluate_receivable_analysis(
+        financial_status=status,
+        vencimento=vencimento,
     )
+    return observation.days_overdue if observation is not None else 0
 
 
 DEFAULT_RULES: tuple[
@@ -597,6 +598,7 @@ DEFAULT_RULES: tuple[
     sorted(
         (
             UnsupportedEventRule(),
+            InvalidReceivableFactsRule(),
             AccountOverdueDetectionRule(),
             CriticalOverdueRule(),
             StrategicOverdueRule(),

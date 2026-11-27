@@ -1,5 +1,6 @@
 from typing import Any
 
+from app.core.receivable_analysis import evaluate_receivable_analysis
 from app.core.money import ZERO_MONEY
 from app.core.money import to_money
 from app.database.database import SessionLocal
@@ -41,6 +42,14 @@ class NotificationAgent:
                 payload.get("id")
             )
         )
+
+        observation = evaluate_receivable_analysis(
+            financial_status=status,
+            vencimento=payload.get("vencimento", ""),
+        )
+        if observation is None:
+            return
+        status = observation.operational_status
 
         print()
         print(

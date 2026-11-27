@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
@@ -34,6 +35,10 @@ from app.schemas.account import (
     ClientClassificationDetail,
     TitleReferenceAssignRequest,
     TitleReferenceAssignResponse,
+)
+from app.schemas.receivable_review import (
+    ReceivableReviewRequest,
+    ReceivableReviewResponse,
 )
 from app.services.account_title_reference import (
     TitleReferenceError,
@@ -670,3 +675,41 @@ def get_account_classification(
             period_end=context.get("period_end"),
         ),
     )
+
+
+@router.patch("/{account_id}/financial-review", response_model=ReceivableReviewResponse)
+def review_receivable_facts(
+    account_id: int,
+    payload: ReceivableReviewRequest,
+    authenticated: AuthenticatedSession = Depends(require_permission("clients.manage")),
+    db: Session = Depends(get_db),
+):
+    actor = audit_actor(authenticated)
+    account = db.execute(
+        select(Account)
+        .where(Account.id == account_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Conta nao encontrada.")
+
+    if payload.balance is not None and account.status == "pago" and payload.balance.cents > 0:
+        raise HTTPException(status_code=409, detail="Conta paga com saldo positivo exige revisao.")
+
+    reviewed_at = datetime.now(timezone.utc)
+    if payload.balance is not None:
+        account.balance_cents = payload.balance.cents
+        account.balance_source = f"manual:{payload.balance.evidence}"
+        account.balance_observed_at = reviewed_at
+        account.balance_reviewed_by = actor.user_id
+    if payload.hold is not None:
+        account.financial_hold = payload.hold.blocked
+        account.hold_reason = payload.hold.reason
+        account.hold_reviewed_by = actor.user_id
+        account.hold_reviewed_at = reviewed_at
+
+    db.flush()
+    result = ReceivableReviewResponse.model_validate(account)
+    db.commit()
+    return result

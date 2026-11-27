@@ -1,8 +1,7 @@
-from datetime import date
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from app.core.receivable_analysis import evaluate_receivable_analysis
 from app.core.money import ZERO_MONEY
 from app.core.money import to_money
 from app.database.database import SessionLocal
@@ -52,12 +51,15 @@ class RiskAgent:
             )
         )
 
-        dias_atraso = (
-            RiskAgent.calcular_dias_atraso(
-                vencimento=vencimento,
-                status=status,
-            )
+        observation = evaluate_receivable_analysis(
+            financial_status=status,
+            vencimento=payload.get("vencimento", ""),
         )
+        if observation is None:
+            return
+        status = observation.operational_status
+
+        dias_atraso = observation.days_overdue
 
         score = RiskAgent.calcular_score(
             valor=valor,
@@ -263,34 +265,11 @@ class RiskAgent:
         vencimento: str,
         status: str,
     ) -> int:
-        if (
-            status != "atrasado"
-            or not vencimento
-        ):
-            return 0
-
-        try:
-            data_vencimento = (
-                datetime.strptime(
-                    vencimento,
-                    "%Y-%m-%d",
-                ).date()
-            )
-
-            diferenca = (
-                date.today()
-                - data_vencimento
-            ).days
-
-            return max(diferenca, 0)
-
-        except ValueError:
-            print(
-                "Vencimento inválido recebido: "
-                f"{vencimento}"
-            )
-
-            return 0
+        observation = evaluate_receivable_analysis(
+            financial_status=status,
+            vencimento=vencimento,
+        )
+        return observation.days_overdue if observation is not None else 0
 
     @staticmethod
     def converter_account_id(
