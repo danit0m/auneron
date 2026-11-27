@@ -9,6 +9,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
+import pytest
 from sqlalchemy import text
 
 from app.core.authentication import create_session
@@ -256,3 +257,81 @@ def test_main_password_file_usage_errors_do_not_touch_the_database(tmp_path, cap
     assert script.main(["a@b.com", "--senha-arquivo", str(missing_dir)]) == script.EXIT_USAGE
     assert existing.read_text(encoding="utf-8") == "x"
     assert not missing_dir.exists()
+
+
+# --- banco esperado vindo da configuracao do ambiente ---------------------
+
+
+@pytest.mark.parametrize("bad", ["a;b", "x y", "a" * 64, "../x", "a-b", "x\n"])
+def test_resolve_expected_database_rejects_invalid_names(bad):
+    assert script.resolve_expected_database(bad) is None
+
+
+def test_resolve_expected_database_uses_setting_or_default():
+    assert script.resolve_expected_database("auneron_piloto") == "auneron_piloto"
+    assert script.resolve_expected_database("a" * 63) == "a" * 63
+    assert script.resolve_expected_database(None) == "auneron_neon_synthetic"
+    assert script.resolve_expected_database("") == "auneron_neon_synthetic"
+
+
+def _set_expected(monkeypatch, value):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "expected_database_name", value)
+
+
+def test_main_writes_when_setting_matches_connected_database(db_session, monkeypatch, capsys):
+    user = _user(db_session)
+    old_hash = user.password_hash
+    _set_expected(monkeypatch, _database_name(db_session))
+
+    assert script.main(["alvo@example.com"]) == script.EXIT_OK
+
+    db_session.expire_all()
+    assert db_session.get(User, user.id).password_hash != old_hash
+
+
+def test_main_refuses_when_setting_names_another_database(db_session, monkeypatch, capsys):
+    user = _user(db_session)
+    old_hash = user.password_hash
+    create_session(db_session, user)
+    _set_expected(monkeypatch, "auneron_outro_banco")
+
+    assert script.main(["alvo@example.com"]) == script.EXIT_WRONG_DATABASE
+
+    assert script.PASSWORD_MARKER not in capsys.readouterr().out
+    db_session.expire_all()
+    assert db_session.get(User, user.id).password_hash == old_hash
+    sessions = db_session.query(AuthSession).filter(AuthSession.user_id == user.id).all()
+    assert len(sessions) == 1 and sessions[0].revoked_at is None
+
+
+def test_main_invalid_setting_exits_4_without_opening_session(db_session, monkeypatch, capsys):
+    import app.database.database as database_module
+
+    user = _user(db_session)
+    old_hash = user.password_hash
+    _set_expected(monkeypatch, "a;b")
+
+    def _must_not_open():
+        raise AssertionError("sessao nao deveria ser aberta")
+
+    monkeypatch.setattr(database_module, "SessionLocal", _must_not_open)
+
+    assert script.main(["alvo@example.com"]) == script.EXIT_WRONG_DATABASE
+
+    db_session.expire_all()
+    assert db_session.get(User, user.id).password_hash == old_hash
+
+
+def test_main_without_setting_still_expects_synthetic_database(db_session, monkeypatch, capsys):
+    user = _user(db_session)
+    old_hash = user.password_hash
+    _set_expected(monkeypatch, None)
+
+    # o banco de teste nao e auneron_neon_synthetic
+    assert script.main(["alvo@example.com"]) == script.EXIT_WRONG_DATABASE
+
+    assert script.PASSWORD_MARKER not in capsys.readouterr().out
+    db_session.expire_all()
+    assert db_session.get(User, user.id).password_hash == old_hash

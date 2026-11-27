@@ -258,15 +258,22 @@ Redefinição direta via SQL:
   fora das abstrações da aplicação.
 
 Recuperação de senha de usuário existente:
-  requer um mecanismo operacional governado próprio, ainda não
-  construído, antes de poder ser anunciado ou suportado como
-  capacidade de produção.
+  recuperação manual por suporte, via scripts/reset_user_password.py
+  (ver abaixo). Não há autoatendimento de "esqueci minha senha".
 ```
 
-Até essa decisão futura ser tomada, o primeiro cliente externo opera
-sem um caminho suportado de "esqueci minha senha" para usuários já
-criados — apenas a criação do administrador inicial via
-`create_user.py` está coberta por este runbook.
+Recuperação manual por suporte (usuário existente):
+
+1. O pedido deve ser confirmado por dois canais independentes.
+2. Daniel autoriza e executa:
+   `docker exec -it auneron-backend-prod python -m scripts.reset_user_password <email> --senha-arquivo /tmp/<nome-novo>`
+   O banco esperado vem de `EXPECTED_DATABASE_NAME`; o script recusa
+   (código 4) se o banco conectado for outro. O arquivo precisa ser novo
+   (o `/tmp` da imagem é gravável pelo usuário `auneron`).
+3. A senha temporária (válida por 30 min; sessões do usuário revogadas)
+   é entregue por canal diferente do pedido.
+4. O arquivo da senha é apagado logo depois.
+5. A troca de senha é obrigatória no primeiro acesso.
 
 ## Verificação de saúde
 

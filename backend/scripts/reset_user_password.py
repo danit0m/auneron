@@ -1,10 +1,23 @@
 """
 Redefine a senha de um usuario por uma senha TEMPORARIA (recuperacao manual).
 
-Script operacional, rodado manualmente (comando redefinir-senha do
-homologacao.ps1) a partir de backend/:
+Script operacional, rodado manualmente.
+
+Homologacao (comando redefinir-senha do homologacao.ps1), a partir de backend/:
     python -m scripts.reset_user_password <email> [--permitir-ultimo-admin]
         [--senha-arquivo <arquivo novo>]
+
+Piloto (container de producao, usuario "auneron", WORKDIR /app; /tmp e
+gravavel por esse usuario na imagem python:3.11-slim):
+    docker exec -it auneron-backend-prod python -m scripts.reset_user_password
+        <email> --senha-arquivo /tmp/<nome-novo>
+O arquivo e novo (nunca sobrescreve), modo 0600; apague-o depois de entregar
+a senha por canal diferente.
+
+Banco esperado: vem SO da configuracao do ambiente (EXPECTED_DATABASE_NAME,
+obrigatoria em producao). Sem a variavel (homologacao), vale o padrao
+auneron_neon_synthetic. Nao existe flag de linha de comando para trocar o
+banco. Nome fora de [A-Za-z0-9_]{1,63} encerra com codigo 4 sem abrir sessao.
 
 Regras:
 - A primeira coisa feita e conferir o banco (SELECT current_database()) na
@@ -38,6 +51,7 @@ Codigos de saida:
 """
 
 import os
+import re
 import secrets
 import string
 import sys
@@ -53,6 +67,7 @@ from app.core.authentication import utc_now
 from app.models.user import User
 
 EXPECTED_DATABASE = "auneron_neon_synthetic"
+_DATABASE_NAME_RE = re.compile(r"[A-Za-z0-9_]{1,63}")
 TEMP_PASSWORD_LENGTH = 24
 TEMP_PASSWORD_TTL_MINUTES = 30
 PASSWORD_MARKER = "SENHA TEMPORARIA: "
@@ -80,6 +95,17 @@ def generate_temp_password() -> str:
             and any(c.isdigit() for c in password)
         ):
             return password
+
+
+def resolve_expected_database(settings_value: str | None) -> str | None:
+    """Banco esperado: o da configuracao do ambiente ou o padrao da homologacao.
+
+    Retorna None se o nome for invalido (so [A-Za-z0-9_], 1 a 63 caracteres).
+    """
+    name = settings_value if settings_value else EXPECTED_DATABASE
+    if _DATABASE_NAME_RE.fullmatch(name) is None:
+        return None
+    return name
 
 
 def _active_admin_count(db: Session) -> int:
@@ -292,11 +318,28 @@ def main(argv: list[str] | None = None) -> int:
         print("Informe um e-mail valido.")
         return EXIT_USAGE
 
+    from app.core.config import settings
+
+    expected_database = resolve_expected_database(
+        settings.expected_database_name
+    )
+    if expected_database is None:
+        print(
+            "RECUSADO: EXPECTED_DATABASE_NAME invalido. Nada foi gravado."
+        )
+        return EXIT_WRONG_DATABASE
+
     from app.database.database import SessionLocal
 
     db = SessionLocal()
     try:
-        return run(db, email, allow_last_admin, password_file=password_file)
+        return run(
+            db,
+            email,
+            allow_last_admin,
+            expected_database=expected_database,
+            password_file=password_file,
+        )
     except Exception:
         db.rollback()
         print("ERRO inesperado ao redefinir a senha. Nada foi gravado.")
