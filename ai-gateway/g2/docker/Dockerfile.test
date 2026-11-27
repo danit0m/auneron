@@ -1,0 +1,27 @@
+# PREPARADO, NAO EXECUTADO. Imagem DESCARTAVEL so para rodar a suite onde nao ha interceptacao de TLS.
+# Preencher o digest da imagem base ANTES de construir (nao ha digest inventado aqui):
+#   docker pull python:3.11-slim ; docker image inspect python:3.11-slim --format "{{index .RepoDigests 0}}"
+ARG PYTHON_IMAGE=python:3.11-slim@sha256:PREENCHER_DIGEST_DA_IMAGEM_BASE
+FROM ${PYTHON_IMAGE}
+
+# usuario sem root, sem shell de login, sem home gravavel alem de /tmp
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin gw
+WORKDIR /app
+
+# o contexto de build e uma COPIA preparada (docker/prepare_context.ps1): nada do repositorio e montado.
+# wheelhouse offline: wheels baixados no host com hashes (pip download --require-hashes), sem rede no build.
+COPY --chown=root:root wheelhouse /wheelhouse
+COPY --chown=root:root requirements.txt requirements-dev.txt pytest.ini /app/
+RUN pip install --no-index --find-links /wheelhouse --require-hashes --no-cache-dir \
+        -r /app/requirements.txt -r /app/requirements-dev.txt \
+    && rm -rf /wheelhouse
+
+COPY --chown=root:root src /app/src
+COPY --chown=root:root tests /app/tests
+COPY --chown=root:root tools /app/tools
+COPY --chown=root:root config /app/config
+
+USER 10001:10001
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TMPDIR=/tmp AUNERON_GW_SRC=/app/src
+# a suite escreve certificados/logs de teste em /tmp (tmpfs); nada em /app
+ENTRYPOINT ["python", "-m", "pytest", "-p", "no:cacheprovider"]

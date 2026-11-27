@@ -1,0 +1,9 @@
+{
+  "_comment": "MODELO INVALIDO DE PROPOSITO. Liberacao do bloqueio (protocolo v2, item 5). Uma pessoa so preenche depois de: (1) encerramento satisfatorio das 24 h da 1bea10d, (2) G1 concluida, (3) autorizacao expressa. Mudar os tres para true sem isso e falsificar a liberacao.",
+  "authorized_by": "",
+  "authorized_at": "",
+  "expires_at": "",
+  "h24_closure_1bea10d_satisfactory": false,
+  "g1_concluded": false,
+  "express_authorization": false
+}

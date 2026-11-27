@@ -1,0 +1,9 @@
+{
+  "_comment": "MODELO INVALIDO DE PROPOSITO (authorized_by vazio). So vale depois que uma pessoa preencher, e so com a trava de build da transport.py aberta em revisao. Nao autoriza nada.",
+  "authorized_by": "",
+  "authorized_at": "",
+  "expires_at": "",
+  "arms": ["A", "B"],
+  "dataset_sha256": "6305167845bb4bf899def8cbcd56fd6995b1c753d2c786c641926b4c05fc7cb3",
+  "max_calls": 1
+}

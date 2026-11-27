@@ -1,0 +1,732 @@
+{
+  "cases": [
+    {
+      "business_date": "2025-05-05",
+      "category": "not_due_far",
+      "days_after_due": -395,
+      "due_date": "2026-06-04",
+      "expected": "no_action",
+      "id": "OS2-001",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-09-16",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2025-09-16",
+      "expected": "no_action",
+      "id": "OS2-002",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-04-18",
+      "category": "few_days",
+      "days_after_due": 6,
+      "due_date": "2025-04-12",
+      "expected": "mark_overdue",
+      "id": "OS2-003",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-10-11",
+      "category": "many_days",
+      "days_after_due": 319,
+      "due_date": "2026-11-26",
+      "expected": "mark_overdue",
+      "id": "OS2-004",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-04-08",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2028-04-08",
+      "expected": "no_action",
+      "id": "OS2-005",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-12-18",
+      "category": "not_due_far",
+      "days_after_due": -340,
+      "due_date": "2029-11-23",
+      "expected": "no_action",
+      "id": "OS2-006",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-02-28",
+      "category": "not_due_minus1",
+      "days_after_due": -1,
+      "due_date": "2028-02-29",
+      "expected": "no_action",
+      "id": "OS2-007",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-06-29",
+      "category": "extreme",
+      "days_after_due": 1320,
+      "due_date": "2023-11-17",
+      "expected": "mark_overdue",
+      "id": "OS2-008",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-09-08",
+      "category": "not_due_minus2",
+      "days_after_due": -2,
+      "due_date": "2026-09-10",
+      "expected": "no_action",
+      "id": "OS2-009",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-03-29",
+      "category": "not_due_far",
+      "days_after_due": -159,
+      "due_date": "2027-09-04",
+      "expected": "no_action",
+      "id": "OS2-010",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-11-18",
+      "category": "few_days",
+      "days_after_due": 3,
+      "due_date": "2027-11-15",
+      "expected": "mark_overdue",
+      "id": "OS2-011",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-04-12",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2028-04-10",
+      "expected": "mark_overdue",
+      "id": "OS2-012",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-12-31",
+      "category": "not_due_minus2",
+      "days_after_due": -2,
+      "due_date": "2027-01-02",
+      "expected": "no_action",
+      "id": "OS2-013",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-09-10",
+      "category": "extreme",
+      "days_after_due": 807,
+      "due_date": "2026-06-26",
+      "expected": "mark_overdue",
+      "id": "OS2-014",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-11-27",
+      "category": "many_days",
+      "days_after_due": 366,
+      "due_date": "2024-11-26",
+      "expected": "mark_overdue",
+      "id": "OS2-015",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-01-21",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2026-01-20",
+      "expected": "mark_overdue",
+      "id": "OS2-016",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-11-10",
+      "category": "not_due_far",
+      "days_after_due": -25,
+      "due_date": "2027-12-05",
+      "expected": "no_action",
+      "id": "OS2-017",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-10-12",
+      "category": "few_days",
+      "days_after_due": 10,
+      "due_date": "2026-10-02",
+      "expected": "mark_overdue",
+      "id": "OS2-018",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-09-27",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2027-09-26",
+      "expected": "mark_overdue",
+      "id": "OS2-019",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-12-08",
+      "category": "already_overdue_future",
+      "days_after_due": -100,
+      "due_date": "2026-03-18",
+      "expected": "no_action",
+      "id": "OS2-020",
+      "status": "atrasado"
+    },
+    {
+      "business_date": "2028-01-01",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2027-12-31",
+      "expected": "mark_overdue",
+      "id": "OS2-021",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-05-15",
+      "category": "already_overdue_future",
+      "days_after_due": -69,
+      "due_date": "2028-07-23",
+      "expected": "no_action",
+      "id": "OS2-022",
+      "status": "atrasado"
+    },
+    {
+      "business_date": "2026-12-10",
+      "category": "already_overdue_past",
+      "days_after_due": 73,
+      "due_date": "2026-09-28",
+      "expected": "no_action",
+      "id": "OS2-023",
+      "status": "atrasado"
+    },
+    {
+      "business_date": "2028-02-17",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2028-02-17",
+      "expected": "no_action",
+      "id": "OS2-024",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-02-27",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2028-02-25",
+      "expected": "mark_overdue",
+      "id": "OS2-025",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-12-26",
+      "category": "paid_past_due",
+      "days_after_due": 62,
+      "due_date": "2025-10-25",
+      "expected": "no_action",
+      "id": "OS2-026",
+      "status": "pago"
+    },
+    {
+      "business_date": "2028-03-01",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2028-02-29",
+      "expected": "mark_overdue",
+      "id": "OS2-027",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-04-25",
+      "category": "not_due_minus1",
+      "days_after_due": -1,
+      "due_date": "2026-04-26",
+      "expected": "no_action",
+      "id": "OS2-028",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-01-24",
+      "category": "many_days",
+      "days_after_due": 84,
+      "due_date": "2025-11-01",
+      "expected": "mark_overdue",
+      "id": "OS2-029",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-01-16",
+      "category": "extreme",
+      "days_after_due": 971,
+      "due_date": "2025-05-20",
+      "expected": "mark_overdue",
+      "id": "OS2-030",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-12-29",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2026-12-28",
+      "expected": "mark_overdue",
+      "id": "OS2-031",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-10-05",
+      "category": "many_days",
+      "days_after_due": 55,
+      "due_date": "2027-08-11",
+      "expected": "mark_overdue",
+      "id": "OS2-032",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-12-31",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2027-12-31",
+      "expected": "no_action",
+      "id": "OS2-033",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-09-10",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2026-09-10",
+      "expected": "no_action",
+      "id": "OS2-034",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-12-20",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2025-12-20",
+      "expected": "no_action",
+      "id": "OS2-035",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-02-26",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2027-02-25",
+      "expected": "mark_overdue",
+      "id": "OS2-036",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-09-12",
+      "category": "paid_future",
+      "days_after_due": -116,
+      "due_date": "2027-01-06",
+      "expected": "no_action",
+      "id": "OS2-037",
+      "status": "pago"
+    },
+    {
+      "business_date": "2026-10-22",
+      "category": "extreme",
+      "days_after_due": 1203,
+      "due_date": "2023-07-07",
+      "expected": "mark_overdue",
+      "id": "OS2-038",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-06-04",
+      "category": "paid_future",
+      "days_after_due": -182,
+      "due_date": "2025-12-03",
+      "expected": "no_action",
+      "id": "OS2-039",
+      "status": "pago"
+    },
+    {
+      "business_date": "2026-08-06",
+      "category": "not_due_far",
+      "days_after_due": -154,
+      "due_date": "2027-01-07",
+      "expected": "no_action",
+      "id": "OS2-040",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-03-01",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2026-02-27",
+      "expected": "mark_overdue",
+      "id": "OS2-041",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-06-29",
+      "category": "paid_past_due",
+      "days_after_due": 61,
+      "due_date": "2025-04-29",
+      "expected": "no_action",
+      "id": "OS2-042",
+      "status": "pago"
+    },
+    {
+      "business_date": "2026-01-03",
+      "category": "few_days",
+      "days_after_due": 7,
+      "due_date": "2025-12-27",
+      "expected": "mark_overdue",
+      "id": "OS2-043",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-11-12",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2028-11-11",
+      "expected": "mark_overdue",
+      "id": "OS2-044",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-07-21",
+      "category": "many_days",
+      "days_after_due": 253,
+      "due_date": "2027-11-11",
+      "expected": "mark_overdue",
+      "id": "OS2-045",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-05-01",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2026-04-30",
+      "expected": "mark_overdue",
+      "id": "OS2-046",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-03-17",
+      "category": "not_due_minus2",
+      "days_after_due": -2,
+      "due_date": "2026-03-19",
+      "expected": "no_action",
+      "id": "OS2-047",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-01-01",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2027-12-30",
+      "expected": "mark_overdue",
+      "id": "OS2-048",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-02-08",
+      "category": "paid_today",
+      "days_after_due": 0,
+      "due_date": "2028-02-08",
+      "expected": "no_action",
+      "id": "OS2-049",
+      "status": "pago"
+    },
+    {
+      "business_date": "2026-10-26",
+      "category": "many_days",
+      "days_after_due": 235,
+      "due_date": "2026-03-05",
+      "expected": "mark_overdue",
+      "id": "OS2-050",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-12-26",
+      "category": "not_due_far",
+      "days_after_due": -250,
+      "due_date": "2027-09-02",
+      "expected": "no_action",
+      "id": "OS2-051",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-04-22",
+      "category": "many_days",
+      "days_after_due": 49,
+      "due_date": "2026-03-04",
+      "expected": "mark_overdue",
+      "id": "OS2-052",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-03-01",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2026-03-01",
+      "expected": "no_action",
+      "id": "OS2-053",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-02-29",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2028-02-29",
+      "expected": "no_action",
+      "id": "OS2-054",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-09-29",
+      "category": "paid_past_due",
+      "days_after_due": 260,
+      "due_date": "2025-01-12",
+      "expected": "no_action",
+      "id": "OS2-055",
+      "status": "pago"
+    },
+    {
+      "business_date": "2028-02-28",
+      "category": "paid_past_due",
+      "days_after_due": 152,
+      "due_date": "2027-09-29",
+      "expected": "no_action",
+      "id": "OS2-056",
+      "status": "pago"
+    },
+    {
+      "business_date": "2026-12-18",
+      "category": "already_overdue_past",
+      "days_after_due": 325,
+      "due_date": "2026-01-27",
+      "expected": "no_action",
+      "id": "OS2-057",
+      "status": "atrasado"
+    },
+    {
+      "business_date": "2028-03-01",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2028-02-28",
+      "expected": "mark_overdue",
+      "id": "OS2-058",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-05-10",
+      "category": "many_days",
+      "days_after_due": 202,
+      "due_date": "2026-10-20",
+      "expected": "mark_overdue",
+      "id": "OS2-059",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-02-24",
+      "category": "already_overdue_today",
+      "days_after_due": 0,
+      "due_date": "2027-02-24",
+      "expected": "no_action",
+      "id": "OS2-060",
+      "status": "atrasado"
+    },
+    {
+      "business_date": "2026-06-14",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2026-06-12",
+      "expected": "mark_overdue",
+      "id": "OS2-061",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-03-06",
+      "category": "extreme",
+      "days_after_due": 884,
+      "due_date": "2022-10-04",
+      "expected": "mark_overdue",
+      "id": "OS2-062",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-06-02",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2028-06-02",
+      "expected": "no_action",
+      "id": "OS2-063",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-12-29",
+      "category": "few_days",
+      "days_after_due": 7,
+      "due_date": "2026-12-22",
+      "expected": "mark_overdue",
+      "id": "OS2-064",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-06-16",
+      "category": "many_days",
+      "days_after_due": 121,
+      "due_date": "2028-02-16",
+      "expected": "mark_overdue",
+      "id": "OS2-065",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-11-07",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2027-11-05",
+      "expected": "mark_overdue",
+      "id": "OS2-066",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-08-21",
+      "category": "many_days",
+      "days_after_due": 298,
+      "due_date": "2026-10-27",
+      "expected": "mark_overdue",
+      "id": "OS2-067",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-07-10",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2027-07-09",
+      "expected": "mark_overdue",
+      "id": "OS2-068",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-06-13",
+      "category": "due_today",
+      "days_after_due": 0,
+      "due_date": "2028-06-13",
+      "expected": "no_action",
+      "id": "OS2-069",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-12-03",
+      "category": "plus1",
+      "days_after_due": 1,
+      "due_date": "2026-12-02",
+      "expected": "mark_overdue",
+      "id": "OS2-070",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-04-25",
+      "category": "plus2",
+      "days_after_due": 2,
+      "due_date": "2026-04-23",
+      "expected": "mark_overdue",
+      "id": "OS2-071",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-04-30",
+      "category": "not_due_minus1",
+      "days_after_due": -1,
+      "due_date": "2026-05-01",
+      "expected": "no_action",
+      "id": "OS2-072",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-06-01",
+      "category": "already_overdue_past",
+      "days_after_due": 250,
+      "due_date": "2025-09-24",
+      "expected": "no_action",
+      "id": "OS2-073",
+      "status": "atrasado"
+    },
+    {
+      "business_date": "2025-07-08",
+      "category": "few_days",
+      "days_after_due": 8,
+      "due_date": "2025-06-30",
+      "expected": "mark_overdue",
+      "id": "OS2-074",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-03-09",
+      "category": "already_overdue_past",
+      "days_after_due": 86,
+      "due_date": "2027-12-14",
+      "expected": "no_action",
+      "id": "OS2-075",
+      "status": "atrasado"
+    },
+    {
+      "business_date": "2028-12-02",
+      "category": "extreme",
+      "days_after_due": 1763,
+      "due_date": "2024-02-04",
+      "expected": "mark_overdue",
+      "id": "OS2-076",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2028-02-27",
+      "category": "not_due_minus2",
+      "days_after_due": -2,
+      "due_date": "2028-02-29",
+      "expected": "no_action",
+      "id": "OS2-077",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2027-12-31",
+      "category": "not_due_minus1",
+      "days_after_due": -1,
+      "due_date": "2028-01-01",
+      "expected": "no_action",
+      "id": "OS2-078",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2026-12-07",
+      "category": "not_due_minus2",
+      "days_after_due": -2,
+      "due_date": "2026-12-09",
+      "expected": "no_action",
+      "id": "OS2-079",
+      "status": "aberto"
+    },
+    {
+      "business_date": "2025-10-26",
+      "category": "not_due_minus1",
+      "days_after_due": -1,
+      "due_date": "2025-10-27",
+      "expected": "no_action",
+      "id": "OS2-080",
+      "status": "aberto"
+    }
+  ],
+  "counts": {
+    "mark_overdue": 40,
+    "no_action": 40
+  },
+  "dataset_version": "overdue-shadow-cases-v2",
+  "label_rule": "mark_overdue iff status == 'aberto' and due_date < business_date (strict); otherwise no_action. Source: OverdueDetectionService.run_scan in app/services/overdue_detection_service.py (Account.status == 'aberto' and Account.vencimento < today).",
+  "role": "PROVA (hold-out): inedito, nao usar para ajustar prompt; o ajuste usa cases_v1.json",
+  "seed": 20261117
+}

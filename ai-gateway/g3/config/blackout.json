@@ -1,0 +1,6 @@
+{
+  "_comment": "Protocolo v2, item 5. Janela em que NENHUMA chamada pode ser enviada (hora local do PC): de agora (24/11, desde 00:00) ate 2026-11-26T22:00 (fim exclusivo). A hora e so um PISO: a liberacao real exige o arquivo de liberacao (config/release.TEMPLATE.json preenchido por uma pessoa) com encerramento satisfatorio das 24 h da 1bea10d, G1 concluida e autorizacao expressa.",
+  "windows": [
+    {"start": "2026-11-24T00:00:00", "end": "2026-11-26T22:00:00"}
+  ]
+}

@@ -1,0 +1,45 @@
+# Exemplo de configuracao do AUNERON AI Gateway. Sem segredos: so caminhos.
+# A chave privada fica em arquivo fora do repositorio, legivel SO pelo usuario do servico:
+#   Windows: icacls <chave> /inheritance:r /grant:r *<SID-do-usuario-do-servico>:(R)   (a partida RECUSA outra ACL)
+#   POSIX:   chmod 600 <chave>; dono = usuario do servico
+
+[server]
+host = "127.0.0.1"          # unico valor aceito
+port = 8443
+max_connections = 4         # teto 4 (vale ANTES do handshake)
+handshake_timeout = 5
+header_timeout = 10
+body_timeout = 20
+idle_timeout = 15
+write_timeout = 10
+
+[tls]
+min_version = "1.3"         # "1.2" so se necessario
+ca_file = "C:/AUNERON-GW/pki/ca.pem"
+cert_file = "C:/AUNERON-GW/pki/server.pem"      # a partida recusa certificado vencido/ainda nao valido
+key_file = "C:/AUNERON-GW/pki/server.key.pem"   # e chave que nao forma par com o certificado
+# SHA-256 (hex minusculo) do certificado DER de cada cliente autorizado.
+allowed_client_fingerprints = [
+  "0000000000000000000000000000000000000000000000000000000000000000",
+]
+
+[ollama]
+port = 11434                # sempre em 127.0.0.1
+
+[limits]
+queue_size = 2              # teto 2
+per_minute = 10             # teto 10
+total_timeout = 120         # teto 120 s (inclui fila)
+
+[profiles]
+enabled = ["qwen3-4b-instruct-2507"]   # "qwen3-4b-think" existe, mas fica desligado por padrao
+
+[startup]
+# O que fazer se NAO for possivel verificar que o Ollama escuta so em loopback (tabela de escuta
+# do sistema indisponivel E nenhum endereco local para sondar). "refuse" (padrao) recusa a partida;
+# "allow" e uma decisao explicita e documentada de quem opera.
+exposure_unverifiable = "refuse"
+
+[logging]
+dir = "C:/AUNERON-GW/logs"
+retention_days = 30
